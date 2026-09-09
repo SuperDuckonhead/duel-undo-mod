@@ -20,14 +20,44 @@
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Measure-Undo.ps1 -RuntimeRoot F:/MyCardLibrary/ygopro -Cases 10,100,1000 -OutFile out/performance/core.json
 ~~~
 
-工具生成独立 Release 测量目标、原始 JSONL、编译日志和 JSON 记录。每个样本包含 resourceDigest、responses、undoCount、elapsedMs、workingSetBytes、privateBytes、handleCount、childProcessCount。整体记录 sourceCommit、sourceDirty、实际编译输入摘要、测量程序 SHA-256；编译前后源文件摘要不同即失败。本轮存在并行中的 C4 工作，因此明确记录 dirty=true，不宣称测得纯提交版本。
+工具生成独立 Release 测量目标、原始 JSONL、编译日志和 JSON 记录。每个样本包含 resourceDigest、responses、undoCount、elapsedMs、workingSetBytes、privateBytes、handleCount、childProcessCount。该历史版本记录 sourceCommit、sourceDirty、部分所选源文件摘要和测量程序 SHA-256；只比较所选源文件，遗漏实际依赖头文件、构建配方、静态库与工具，不能据此声称完整编译输入一致。本轮存在并行中的 C4 工作，因此明确记录 dirty=true，不宣称测得纯提交版本。
 
 完整采样证据：tests/fixtures/performance/core-2026-09-10.json。
 
 - 提交基准：4931c5124db83c62b1cbb34d898f086b06280dc3
-- 编译输入 SHA-256：1210cfcb9f68360856ac4b883f0d4d44e212df665483296d7ed6ad5553a179f8
+- 历史部分所选源文件 SHA-256（并非完整编译输入）：1210cfcb9f68360856ac4b883f0d4d44e212df665483296d7ed6ad5553a179f8
 - 实际测量程序 SHA-256：1d26aa90dec22b29639a25a7072d084c7a8dcbf3b5f6045945b674b4f1c3bb8a
 - 资源摘要：bff81471fcd422aa17c700f4d770a65f49886369900bfb2bf7da73517f9a1858
 - 实际响应序列摘要：5c695d0093dc68729df174ab40d44e81b35c1716a3ea6a87764583c0bb0ba21e
 
 待验收：完整 UI/网络/AI 下的同规模恢复耗时与内存、候选 AI 进程生命周期、内存不足失败及原局保留、真实两设备 LAN。未完成项仍保留在 acceptance.csv，不标可发行。
+
+## R2 修正后完整重跑（2026-09-10）
+
+修正测量入口后，用全量重新编译的 Release 目标重跑了上述三档历史，每档仍为 20 次成功和 20 次目标摘要错误失败。实际固定 13,616 份脚本、15,049 条卡片数据并录制 1001 条合法响应，数量直接写入测量程序的 fixture 行。资源摘要与响应序列摘要均与历史样本一致。完整 UI、网络、AI 性能验收仍待完成。
+
+| 保留响应数 | 成功重建中位数 | 成功 P95 | 成功最大值 | 故意失败中位数 |
+| --- | ---: | ---: | ---: | ---: |
+| 10 | 41.88 ms | 46.37 ms | 57.07 ms | 39.01 ms |
+| 100 | 305.38 ms | 322.30 ms | 328.79 ms | 301.33 ms |
+| 1000 | 2462.87 ms | 3024.88 ms | 3081.54 ms | 2666.79 ms |
+
+首次资源固定 817.19 ms，合法历史录制 2909.52 ms，均不计入重建耗时。123 次资源采样包括三条预热基线和 120 条恢复结果：句柄数全部为 137；`descendantProcessCount` 全部为 0，该字段通过一次 Toolhelp 快照遍历全部后代层级，枚举失败会使测量失败。独立回归确实创建一个子进程及其孙进程，验证计数为 2、退出后为 0，并验证无效快照会被拒绝。
+
+本次 PrivateUsage 范围为 74,395,648–74,539,008 字节，首尾为 74,489,856／74,539,008 字节；工作集范围为 74,108,928–74,555,392 字节。每条样本仍检查原局状态和输出摘要不变，全部完成后原局继续接受合法响应。这里只记录观察值，不能据此证明完整客户端或 AI 无泄漏。源码和机器负载与历史运行不同，两个时延表不构成受控性能回归对比。
+
+~~~powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Measure-Undo.ps1 -RuntimeRoot F:/MyCardLibrary/ygopro -Cases 10,100,1000 -UndoCount 20 -OutFile out/tests/Performance/core-fixround1.json
+~~~
+
+新入口在创建目录或写任何日志前，检查输出、所有侧文件及构建目录每个已有祖先/叶节点，拒绝重解析点；还检查整个现有构建树，拒绝嵌套联接。检查也在每次外部命令和发布结果前重做。回归联接位于 checkout/out，目标为同一测试夹具的受控兄弟目录；没有写入原始资源，也没有递归清理联接。该检查针对运行时已存在的重解析点，不声称抵抗并发恶意替换文件系统节点。
+
+新输入清单刻意扩大覆盖源码/头文件树、实际链接的静态库、LLVM-MinGW 工具与头文件/库、CMake 程序与模块、构建脚本，记录 10,128 个文件各自的路径、长度和 SHA-256。另记录 40 个生成的缓存/编译/链接配方文件与六个生成物；从 55 份实际编译器 `.obj.d` 文件确认 1,338 个不同输入均在清单中，遗漏则拒绝结果。`--clean-first` 确保重新编译，输入及配方摘要在编译和执行后再次匹配；同时记录实际 compiler/cmake/make/linker/archiver 版本。此证据覆盖文件输入和生成配方，不涵盖 Windows 实现或未记录的机器环境状态。
+
+归档证据为 `tests/fixtures/performance/core-fixround1.json` 和同目录的 `core-fixround1.json.inputs.json`。它们与 out 中成功运行的原始输出逐字节一致。
+
+- 提交基准：1770d107743c4e4a9ed75a960d84549c45a36498；`sourceDirty=true`，不声称测得纯提交版本。
+- 输入清单 SHA-256：65dfc88bd268b17dbd2b443ac4b94a34f1145019e15f703d092e1d1c135cc449
+- 构建配方 SHA-256：ea78e625259489a3f734e0e3ef5e9b609a939cf026731b13682effbd23f20839
+- 实际测量程序 SHA-256：f953736c723ee55e66b7955bd1ac9cc3aedc6d62d326976216f881166a773a0b
+- 完整归档清单文件 SHA-256：400bf14b5981ace708a3d8a05148bc19def0979f0ef3fb1ef23b7531cad57975

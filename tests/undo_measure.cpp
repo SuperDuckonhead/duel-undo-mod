@@ -1,6 +1,7 @@
 #include "test_support.h"
 #include "undo/rebuilder.h"
 #include "common.h"
+#include "measurement_process.h"
 #include <windows.h>
 #include <psapi.h>
 #include <tlhelp32.h>
@@ -23,10 +24,7 @@ static Usage usage() {
  CHECK(GetProcessMemoryInfo(GetCurrentProcess(),reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&p),sizeof(p)));
  CHECK(GetProcessHandleCount(GetCurrentProcess(),&u.handles));
  u.workingSet=p.WorkingSetSize;u.privateBytes=p.PrivateUsage;
- auto snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0);CHECK(snapshot!=INVALID_HANDLE_VALUE);
- PROCESSENTRY32W e{}; e.dwSize=sizeof(e);
- if(Process32FirstW(snapshot,&e)) do { if(e.th32ParentProcessID==GetCurrentProcessId()) ++u.children; } while(Process32NextW(snapshot,&e));
- CloseHandle(snapshot);return u;
+ u.children=measurement::CountDescendants();return u;
 }
 static double ms(Clock::time_point from) {return std::chrono::duration<double,std::milli>(Clock::now()-from).count();}
 int main(int argc,char** argv) {
@@ -63,11 +61,11 @@ int main(int argc,char** argv) {
   auto emit=[&](const char* kind,std::size_t count,std::size_t iteration,double elapsed,const Usage& u) {
    out<<"{\"kind\":\""<<kind<<"\",\"resourceDigest\":\""<<hex(resources->Fingerprint())<<"\",\"responses\":"<<count
       <<",\"undoCount\":"<<iteration<<",\"elapsedMs\":"<<elapsed<<",\"workingSetBytes\":"<<u.workingSet
-      <<",\"privateBytes\":"<<u.privateBytes<<",\"handleCount\":"<<u.handles<<",\"childProcessCount\":"<<u.children<<"}\n";
+      <<",\"privateBytes\":"<<u.privateBytes<<",\"handleCount\":"<<u.handles<<",\"descendantProcessCount\":"<<u.children<<"}\n";
    out.flush();CHECK(out);
   };
   out<<"{\"kind\":\"fixture\",\"fixture\":\"normal-decks-no-draw-end-turns\",\"resourceDigest\":\""<<hex(resources->Fingerprint())
-     <<"\",\"inputDigest\":\""<<hex(Sha256(inputs))<<"\",\"recordedResponses\":"<<records.size()<<",\"captureMs\":"<<captureMs<<",\"recordMs\":"<<recordMs<<"}\n";
+     <<"\",\"inputDigest\":\""<<hex(Sha256(inputs))<<"\",\"recordedResponses\":"<<records.size()<<",\"scriptCount\":"<<resources->ScriptCount()<<",\"cardCount\":"<<resources->Cards().size()<<",\"captureMs\":"<<captureMs<<",\"recordMs\":"<<recordMs<<"}\n";
   // Warm allocator/core caches before taking each baseline. A candidate is
   // destroyed before every OS resource sample, including deliberate failures.
   for(auto count:cases) {
