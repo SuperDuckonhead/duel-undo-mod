@@ -5,6 +5,27 @@ function FileHash([string]$Path) {
  try { return ([BitConverter]::ToString($algorithm.ComputeHash([IO.File]::ReadAllBytes($Path)))).Replace('-', '').ToLowerInvariant() }
  finally { $algorithm.Dispose() }
 }
+# Lexical containment alone does not constrain git apply on Windows: it follows
+# junctions. Check every existing component, including the checkout ancestors and
+# file leaf, before any source hash/read or patch. Reject traversal rather than
+# permitting an alternate resolved dependency tree.
+function Assert-PlainPath([string]$Path) {
+ $components = [Collections.Generic.Stack[string]]::new()
+ $cursor = [IO.Path]::GetFullPath($Path)
+ while ($cursor) {
+  $components.Push($cursor)
+  $parent = [IO.Path]::GetDirectoryName($cursor)
+  if ($parent -eq $cursor) { break }
+  $cursor = $parent
+ }
+ while ($components.Count) {
+  $component = $components.Pop()
+  $item = Get-Item -LiteralPath $component -Force -ErrorAction Stop
+  if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+   throw "Irrlicht patch path contains a reparse point: $component"
+  }
+ }
+}
 $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $target = [IO.Path]::GetFullPath((Join-Path $repository $IrrlichtRoot))
 $expected = [IO.Path]::GetFullPath((Join-Path $repository 'client/irrlicht'))
@@ -12,8 +33,11 @@ $testRoot = [IO.Path]::GetFullPath((Join-Path $repository 'out')) + [IO.Path]::D
 if ($target -ne $expected -and -not $target.StartsWith($testRoot, [StringComparison]::OrdinalIgnoreCase)) {
  throw "Irrlicht patch target must be this checkout's client/irrlicht or out test directory: $target"
 }
+Assert-PlainPath $target
 $patchRoot = Join-Path $PSScriptRoot 'patches/irrlicht-undo'
 $manifest = Get-Content -LiteralPath (Join-Path $patchRoot 'manifest.json') -Raw | ConvertFrom-Json
+# Validate every path before reading any source, then preflight all hashes.
+foreach ($entry in $manifest) { Assert-PlainPath (Join-Path $target $entry.file) }
 # Validate all inputs before modifying any file. Refuse unrecognized source edits.
 foreach ($entry in $manifest) {
  $path = Join-Path $target $entry.file
