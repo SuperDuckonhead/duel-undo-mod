@@ -87,6 +87,7 @@ public:
 	static bool client_card_sort(ClientCard* c1, ClientCard* c2);
 
 private:
+	friend class ClientField;
 	ClientField* field_{};
 };
 

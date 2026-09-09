@@ -1,0 +1,5 @@
+add_undo_test(player_restore_tests tests/player_restore_tests.cpp)
+target_sources(player_restore_tests PRIVATE client/gframe/undo/player_restore.cpp client/gframe/undo/protocol.cpp client/gframe/undo/player_visible_filter.cpp client/gframe/client_field_model.cpp client/gframe/client_card_model.cpp client/gframe/materials.cpp tests/core_test_globals.cpp)
+target_link_libraries(player_restore_tests PRIVATE undo_resources undo_ocgcore)
+target_compile_options(player_restore_tests PRIVATE -ffunction-sections -fdata-sections)
+target_link_options(player_restore_tests PRIVATE -Wl,--gc-sections)

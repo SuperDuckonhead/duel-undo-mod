@@ -102,6 +102,10 @@ public:
 	ClientField();
 	~ClientField() override;
 	void Clear();
+	// Caller holds the live render/input lock; both fields remain valid owners.
+	void SwapPreparedModel(ClientField& other) noexcept;
+	void PrepareModelGeometry(int duel_rule);
+	void PrepareSelectSum(bool tribute = false);
 	void Initial(int player, int deckc, int extrac, int sidec = 0);
 	ClientCard* CreateCard();
 	void DestroyCard(ClientCard* pcard);
@@ -122,8 +126,8 @@ public:
 	void ReplaySwap();
 	void RefreshAllCards();
 
-	void GetChainLocation(int controler, int location, int sequence, irr::core::vector3df* t);
-	void GetCardLocation(ClientCard* pcard, irr::core::vector3df* t, irr::core::vector3df* r, bool setTrans = false);
+	void GetChainLocation(int controler, int location, int sequence, irr::core::vector3df* t, int duel_rule = -1);
+	void GetCardLocation(ClientCard* pcard, irr::core::vector3df* t, irr::core::vector3df* r, bool setTrans = false, int duel_rule = -1);
 	void MoveCard(ClientCard* pcard, int frame);
 	void FadeCard(ClientCard* pcard, int alpha, int frame);
 	bool ShowSelectSum(bool panelmode); // caller must hold gMutex
@@ -170,6 +174,8 @@ public:
 	void CancelOrFinish();
 
 private:
+	void ConsumeModelWork();
+	std::size_t model_work_budget_{static_cast<std::size_t>(-1)};
 	std::vector<std::unique_ptr<ClientCard>> cards_;
 };
 

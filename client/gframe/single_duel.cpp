@@ -3,6 +3,7 @@
 #include "config.h"
 #include "single_duel.h"
 #include "netserver.h"
+#include "undo/player_visible_filter.h"
 #include "game.h"
 #include "data_manager.h"
 #include "deck_manager.h"
@@ -1501,73 +1502,36 @@ int SingleDuel::WriteUpdateData(int player, int location, unsigned int flag, uns
 void SingleDuel::RefreshMzone(int player, int flag, int use_cache) {
 	std::array<unsigned char, SIZE_QUERY_BUFFER> query_buffer;
 	auto qbuf = query_buffer.data();
-	auto len = WriteUpdateData(player, LOCATION_MZONE, flag, qbuf, use_cache);
-	std::vector<std::pair<unsigned char*, int>> hidden_segments;
-	int qlen = 0;
-	while(qlen < len) {
-		const int clen = BufferIO::Read<int32_t>(qbuf);
-		qlen += clen;
-		if (clen <= LEN_HEADER)
-			continue;
-		auto position = GetPosition(qbuf, 8);
-		const bool hide_code = NetServer::ShouldHideFacedownCode(position);
-		position = NetServer::StripRevealFlag(qbuf, 8);
-		if (hide_code)
-			hidden_segments.emplace_back(qbuf, clen);
-		qbuf += clen - 4;
-	}
-	NetServer::SendBufferToPlayer(players[player], STOC_GAME_MSG, query_buffer.data(), len + 3);
-	for(const auto& segment : hidden_segments)
-		std::memset(segment.first, 0, segment.second - 4);
-	NetServer::SendBufferToPlayer(players[1 - player], STOC_GAME_MSG, query_buffer.data(), len + 3);
-	for(auto pit = observers.begin(); pit != observers.end(); ++pit)
-		NetServer::ReSendToPlayer(*pit);
+	const int len = WriteUpdateData(player, LOCATION_MZONE, flag, qbuf, use_cache);
+	auto views = ::undo::FilterVisibleQuery(::undo::Bytes(query_buffer.data(), query_buffer.data() + len + 3));
+	NetServer::SendBufferToPlayer(players[player], STOC_GAME_MSG, views.owner.data(), views.owner.size());
+	NetServer::SendBufferToPlayer(players[1 - player], STOC_GAME_MSG, views.opponent.data(), views.opponent.size());
+	for(auto observer : observers)
+		NetServer::ReSendToPlayer(observer);
 }
+
 void SingleDuel::RefreshSzone(int player, int flag, int use_cache) {
 	std::array<unsigned char, SIZE_QUERY_BUFFER> query_buffer;
 	auto qbuf = query_buffer.data();
-	auto len = WriteUpdateData(player, LOCATION_SZONE, flag, qbuf, use_cache);
-	std::vector<std::pair<unsigned char*, int>> hidden_segments;
-	int qlen = 0;
-	while(qlen < len) {
-		const int clen = BufferIO::Read<int32_t>(qbuf);
-		qlen += clen;
-		if (clen <= LEN_HEADER)
-			continue;
-		auto position = GetPosition(qbuf, 8);
-		const bool hide_code = NetServer::ShouldHideFacedownCode(position);
-		position = NetServer::StripRevealFlag(qbuf, 8);
-		if (hide_code)
-			hidden_segments.emplace_back(qbuf, clen);
-		qbuf += clen - 4;
-	}
-	NetServer::SendBufferToPlayer(players[player], STOC_GAME_MSG, query_buffer.data(), len + 3);
-	for(const auto& segment : hidden_segments)
-		std::memset(segment.first, 0, segment.second - 4);
-	NetServer::SendBufferToPlayer(players[1 - player], STOC_GAME_MSG, query_buffer.data(), len + 3);
-	for(auto pit = observers.begin(); pit != observers.end(); ++pit)
-		NetServer::ReSendToPlayer(*pit);
+	const int len = WriteUpdateData(player, LOCATION_SZONE, flag, qbuf, use_cache);
+	auto views = ::undo::FilterVisibleQuery(::undo::Bytes(query_buffer.data(), query_buffer.data() + len + 3));
+	NetServer::SendBufferToPlayer(players[player], STOC_GAME_MSG, views.owner.data(), views.owner.size());
+	NetServer::SendBufferToPlayer(players[1 - player], STOC_GAME_MSG, views.opponent.data(), views.opponent.size());
+	for(auto observer : observers)
+		NetServer::ReSendToPlayer(observer);
 }
+
 void SingleDuel::RefreshHand(int player, int flag, int use_cache) {
 	std::array<unsigned char, SIZE_QUERY_BUFFER> query_buffer;
 	auto qbuf = query_buffer.data();
-	auto len = WriteUpdateData(player, LOCATION_HAND, flag, qbuf, use_cache);
-	NetServer::SendBufferToPlayer(players[player], STOC_GAME_MSG, query_buffer.data(), len + 3);
-	int qlen = 0;
-	while(qlen < len) {
-		const int slen = BufferIO::Read<int32_t>(qbuf);
-		qlen += slen;
-		if (slen <= LEN_HEADER)
-			continue;
-		auto position = GetPosition(qbuf, 8);
-		if(!(position & POS_FACEUP))
-			std::memset(qbuf, 0, slen - 4);
-		qbuf += slen - 4;
-	}
-	NetServer::SendBufferToPlayer(players[1 - player], STOC_GAME_MSG, query_buffer.data(), len + 3);
-	for(auto pit = observers.begin(); pit != observers.end(); ++pit)
-		NetServer::ReSendToPlayer(*pit);
+	const int len = WriteUpdateData(player, LOCATION_HAND, flag, qbuf, use_cache);
+	auto views = ::undo::FilterVisibleQuery(::undo::Bytes(query_buffer.data(), query_buffer.data() + len + 3));
+	NetServer::SendBufferToPlayer(players[player], STOC_GAME_MSG, views.owner.data(), views.owner.size());
+	NetServer::SendBufferToPlayer(players[1 - player], STOC_GAME_MSG, views.opponent.data(), views.opponent.size());
+	for(auto observer : observers)
+		NetServer::ReSendToPlayer(observer);
 }
+
 void SingleDuel::RefreshGrave(int player, int flag, int use_cache) {
 	std::array<unsigned char, SIZE_QUERY_BUFFER> query_buffer;
 	auto qbuf = query_buffer.data();
