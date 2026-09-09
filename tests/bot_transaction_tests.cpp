@@ -5,6 +5,7 @@
 #include <IFileSystem.h>
 #include <iostream>
 #include <filesystem>
+#include <chrono>
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 namespace irr { namespace io { IFileSystem* createFileSystem(); } }
@@ -33,7 +34,7 @@ int main(int argc,char** argv){
   fixture::sql(fixtureRoot+"/cards.cdb","UPDATE datas SET atk=9999; UPDATE texts SET name='Changed after capture';");
   CHECK(resources->Card(900000001).attack==2468);CHECK(init.cardView==frozen);
   CHECK(manager.LoadDB((fixtureRoot+"/cards.cdb").c_str()));bool mismatch=false;try{CaptureBotCardView(*resources,manager,init.engine);}catch(const std::exception&){mismatch=true;}CHECK(mismatch);
-  auto session=NewSessionId();std::uint32_t finalPid{};
+  auto session=NewSessionId();std::uint32_t finalPid{};std::unique_ptr<void,decltype(&CloseHandle)> finalProcess(nullptr,&CloseHandle);
   {
    BotController bot(executable,init,session,7);CHECK(bot.State()==BotState::Running && bot.ActivePid()!=0);auto original=bot.ActivePid();CHECK(alive(original));
    bot.Dispatch(session,7,1,start());bot.Dispatch(session,7,2,draw());CHECK(decision(bot.Dispatch(session,7,3,activate()))==5);auto cursor=bot.Cursor();
@@ -47,8 +48,18 @@ int main(int argc,char** argv){
    auto unbound=tx(session,8,2);unbound.targetDigest={};CHECK(!bot.Prepare(unbound,bot.Cursor()));CHECK(bot.State()==BotState::Running);
    auto bad=tx(session,8,3);CHECK(!bot.Prepare(bad,bot.Cursor()+1));CHECK(bot.State()==BotState::Frozen && bot.Epoch()==8 && bot.ActivePid()==candidate && alive(candidate));bot.Abort(bad);CHECK(bot.State()==BotState::Running);
    auto lostAck=tx(session,8,4);CHECK(bot.Prepare(lostAck,bot.Cursor()));CHECK(bot.Commit(lostAck));CHECK(bot.RetainedPid()==candidate && alive(candidate));finalPid=bot.ActivePid();bot.Pause();CHECK(bot.State()==BotState::Failed && !bot.Resume(lostAck,9));CHECK(alive(candidate) && alive(finalPid));
+   // Capture the exact worker before destruction: reopening a PID afterward
+   // can observe a reused identity and a zero-time wait assumes synchronous exit.
+   finalProcess.reset(OpenProcess(SYNCHRONIZE,FALSE,finalPid));CHECK(finalProcess && WaitForSingleObject(finalProcess.get(),0)==WAIT_TIMEOUT);
   }
-  CHECK(!alive(finalPid));
+  // Kill-on-close starts termination of the job tree. The controller wait does
+  // not guarantee that a different worker has finished its kernel teardown.
+  const auto returned=std::chrono::steady_clock::now();
+  const auto atReturn=WaitForSingleObject(finalProcess.get(),0);
+  const auto exited=WaitForSingleObject(finalProcess.get(),5000);
+  std::cout<<"Final worker "<<finalPid<<" destructor-return state="<<atReturn<<" exit state="<<exited
+           <<" exit wait ms="<<std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-returned).count()<<'\n';
+  CHECK(exited==WAIT_OBJECT_0);
   // A real control child failure must become paused at the native last boundary.
   {
    BotController bot(executable,init,session,7);auto pid=bot.ActivePid();HANDLE process=OpenProcess(PROCESS_TERMINATE,FALSE,pid);CHECK(process);CHECK(TerminateProcess(process,5));CloseHandle(process);
