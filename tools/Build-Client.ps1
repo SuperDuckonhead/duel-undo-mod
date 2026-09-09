@@ -37,7 +37,9 @@ $premakeDirectories = @('event', 'freetype', 'irrlicht', 'jpeg', 'lua', 'lzma', 
 foreach ($name in $premakeDirectories) {
     Copy-Item -Path (Join-Path $client "premake/$name/*") -Destination (Join-Path $client $name) -Recurse -Force
 }
-Copy-Item -LiteralPath (Join-Path $client 'resource/gframe/ygopro.ico') -Destination (Join-Path $client 'gframe/ygopro.ico') -Force
+foreach ($name in @('ygopro.ico', 'ygopro.rc')) {
+    Copy-Item -LiteralPath (Join-Path $client "resource/gframe/$name") -Destination (Join-Path $client "gframe/$name") -Force
+}
 
 Copy-Item -LiteralPath (Join-Path $client 'event/msvc-event-config.h') -Destination (Join-Path $client 'event/include/event2/event-config.h') -Force
 # LLVM-MinGW's UCRT provides strtok_r; the upstream MSVC config correctly omits it.
