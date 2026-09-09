@@ -1,4 +1,4 @@
-﻿param([string]$RuntimeRoot = 'F:/MyCardLibrary/ygopro', [string]$Configuration = 'Release')
+param([string]$RuntimeRoot = 'F:/MyCardLibrary/ygopro', [string]$Configuration = 'Release')
 $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $original = @{}
@@ -45,7 +45,7 @@ try {
     Write-Output "PASS actual static client initialized/closed from unrelated cwd and Chinese executable root; original binaries/config/native dependency hashes unchanged. Stage: $alias"
 } finally { if(!$child.HasExited) { Stop-Process -Id $child.Id -Force } }
 # This tiny probe forces GetModuleFileNameW beyond its initial 256-wide-char buffer.
-$probe = Join-Path $repo 'out/tests/Debug/runtime_paths_tests.exe'
+$probe = Join-Path $repo "out/tests/$Configuration/runtime_paths_tests.exe"
 $prefix = Join-Path $repo 'out/r1-tests/'
 $leaf = 'runtime_paths_tests.exe'
 $padding = 258 - $prefix.Length - 1 - $leaf.Length

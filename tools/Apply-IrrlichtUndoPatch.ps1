@@ -51,9 +51,9 @@ try {
   $path = Join-Path $target $entry.file
   if ((FileHash $path) -eq $entry.after) { continue }
   $patch = Join-Path $patchRoot $entry.patch
-  & git apply --check "--directory=$relative" -- $patch
+  & git -c core.autocrlf=false apply --check "--directory=$relative" -- $patch
   if ($LASTEXITCODE -ne 0) { throw "Irrlicht patch check failed: $patch" }
-  & git apply "--directory=$relative" -- $patch
+  & git -c core.autocrlf=false apply "--directory=$relative" -- $patch
   if ($LASTEXITCODE -ne 0) { throw "Irrlicht patch failed: $patch" }
   if ((FileHash $path) -ne $entry.after) { throw "Irrlicht patched hash mismatch: $path" }
  }

@@ -1,0 +1,2 @@
+# Patch context must preserve exact upstream bytes (Lua LF, Irrlicht mixed).
+/tools/patches/**/*.patch -text

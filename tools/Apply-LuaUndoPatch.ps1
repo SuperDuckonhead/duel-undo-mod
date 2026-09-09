@@ -27,9 +27,9 @@ try {
   $path = Join-Path $target $entry.file
   if ((FileHash $path) -eq $entry.after) { continue }
   $patch = Join-Path $patchRoot $entry.patch
-  & git apply --check "--directory=$relative" -- $patch
+  & git -c core.autocrlf=false apply --check "--directory=$relative" -- $patch
   if ($LASTEXITCODE -ne 0) { throw "Lua patch check failed: $patch" }
-  & git apply "--directory=$relative" -- $patch
+  & git -c core.autocrlf=false apply "--directory=$relative" -- $patch
   if ($LASTEXITCODE -ne 0) { throw "Lua patch failed: $patch" }
   if ((FileHash $path) -ne $entry.after) { throw "Lua patched hash mismatch: $path" }
  }
