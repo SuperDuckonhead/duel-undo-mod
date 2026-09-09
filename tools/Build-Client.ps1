@@ -30,6 +30,8 @@ foreach ($program in @($premake, $make, (Join-Path $llvmBin 'clang++.exe'))) {
     }
 }
 
+& (Join-Path $PSScriptRoot 'Apply-LuaUndoPatch.ps1')
+
 $premakeDirectories = @('event', 'freetype', 'irrlicht', 'jpeg', 'lua', 'lzma', 'miniaudio', 'png', 'sqlite3', 'zlib')
 foreach ($name in $premakeDirectories) {
     Copy-Item -Path (Join-Path $client "premake/$name/*") -Destination (Join-Path $client $name) -Recurse -Force

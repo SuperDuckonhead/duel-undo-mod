@@ -27,6 +27,8 @@ class duel {
 public:
 	char strbuffer[256]{};
 	int32_t rng_version{ 2 };
+ bool undo_deterministic{};
+ uint64_t lua_seed[2]{};
 	interpreter* lua;
 	field* game_field;
 	mtrandom random;
@@ -39,7 +41,7 @@ public:
 	std::unordered_set<effect*> effects;
 	std::unordered_set<effect*> uncopy;
 	
-	duel();
+	explicit duel(const uint32_t* undo_seed = nullptr);
 	~duel();
 	void clear();
 	

@@ -15,7 +15,19 @@
 #include "ocgapi.h"
 #include "buffer.h"
 
-duel::duel() {
+duel::duel(const uint32_t* undo_seed) {
+ if(undo_seed) {
+  undo_deterministic = true;
+  random.seed(const_cast<uint32_t*>(undo_seed), SEED_COUNT);
+  // Fold all seed words into two stable 64-bit Lua seeds before framework code.
+  lua_seed[0] = 14695981039346656037ULL;
+  lua_seed[1] = 7809847782465536322ULL;
+  for(unsigned i=0; i<SEED_COUNT; ++i) for(unsigned j=0;j<4;++j) {
+   auto b=static_cast<uint8_t>(undo_seed[i]>>(8*j));
+   lua_seed[0]=(lua_seed[0]^b)*1099511628211ULL;
+   lua_seed[1]=(lua_seed[1]^b)*14029467366897019727ULL;
+  }
+ }
 	lua = new interpreter(this, false);
 	game_field = new field(this);
 	game_field->temp_card = new_card(TEMP_CARD_ID);

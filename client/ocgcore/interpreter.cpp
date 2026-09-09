@@ -14,9 +14,21 @@
 #include "ocgapi.h"
 #include "interpreter.h"
 
+// Undo sessions replace only entropy-based reseeding. Explicit numeric seeds
+// retain Lua 5.4 semantics, and legacy duel/replay constructors are untouched.
+static int undo_randomseed(lua_State* L) {
+ int count=lua_gettop(L);
+ if(count==0) {
+  lua_pushvalue(L,lua_upvalueindex(2));
+  lua_pushvalue(L,lua_upvalueindex(3));
+  count=2;
+ }
+ lua_pushvalue(L,lua_upvalueindex(1));
+ lua_insert(L,1); lua_call(L,count,LUA_MULTRET); return lua_gettop(L);
+}
 interpreter::interpreter(duel* pd, bool enable_unsafe_libraries)
 	: coroutines(256), pduel(pd), enable_unsafe_feature(enable_unsafe_libraries) {
-	lua_state = luaL_newstate();
+	lua_state = pd->undo_deterministic ? luaL_newstate_seed(static_cast<unsigned int>(pd->lua_seed[0])) : luaL_newstate();
 	current_state = lua_state;
 	std::memcpy(lua_getextraspace(lua_state), &pd, LUA_EXTRASPACE); //set_duel_info
 	//Initial
@@ -48,7 +60,16 @@ interpreter::interpreter(duel* pd, bool enable_unsafe_libraries)
 		nil_out("loadfile");
 	}
 #endif
-	//open all libs
+	if(pd->undo_deterministic) {
+ lua_getglobal(lua_state,"math");
+ lua_getfield(lua_state,-1,"randomseed");
+ lua_pushinteger(lua_state,static_cast<lua_Integer>(pd->lua_seed[0]));
+ lua_pushinteger(lua_state,static_cast<lua_Integer>(pd->lua_seed[1]));
+ lua_pushcclosure(lua_state,undo_randomseed,3);
+ lua_pushvalue(lua_state,-1); lua_setfield(lua_state,-3,"randomseed");
+ lua_call(lua_state,0,0); lua_pop(lua_state,1);
+}
+ //open all libs
 	scriptlib::open_cardlib(lua_state);
 	scriptlib::open_effectlib(lua_state);
 	scriptlib::open_grouplib(lua_state);

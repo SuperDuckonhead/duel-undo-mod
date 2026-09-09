@@ -1,0 +1,12 @@
+diff --git a/src/lauxlib.h b/src/lauxlib.h
+index 5b977e2..c32c81e 100644
+--- a/src/lauxlib.h
++++ b/src/lauxlib.h
+@@ -99,6 +99,7 @@ LUALIB_API int (luaL_loadbufferx) (lua_State *L, const char *buff, size_t sz,
+ LUALIB_API int (luaL_loadstring) (lua_State *L, const char *s);
+ 
+ LUALIB_API lua_State *(luaL_newstate) (void);
++LUALIB_API lua_State *(luaL_newstate_seed) (unsigned int seed);
+ 
+ LUALIB_API lua_Integer (luaL_len) (lua_State *L, int idx);
+ 

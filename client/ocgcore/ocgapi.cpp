@@ -27,20 +27,33 @@ static card_reader creader = default_card_reader;
 static message_handler mhandler = default_message_handler;
 static byte buffer[0x100000];
 static std::set<duel*> duel_set;
+std::recursive_mutex& ocgapi_mutex() { static std::recursive_mutex mutex; return mutex; }
+script_reader get_script_reader() { std::lock_guard<std::recursive_mutex> lock(ocgapi_mutex()); return sreader; }
+card_reader get_card_reader() { std::lock_guard<std::recursive_mutex> lock(ocgapi_mutex()); return creader; }
+message_handler get_message_handler() { std::lock_guard<std::recursive_mutex> lock(ocgapi_mutex()); return mhandler; }
+intptr_t create_duel_undo(uint32_t seed_sequence[]) {
+ std::lock_guard<std::recursive_mutex> lock(ocgapi_mutex());
+ auto* pd=new duel(seed_sequence); duel_set.insert(pd); return reinterpret_cast<intptr_t>(pd);
+}
 
 void set_script_reader(script_reader f) {
+ std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	sreader = f;
 }
 void set_card_reader(card_reader f) {
+ std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	creader = f;
 }
 void set_message_handler(message_handler f) {
+ std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	mhandler = f;
 }
 byte* read_script(const char* script_name, int* len) {
+ std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	return sreader(script_name, len);
 }
 uint32_t read_card(uint32_t code, card_data* data) {
+ std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	if (code == TEMP_CARD_ID) {
 		data->clear();
 		return 0;
@@ -48,9 +61,11 @@ uint32_t read_card(uint32_t code, card_data* data) {
 	return creader(code, data);
 }
 uint32_t handle_message(void* pduel, uint32_t message_type) {
+ std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	return mhandler((intptr_t)pduel, message_type);
 }
 byte* default_script_reader(const char* script_name, int* slen) {
+ std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	FILE *fp;
 	fp = std::fopen(script_name, "rb");
 	if (!fp)
@@ -63,6 +78,7 @@ byte* default_script_reader(const char* script_name, int* slen) {
 	return buffer;
 }
 intptr_t create_duel(uint_fast32_t seed) {
+ std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	duel* pduel = new duel();
 	duel_set.insert(pduel);
 	pduel->random.seed(seed);
@@ -70,6 +86,7 @@ intptr_t create_duel(uint_fast32_t seed) {
 	return (intptr_t)pduel;
 }
 intptr_t create_duel_v2(uint32_t seed_sequence[]) {
+ std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	duel* pduel = new duel();
 	duel_set.insert(pduel);
 	pduel->random.seed(seed_sequence, SEED_COUNT);
@@ -77,6 +94,7 @@ intptr_t create_duel_v2(uint32_t seed_sequence[]) {
 	return (intptr_t)pduel;
 }
 void start_duel(intptr_t pduel, uint32_t options) {
+ std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	duel* pd = (duel*)pduel;
 	uint16_t duel_rule = options >> 16;
 	uint16_t duel_options = options & 0xffff;
@@ -122,6 +140,7 @@ void start_duel(intptr_t pduel, uint32_t options) {
 	pd->game_field->add_process(PROCESSOR_TURN, 0, 0, 0, 0, 0);
 }
 void end_duel(intptr_t pduel) {
+ std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	duel* pd = (duel*)pduel;
 	if(duel_set.count(pd)) {
 		duel_set.erase(pd);
@@ -129,6 +148,7 @@ void end_duel(intptr_t pduel) {
 	}
 }
 void set_player_info(intptr_t pduel, int32_t playerid, int32_t lp, int32_t startcount, int32_t drawcount) {
+ std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	if (!check_playerid(playerid))
 		return;
 	duel* pd = (duel*)pduel;
@@ -140,16 +160,19 @@ void set_player_info(intptr_t pduel, int32_t playerid, int32_t lp, int32_t start
 		pd->game_field->player[playerid].draw_count = drawcount;
 }
 void get_log_message(intptr_t pduel, char* buf) {
+ std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	duel* pd = (duel*)pduel;
 	std::strncpy(buf, pd->strbuffer, sizeof pd->strbuffer - 1);
 	buf[sizeof pd->strbuffer - 1] = 0;
 }
 int32_t get_message(intptr_t pduel, byte* buf) {
+ std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	int32_t len = ((duel*)pduel)->read_buffer(buf);
 	((duel*)pduel)->clear_buffer();
 	return len;
 }
 uint32_t process(intptr_t pduel) {
+ std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	duel* pd = (duel*)pduel;
 	uint32_t result = 0; 
 	do {
@@ -158,6 +181,7 @@ uint32_t process(intptr_t pduel) {
 	return result;
 }
 void new_card(intptr_t pduel, uint32_t code, uint8_t owner, uint8_t playerid, uint8_t location, uint8_t sequence, uint8_t position) {
+ std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	if (!check_playerid(owner) || !check_playerid(playerid))
 		return;
 	duel* ptduel = (duel*)pduel;
@@ -176,6 +200,7 @@ void new_card(intptr_t pduel, uint32_t code, uint8_t owner, uint8_t playerid, ui
 	}
 }
 void new_tag_card(intptr_t pduel, uint32_t code, uint8_t owner, uint8_t location) {
+ std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	duel* ptduel = (duel*)pduel;
 	if(owner > 1 || !(location & (LOCATION_DECK | LOCATION_EXTRA)))
 		return;
@@ -205,6 +230,7 @@ void new_tag_card(intptr_t pduel, uint32_t code, uint8_t owner, uint8_t location
 * @return buffer length in bytes
 */
 int32_t query_card(intptr_t pduel, uint8_t playerid, uint8_t location, uint8_t sequence, uint32_t query_flag, byte* buf, int32_t use_cache) {
+ std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	if (!check_playerid(playerid))
 		return LEN_FAIL;
 	duel* ptduel = (duel*)pduel;
@@ -230,6 +256,7 @@ int32_t query_card(intptr_t pduel, uint8_t playerid, uint8_t location, uint8_t s
 	}
 }
 int32_t query_field_count(intptr_t pduel, uint8_t playerid, uint8_t location) {
+ std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	duel* ptduel = (duel*)pduel;
 	if (!check_playerid(playerid))
 		return 0;
@@ -261,6 +288,7 @@ int32_t query_field_count(intptr_t pduel, uint8_t playerid, uint8_t location) {
 	return 0;
 }
 int32_t query_field_card(intptr_t pduel, uint8_t playerid, uint8_t location, uint32_t query_flag, byte* buf, int32_t use_cache) {
+ std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	if (!check_playerid(playerid))
 		return LEN_FAIL;
 	duel* ptduel = (duel*)pduel;
@@ -308,6 +336,7 @@ int32_t query_field_card(intptr_t pduel, uint8_t playerid, uint8_t location, uin
 	return (int32_t)(p - buf);
 }
 int32_t query_field_info(intptr_t pduel, byte* buf) {
+ std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	duel* ptduel = (duel*)pduel;
 	byte* p = buf;
 	*p++ = MSG_RELOAD_FIELD;
@@ -352,11 +381,14 @@ int32_t query_field_info(intptr_t pduel, byte* buf) {
 	return (int32_t)(p - buf);
 }
 void set_responsei(intptr_t pduel, int32_t value) {
+ std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	((duel*)pduel)->set_responsei(value);
 }
 void set_responseb(intptr_t pduel, byte* buf) {
+ std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	((duel*)pduel)->set_responseb(buf);
 }
 int32_t preload_script(intptr_t pduel, const char* script_name) {
+ std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	return ((duel*)pduel)->lua->load_script(script_name);
 }

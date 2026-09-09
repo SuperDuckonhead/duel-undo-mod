@@ -1,0 +1,13 @@
+diff --git a/src/lua.h b/src/lua.h
+index f3ea590..a167f2d 100644
+--- a/src/lua.h
++++ b/src/lua.h
+@@ -161,6 +161,8 @@ extern const char lua_ident[];
+ ** state manipulation
+ */
+ LUA_API lua_State *(lua_newstate) (lua_Alloc f, void *ud);
++/* Optional deterministic string-hash seed for isolated undo sessions. */
++LUA_API lua_State *(lua_newstate_seed) (lua_Alloc f, void *ud, unsigned int seed);
+ LUA_API void       (lua_close) (lua_State *L);
+ LUA_API lua_State *(lua_newthread) (lua_State *L);
+ LUA_API int        (lua_closethread) (lua_State *L, lua_State *from);

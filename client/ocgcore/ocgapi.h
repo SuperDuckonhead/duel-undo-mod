@@ -9,6 +9,8 @@
 #define OCGAPI_H_
 
 #include "common.h"
+#include <mutex>
+std::recursive_mutex& ocgapi_mutex();
 
 #if defined(OCGCORE_EXPORT_FUNCTIONS)
 #ifdef _WIN32
@@ -40,6 +42,10 @@ OCGCORE_API void set_message_handler(message_handler f);
 
 OCGCORE_API intptr_t create_duel(uint_fast32_t seed);
 OCGCORE_API intptr_t create_duel_v2(uint32_t seed_sequence[]);
+OCGCORE_API intptr_t create_duel_undo(uint32_t seed_sequence[]);
+OCGCORE_API script_reader get_script_reader();
+OCGCORE_API card_reader get_card_reader();
+OCGCORE_API message_handler get_message_handler();
 OCGCORE_API void start_duel(intptr_t pduel, uint32_t options);
 OCGCORE_API void end_duel(intptr_t pduel);
 OCGCORE_API void set_player_info(intptr_t pduel, int32_t playerid, int32_t lp, int32_t startcount, int32_t drawcount);

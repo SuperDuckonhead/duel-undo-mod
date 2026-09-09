@@ -1,0 +1,26 @@
+[
+  {
+    "after": "4424db257d8de6307a7db52e0e5413d02c4e90c86a42f3e3f5ad0e12bad37bdd",
+    "patch": "lua.h.patch",
+    "before": "3b77329f9deed929a5cbe7a7d5fc81ebbb63fd869a49e0a9302fe9240caf1930",
+    "file": "src/lua.h"
+  },
+  {
+    "after": "80b2def44a72900f9bf694d6d37c84d2830212bde5e2c2a816afbb667548cb0f",
+    "patch": "lstate.c.patch",
+    "before": "5b2003a6bd7c8d98af10f4851ced899581130d5ba9db831cedcc7ac53314e806",
+    "file": "src/lstate.c"
+  },
+  {
+    "after": "e313d8c53a3e9418d4aea56edee6e8e9e805619ca6e7dede225e9a93f67619b1",
+    "patch": "lauxlib.h.patch",
+    "before": "2d9e18e577a6062646268e7f7228264c28bd9b972c186e1af81b8357179c0ab4",
+    "file": "src/lauxlib.h"
+  },
+  {
+    "after": "91e0ed89424011f5ca9a0229c3da6e70ecd251e3cf8fa417c3c115d470ed9788",
+    "patch": "lauxlib.c.patch",
+    "before": "50ef12f21926fa3b80d1e9e611c5e4669012efe792b5a3515fd5a7ee1cc796e3",
+    "file": "src/lauxlib.c"
+  }
+]

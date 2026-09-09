@@ -1,4 +1,5 @@
 #include "data_manager.h"
+#include "undo/resource_view.h"
 #include "game.h"
 #include "client_card.h"
 #include "file_system.h"
@@ -491,29 +492,20 @@ uint32_t DataManager::CardReader(uint32_t code, card_data* pData) {
 	return 0;
 }
 unsigned char* DataManager::ScriptReaderEx(const char* script_path, int* slen) {
-	// default script name: ./script/c%d.lua
-	if (std::strncmp(script_path, "./script", 8) != 0) // not a card script file
-		return ReadScriptFromFile(script_path, slen);
-	const char* script_name = script_path + 2;
-	char expansions_path[1024]{};
-	mysnprintf(expansions_path, "./expansions/%s", script_name);
-	if (mainGame->gameConf.prefer_expansion_script) { // debug script with raw file in expansions
-		if (ReadScriptFromFile(expansions_path, slen))
-			return scriptBuffer;
-		if (ReadScriptFromIrrFS(script_name, slen))
-			return scriptBuffer;
-		if (ReadScriptFromFile(script_path, slen))
-			return scriptBuffer;
-	} else {
-		if (ReadScriptFromIrrFS(script_name, slen))
-			return scriptBuffer;
-		if (ReadScriptFromFile(script_path, slen))
-			return scriptBuffer;
-		if (ReadScriptFromFile(expansions_path, slen))
-			return scriptBuffer;
-	}
-
-	return nullptr;
+ // Preserve direct scenario paths for legacy callers.
+ if(std::strncmp(script_path,"./script",8)!=0) return ReadScriptFromFile(script_path,slen);
+ // Share the exact resolver used when freezing an undo session.
+ try {
+  auto bytes = undo::ResourceView::Resolve(".", dataManager.IrrFileSystem,
+    mainGame->gameConf.prefer_expansion_script != 0, script_path);
+  if (!bytes) return nullptr;
+  std::copy(bytes->begin(), bytes->end(), scriptBuffer);
+  *slen = static_cast<int>(bytes->size());
+  return scriptBuffer;
+ } catch (const std::exception&) { return nullptr; }
+}
+std::shared_ptr<const undo::ResourceView> DataManager::CaptureResources(const std::string& root, bool prefer) const {
+ return undo::ResourceView::Capture(root, *this, prefer);
 }
 unsigned char* DataManager::ReadScriptFromIrrFS(const char* script_name, int* slen) {
 	auto reader = dataManager.IrrFileSystem->createAndOpenFile(script_name);
