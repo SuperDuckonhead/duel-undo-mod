@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 #include <random>
+#include "undo/editor_history.h"
+#include "undo/editor_input.h"
 #include <IEventReceiver.h>
 #include <vector2d.h>
 
@@ -16,6 +18,20 @@ class DeckBuilder: public irr::IEventReceiver {
 public:
 	DeckBuilder();
 	bool OnEvent(const irr::SEvent& event) override;
+	undo::DeckSnapshot CaptureEditorDeck() const;
+	bool RestoreEditorDeck(const undo::DeckSnapshot& snapshot);
+	void BeginEditorEdit();
+	void FinishEditorEdit(bool accepted);
+	bool UndoEditorEdit();
+	void ResetEditorHistory();
+	void EditorDeckSaved();
+	bool LoadEditorDeck(const wchar_t* file, bool pack = false);
+	void CancelEditorDrag();
+	undo::EditorInputState EditorUndoState() const;
+	void RefreshEditorUndo();
+	undo::EditorHistory editorHistory;
+	std::optional<undo::DeckSnapshot> editorEditStart;
+	bool editorHistoryValid{true};
 	void Initialize();
 	void Terminate();
 	void GetHoveredCard();

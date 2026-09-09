@@ -79,6 +79,8 @@ static int mymain(int wargc, const wchar_t* const wargv[]) {
 		if(wargv[i][0] == L'-' && wargv[i][1] == L'e' && wargv[i][2] != L'\0') {
 			char file[1024];
 			BufferIO::EncodeUTF8(wargv[i] + 2, file);
+			if(ygo::mainGame->is_building && !ygo::mainGame->is_siding)
+				ygo::mainGame->deckBuilder.Terminate();
 			ygo::dataManager.LoadDB(file);
 			continue;
 		}
@@ -87,6 +89,8 @@ static int mymain(int wargc, const wchar_t* const wargv[]) {
 			if(i < wargc) {
 				char file[1024];
 				BufferIO::EncodeUTF8(wargv[i], file);
+				if(ygo::mainGame->is_building && !ygo::mainGame->is_siding)
+					ygo::mainGame->deckBuilder.Terminate();
 				ygo::dataManager.LoadDB(file);
 			}
 			continue;

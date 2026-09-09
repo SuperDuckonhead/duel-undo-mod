@@ -43,6 +43,11 @@ int main() {
     CHECK(history.CanUndo());
     CHECK(history.Undo().value() == initial);
 
+    CHECK(history.Dirty(initial));
+    // A cancelled gesture is a no-op even though its live vector had a provisional pop.
+    const auto cancelled = initial;
+    CHECK(!history.Record(initial, cancelled));
+    CHECK(!history.CanUndo());
     CHECK(history.Record(initial, moved));
     history.Reset(removed);
     CHECK(!history.CanUndo());

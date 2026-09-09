@@ -1,5 +1,6 @@
 #include "config.h"
 #include "game.h"
+#include "undo/strings_zh.h"
 #include "CGUITTFont.h"
 #include "file_system.h"
 #include "image_manager.h"
@@ -278,7 +279,7 @@ bool Game::Initialize() {
 	default:
 		cbRule->setSelected(5);
 		break;
-	}	
+	}
 	env->addStaticText(dataManager.GetSysString(1227), irr::core::rect<irr::s32>(20, 90, 220, 110), false, false, wCreateHost);
 	cbMatchMode = env->addComboBox(irr::core::rect<irr::s32>(140, 85, 300, 110), wCreateHost);
 	cbMatchMode->addItem(dataManager.GetSysString(1244));
@@ -742,6 +743,8 @@ bool Game::Initialize() {
 	btnDeleteDeck = env->addButton(irr::core::rect<irr::s32>(225, 95, 290, 120), wDeckEdit, BUTTON_DELETE_DECK, dataManager.GetSysString(1308));
 	btnShuffleDeck = env->addButton(irr::core::rect<irr::s32>(5, 99, 55, 120), wDeckEdit, BUTTON_SHUFFLE_DECK, dataManager.GetSysString(1307));
 	btnSortDeck = env->addButton(irr::core::rect<irr::s32>(60, 99, 110, 120), wDeckEdit, BUTTON_SORT_DECK, dataManager.GetSysString(1305));
+	btnUndoDeck = env->addButton(irr::core::rect<irr::s32>(170, 99, 220, 120), wDeckEdit, BUTTON_UNDO_DECK, undo::EditorUndoText);
+	btnUndoDeck->setEnabled(false);
 	btnClearDeck = env->addButton(irr::core::rect<irr::s32>(115, 99, 165, 120), wDeckEdit, BUTTON_CLEAR_DECK, dataManager.GetSysString(1304));
 	btnSideOK = env->addButton(irr::core::rect<irr::s32>(400, 40, 710, 80), 0, BUTTON_SIDE_OK, dataManager.GetSysString(1334));
 	btnSideOK->setVisible(false);
@@ -1038,6 +1041,10 @@ void Game::MainLoop() {
 	auto lastFrameTime = std::chrono::steady_clock::now();
 	constexpr auto targetFrameDuration = std::chrono::microseconds(16667);
 	while(device->run()) {
+		if(is_building && !is_siding) {
+			if(!device->isWindowActive()) deckBuilder.CancelEditorDrag();
+			deckBuilder.RefreshEditorUndo();
+		}
 		auto size = driver->getScreenSize();
 		if(window_size != size) {
 			window_size = size;
@@ -1238,6 +1245,7 @@ std::wstring Game::SetStaticText(irr::gui::IGUIStaticText* pControl, irr::u32 cW
 	return result;
 }
 void Game::LoadExpansions() {
+	if(is_building && !is_siding) deckBuilder.Terminate();
 	FileSystem::TraversalDir("./expansions", [](const char* name, bool isdir) {
 		if (isdir)
 			return;
@@ -2032,6 +2040,7 @@ void Game::OnResize() {
 	wMainMenu->setRelativePosition(ResizeWin(370, 200, 650, 415));
 	wDeckEdit->setRelativePosition(Resize(309, 5, 605, 130));
 	cbDBDecks->setRelativePosition(Resize(80, 35, 220, 60));
+	btnUndoDeck->setRelativePosition(Resize(170, 99, 220, 120));
 	btnClearDeck->setRelativePosition(Resize(115, 99, 165, 120));
 	btnSortDeck->setRelativePosition(Resize(60, 99, 110, 120));
 	btnShuffleDeck->setRelativePosition(Resize(5, 99, 55, 120));

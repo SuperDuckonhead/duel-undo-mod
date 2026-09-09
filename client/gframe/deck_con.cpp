@@ -2,6 +2,8 @@
 #include <array>
 #include "config.h"
 #include "deck_con.h"
+#include "undo/strings_zh.h"
+#include <new>
 #include "data_manager.h"
 #include "deck_manager.h"
 #include "file_system.h"
@@ -52,8 +54,128 @@ static inline void get_deck_file(wchar_t* ret) {
 	DeckManager::GetDeckFile(ret, mainGame->cbDBCategory->getSelected(), mainGame->cbDBCategory->getText(), mainGame->cbDBDecks->getText());
 }
 
-static inline void load_current_deck(irr::gui::IGUIComboBox* cbCategory, irr::gui::IGUIComboBox* cbDeck) {
-	deckManager.LoadCurrentDeck(cbCategory->getSelected(), cbCategory->getText(), cbDeck->getText());
+static inline bool load_current_deck(irr::gui::IGUIComboBox* cbCategory, irr::gui::IGUIComboBox* cbDeck) {
+	if(mainGame->is_building && !mainGame->is_siding) {
+		wchar_t file[256];
+		DeckManager::GetDeckFile(file, cbCategory->getSelected(), cbCategory->getText(), cbDeck->getText());
+		return mainGame->deckBuilder.LoadEditorDeck(file, cbCategory->getSelected() == DECK_CATEGORY_PACK);
+	} else {
+		return deckManager.LoadCurrentDeck(cbCategory->getSelected(), cbCategory->getText(), cbDeck->getText());
+	}
+}
+
+undo::DeckSnapshot DeckBuilder::CaptureEditorDeck() const {
+	undo::DeckSnapshot snapshot;
+	const auto& deck = deckManager.current_deck;
+	const std::vector<const CardDataC*>* zones[] = {&deck.main, &deck.extra, &deck.side};
+	for(size_t i = 0; i < snapshot.size(); ++i)
+		for(const auto card : *zones[i]) snapshot[i].push_back(card->code);
+	return snapshot;
+}
+bool DeckBuilder::RestoreEditorDeck(const undo::DeckSnapshot& snapshot) {
+	try {
+		Deck restored;
+		std::vector<const CardDataC*>* zones[] = {&restored.main, &restored.extra, &restored.side};
+		const auto& data = dataManager.GetDataTable();
+		for(size_t i = 0; i < snapshot.size(); ++i) {
+			zones[i]->reserve(snapshot[i].size());
+			for(const auto code : snapshot[i]) {
+				const auto card = data.find(code);
+				if(card == data.end()) {
+					editorHistoryValid = false;
+					mainGame->stACMessage->setText(undo::EditorUndoInvalidText);
+					mainGame->PopupElement(mainGame->wACMessage, 40);
+					RefreshEditorUndo();
+					return false;
+				}
+				zones[i]->push_back(&card->second);
+			}
+		}
+		std::swap(deckManager.current_deck, restored);
+		return true;
+	} catch(const std::bad_alloc&) { return false; }
+}
+void DeckBuilder::BeginEditorEdit() {
+	if(!mainGame->is_siding && !readonly && !editorEditStart)
+		editorEditStart = CaptureEditorDeck();
+}
+void DeckBuilder::FinishEditorEdit(bool accepted) {
+	if(!editorEditStart) return;
+	if(!accepted) {
+		if(!RestoreEditorDeck(*editorEditStart)) return;
+	} else if(editorHistoryValid) {
+		editorHistory.Record(*editorEditStart, CaptureEditorDeck());
+	}
+	editorEditStart.reset();
+	is_modified = editorHistory.Dirty(CaptureEditorDeck());
+	hovered_code = 0; hovered_seq = -1; hovered_pos = 0; is_lastcard = 0;
+	GetHoveredCard();
+	RefreshEditorUndo();
+}
+void DeckBuilder::CancelEditorDrag() {
+	if(!editorEditStart && !is_starting_dragging) return;
+	is_draging = false;
+	is_starting_dragging = false;
+	FinishEditorEdit(false);
+	draging_pointer = nullptr;
+}
+undo::EditorInputState DeckBuilder::EditorUndoState() const {
+	bool textFocus = false, modalFocus = false;
+	for(auto focus = mainGame->env->getFocus(); focus; focus = focus->getParent()) {
+		textFocus |= focus->getType() == irr::gui::EGUIET_EDIT_BOX;
+		modalFocus |= focus->getType() == irr::gui::EGUIET_MODAL_SCREEN;
+	}
+	return {editorHistoryValid && editorHistory.CanUndo(), textFocus,
+		readonly || !mainGame->is_building, is_draging || is_starting_dragging || bool(editorEditStart),
+		modalFocus || havePopupWindow() || mainGame->wMessage->isVisible() || mainGame->wBigCard->isVisible(),
+		mainGame->is_siding};
+}
+void DeckBuilder::RefreshEditorUndo() {
+	if(!mainGame->btnUndoDeck) return;
+	mainGame->btnUndoDeck->setEnabled(undo::CanEditorUndo(EditorUndoState()));
+	mainGame->btnUndoDeck->setToolTipText(!editorHistoryValid ? undo::EditorUndoInvalidText :
+		(editorHistory.CanUndo() ? undo::EditorUndoHint : undo::EditorUndoEmptyText));
+}
+bool DeckBuilder::UndoEditorEdit() {
+	if(!undo::CanEditorUndo(EditorUndoState())) return false;
+	try {
+		auto candidate = editorHistory;
+		auto snapshot = candidate.Undo();
+		if(!snapshot || !RestoreEditorDeck(*snapshot)) return false;
+		std::swap(editorHistory, candidate);
+	} catch(const std::bad_alloc&) { return false; }
+	is_modified = editorHistory.Dirty(CaptureEditorDeck());
+	hovered_code = 0; hovered_seq = -1; hovered_pos = 0; click_pos = 0; is_lastcard = 0;
+	draging_pointer = nullptr;
+	mainGame->ClearCardInfo();
+	GetHoveredCard();
+	RefreshEditorUndo();
+	return true;
+}
+void DeckBuilder::ResetEditorHistory() {
+	editorEditStart.reset();
+	editorHistory.Reset(CaptureEditorDeck());
+	editorHistoryValid = true;
+	is_modified = false;
+	RefreshEditorUndo();
+}
+void DeckBuilder::EditorDeckSaved() {
+	editorHistory.Saved(CaptureEditorDeck());
+	is_modified = false;
+	RefreshEditorUndo();
+}
+bool DeckBuilder::LoadEditorDeck(const wchar_t* file, bool pack) {
+	CancelEditorDrag();
+	// The baseline loader clears current_deck before even opening the file.
+	// Preserve the stable pointers and history until it actually succeeds.
+	auto previous = deckManager.current_deck;
+	if(!deckManager.LoadCurrentDeck(file, pack)) {
+		std::swap(deckManager.current_deck, previous);
+		return false;
+	}
+	ResetEditorHistory();
+	RefreshPackListScroll();
+	return true;
 }
 
 DeckBuilder::DeckBuilder() {
@@ -99,10 +221,15 @@ void DeckBuilder::Initialize() {
 	RefreshPackListScroll();
 	prev_operation = 0;
 	prev_sel = -1;
-	is_modified = false;
+	ResetEditorHistory();
 	mainGame->device->setEventReceiver(this);
 }
 void DeckBuilder::Terminate() {
+	CancelEditorDrag();
+	ResetEditorHistory();
+	results.clear();
+	draging_pointer = nullptr;
+	hovered_code = 0; hovered_seq = -1; hovered_pos = 0; click_pos = 0;
 	mainGame->is_building = false;
 	mainGame->ClearCardInfo();
 	mainGame->wDeckEdit->setVisible(false);
@@ -136,6 +263,17 @@ void DeckBuilder::Terminate() {
 		mainGame->device->closeDevice();
 }
 bool DeckBuilder::OnEvent(const irr::SEvent& event) {
+	if(event.EventType == irr::EET_KEY_INPUT_EVENT && event.KeyInput.PressedDown) {
+		if(event.KeyInput.Key == irr::KEY_ESCAPE && (is_draging || is_starting_dragging)) {
+			CancelEditorDrag();
+			return true;
+		}
+		if(event.KeyInput.Control && event.KeyInput.Key == irr::KEY_KEY_Z) {
+			if(EditorUndoState().textFocus) return false;
+			return UndoEditorEdit();
+		}
+	}
+	bool finishEdit = false;
 	if(mainGame->dField.OnCommonEvent(event))
 		return false;
 	auto& _datas = dataManager.GetDataTable();
@@ -165,7 +303,11 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 		case irr::gui::EGET_BUTTON_CLICKED: {
 			soundManager.PlaySoundEffect(SOUND_BUTTON);
 			switch(id) {
+			case BUTTON_UNDO_DECK: {
+				return UndoEditorEdit();
+			}
 			case BUTTON_CLEAR_DECK: {
+				CancelEditorDrag();
 				mainGame->gMutex.lock();
 				mainGame->SetStaticText(mainGame->stQMessage, 310, mainGame->guiFont, dataManager.GetSysString(1339));
 				mainGame->PopupElement(mainGame->wQuery);
@@ -174,18 +316,25 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 				break;
 			}
 			case BUTTON_SORT_DECK: {
+				if((!mainGame->is_siding && readonly) || is_draging || is_starting_dragging) break;
+				BeginEditorEdit();
+				finishEdit = true;
 				std::sort(deckManager.current_deck.main.begin(), deckManager.current_deck.main.end(), DataManager::deck_sort_lv);
 				std::sort(deckManager.current_deck.extra.begin(), deckManager.current_deck.extra.end(), DataManager::deck_sort_lv);
 				std::sort(deckManager.current_deck.side.begin(), deckManager.current_deck.side.end(), DataManager::deck_sort_lv);
-				is_modified = true;
+				if(mainGame->is_siding) is_modified = true;
 				break;
 			}
 			case BUTTON_SHUFFLE_DECK: {
+				if((!mainGame->is_siding && readonly) || is_draging || is_starting_dragging) break;
+				BeginEditorEdit();
+				finishEdit = true;
 				std::shuffle(deckManager.current_deck.main.begin(), deckManager.current_deck.main.end(), rnd);
-				is_modified = true;
+				if(mainGame->is_siding) is_modified = true;
 				break;
 			}
 			case BUTTON_SAVE_DECK: {
+				CancelEditorDrag();
 				int sel = mainGame->cbDBDecks->getSelected();
 				if(sel == -1)
 					break;
@@ -194,11 +343,12 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 				if(DeckManager::SaveDeck(deckManager.current_deck, filepath)) {
 					mainGame->stACMessage->setText(dataManager.GetSysString(1335));
 					mainGame->PopupElement(mainGame->wACMessage, 20);
-					is_modified = false;
+					EditorDeckSaved();
 				}
 				break;
 			}
 			case BUTTON_SAVE_DECK_AS: {
+				CancelEditorDrag();
 				const wchar_t* dname = mainGame->ebDeckname->getText();
 				if(*dname == 0)
 					break;
@@ -209,13 +359,7 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 						break;
 					}
 				}
-				if(sel >= 0)
-					mainGame->cbDBDecks->setSelected(sel);
-				else {
-					mainGame->cbDBDecks->addItem(dname);
-					mainGame->cbDBDecks->setSelected(mainGame->cbDBDecks->getItemCount() - 1);
-				}
-				prev_deck = mainGame->cbDBDecks->getSelected();
+				const bool sameDeck = sel >= 0 && sel == mainGame->cbDBDecks->getSelected();
 				int catesel = mainGame->cbDBCategory->getSelected();
 				wchar_t catepath[256];
 				DeckManager::GetCategoryPath(catepath, catesel, mainGame->cbDBCategory->getText());
@@ -224,7 +368,10 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 				if(DeckManager::SaveDeck(deckManager.current_deck, filepath)) {
 					mainGame->stACMessage->setText(dataManager.GetSysString(1335));
 					mainGame->PopupElement(mainGame->wACMessage, 20);
-					is_modified = false;
+					if(sel < 0) sel = mainGame->cbDBDecks->addItem(dname);
+					mainGame->cbDBDecks->setSelected(sel);
+					prev_deck = sel;
+					if(sameDeck) EditorDeckSaved(); else ResetEditorHistory();
 					if(catesel == -1) {
 						catesel = 2;
 						prev_category = catesel;
@@ -506,6 +653,7 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 					myswprintf(filepath, L"%ls/%ls.ydk", catepath, deckname);
 					bool res = false;
 					if(!FileSystem::IsFileExists(filepath)) {
+						const auto previous = deckManager.current_deck;
 						if(prev_operation == BUTTON_NEW_DECK) {
 							deckManager.current_deck.main.clear();
 							deckManager.current_deck.extra.clear();
@@ -518,12 +666,14 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 							}
 						}
 						res = DeckManager::SaveDeck(deckManager.current_deck, filepath);
+						if(!res) { deckManager.current_deck = previous; break; }
+						ResetEditorHistory();
 						RefreshDeckList();
 						ChangeCategory(mainGame->lstCategories->getSelected());
 					}
 					for(int i = 0; i < (int)mainGame->lstDecks->getItemCount(); i++) {
 						if(!mywcsncasecmp(mainGame->lstDecks->getListItem(i), deckname, 256)) {
-							deckManager.LoadCurrentDeck(filepath);
+							LoadEditorDeck(filepath);
 							prev_deck = i;
 							mainGame->cbDBDecks->setSelected(prev_deck);
 							mainGame->lstDecks->setSelected(prev_deck);
@@ -556,7 +706,7 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 					ChangeCategory(catesel);
 					for(int i = 0; i < (int)mainGame->lstDecks->getItemCount(); i++) {
 						if(!mywcsncasecmp(mainGame->lstDecks->getListItem(i), newdeckname, 256)) {
-							deckManager.LoadCurrentDeck(newfilepath);
+							LoadEditorDeck(newfilepath);
 							prev_deck = i;
 							mainGame->cbDBDecks->setSelected(prev_deck);
 							mainGame->lstDecks->setSelected(prev_deck);
@@ -620,7 +770,7 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 					ChangeCategory(catesel);
 					for(int i = 0; i < (int)mainGame->lstDecks->getItemCount(); i++) {
 						if(!mywcsncasecmp(mainGame->lstDecks->getListItem(i), deckname, 256)) {
-							deckManager.LoadCurrentDeck(newfilepath);
+							LoadEditorDeck(newfilepath);
 							prev_deck = i;
 							mainGame->cbDBDecks->setSelected(prev_deck);
 							mainGame->lstDecks->setSelected(prev_deck);
@@ -658,7 +808,7 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 					ChangeCategory(catesel);
 					for(int i = 0; i < (int)mainGame->lstDecks->getItemCount(); i++) {
 						if(!mywcsncasecmp(mainGame->lstDecks->getListItem(i), deckname, 256)) {
-							deckManager.LoadCurrentDeck(newfilepath);
+							LoadEditorDeck(newfilepath);
 							prev_deck = i;
 							mainGame->cbDBDecks->setSelected(prev_deck);
 							mainGame->lstDecks->setSelected(prev_deck);
@@ -732,10 +882,12 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 				if(!mainGame->is_building || mainGame->is_siding)
 					break;
 				if(prev_operation == BUTTON_CLEAR_DECK) {
+					BeginEditorEdit();
+					finishEdit = true;
 					deckManager.current_deck.main.clear();
 					deckManager.current_deck.extra.clear();
 					deckManager.current_deck.side.clear();
-					is_modified = true;
+					if(mainGame->is_siding) is_modified = true;
 				} else if(prev_operation == BUTTON_DELETE_DECK) {
 					int sel = prev_sel;
 					mainGame->cbDBDecks->setSelected(sel);
@@ -752,7 +904,7 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 						mainGame->stACMessage->setText(dataManager.GetSysString(1338));
 						mainGame->PopupElement(mainGame->wACMessage, 20);
 						prev_deck = sel;
-						is_modified = false;
+
 					}
 					prev_sel = -1;
 				} else if(prev_operation == BUTTON_LEAVE_GAME) {
@@ -762,9 +914,9 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 					ChangeCategory(catesel);
 				} else if(prev_operation == COMBOBOX_DBDECKS) {
 					int decksel = mainGame->cbDBDecks->getSelected();
-					load_current_deck(mainGame->cbDBCategory, mainGame->cbDBDecks);
-					prev_deck = decksel;
-					is_modified = false;
+					if(load_current_deck(mainGame->cbDBCategory, mainGame->cbDBDecks)) prev_deck = decksel;
+					else mainGame->cbDBDecks->setSelected(prev_deck);
+
 				} else if(prev_operation == BUTTON_MANAGE_DECK) {
 					ShowDeckManage();
 				}
@@ -878,11 +1030,10 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 					break;
 				}
 				int decksel = mainGame->cbDBDecks->getSelected();
-				if(decksel >= 0) {
-					load_current_deck(mainGame->cbDBCategory, mainGame->cbDBDecks);
-				}
-				prev_deck = decksel;
-				is_modified = false;
+				if(decksel >= 0 && load_current_deck(mainGame->cbDBCategory, mainGame->cbDBDecks))
+					prev_deck = decksel;
+				else mainGame->cbDBDecks->setSelected(prev_deck);
+
 				break;
 			}
 			case COMBOBOX_MAINTYPE: {
@@ -1039,7 +1190,7 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 				wchar_t catepath[256];
 				DeckManager::GetCategoryPath(catepath, mainGame->lstCategories->getSelected(), mainGame->lstCategories->getListItem(mainGame->lstCategories->getSelected()));
 				myswprintf(filepath, L"%ls/%ls.ydk", catepath, mainGame->lstDecks->getListItem(decksel));
-				deckManager.LoadCurrentDeck(filepath, showing_pack);
+				LoadEditorDeck(filepath, showing_pack);
 				RefreshPackListScroll();
 				prev_deck = decksel;
 				break;
@@ -1101,7 +1252,7 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 				pushed = push_side(draging_pointer, hovered_seq + is_lastcard);
 			else if(hovered_pos == 4 && !mainGame->is_siding)
 				pushed = true;
-			if(!pushed) {
+			if(!pushed && mainGame->is_siding) {
 				if(click_pos == 1)
 					push_main(draging_pointer);
 				else if(click_pos == 2)
@@ -1110,6 +1261,7 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 					push_side(draging_pointer);
 			}
 			is_draging = false;
+			FinishEditorEdit(pushed);
 			break;
 		}
 		case irr::EMIE_LMOUSE_DOUBLE_CLICK: {
@@ -1155,6 +1307,8 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 					break;
 				if(readonly)
 					break;
+				BeginEditorEdit();
+				finishEdit = true;
 				soundManager.PlaySoundEffect(SOUND_CARD_DROP);
 				if(hovered_pos == 1) {
 					pop_main(hovered_seq);
@@ -1174,18 +1328,13 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 				}
 			} else {
 				soundManager.PlaySoundEffect(SOUND_CARD_PICK);
-				if(click_pos == 1) {
-					push_side(draging_pointer);
-				} else if(click_pos == 2) {
-					push_side(draging_pointer);
-				} else if(click_pos == 3) {
-					if(!push_extra(draging_pointer))
-						push_main(draging_pointer);
-				} else {
-					push_side(draging_pointer);
-				}
+				const bool pushed = click_pos == 3 ?
+					(push_extra(draging_pointer) || push_main(draging_pointer)) : push_side(draging_pointer);
+				is_draging = false;
+				FinishEditorEdit(pushed);
 			}
 			is_draging = false;
+			is_starting_dragging = false;
 			break;
 		}
 		case irr::EMIE_MMOUSE_LEFT_UP: {
@@ -1205,6 +1354,8 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 			auto cd = &pointer->second;
 			if(!check_limit(cd))
 				break;
+			BeginEditorEdit();
+			finishEdit = true;
 			soundManager.PlaySoundEffect(SOUND_CARD_PICK);
 			if (hovered_pos == 1) {
 				if(!push_main(cd))
@@ -1223,6 +1374,7 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 		}
 		case irr::EMIE_MOUSE_MOVED: {
 			if(is_starting_dragging) {
+				BeginEditorEdit();
 				is_draging = true;
 				soundManager.PlaySoundEffect(SOUND_CARD_PICK);
 				if(hovered_pos == 1)
@@ -1269,6 +1421,8 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 	}
 	default: break;
 	}
+	if(finishEdit) FinishEditorEdit(true);
+	RefreshEditorUndo();
 	return false;
 }
 void DeckBuilder::GetHoveredCard() {
@@ -1698,10 +1852,18 @@ void DeckBuilder::ChangeCategory(int catesel) {
 	mainGame->RefreshDeck(mainGame->cbDBCategory, mainGame->cbDBDecks);
 	mainGame->cbDBDecks->setSelected(0);
 	RefreshReadonly(catesel);
-	load_current_deck(mainGame->cbDBCategory, mainGame->cbDBDecks);
-	is_modified = false;
+	if(mainGame->cbDBDecks->getItemCount() == 0) {
+		deckManager.current_deck.clear();
+		ResetEditorHistory();
+	} else if(!load_current_deck(mainGame->cbDBCategory, mainGame->cbDBDecks)) {
+		mainGame->cbDBCategory->setSelected(prev_category);
+		mainGame->RefreshDeck(mainGame->cbDBCategory, mainGame->cbDBDecks);
+		mainGame->cbDBDecks->setSelected(prev_deck);
+		RefreshReadonly(prev_category);
+		return;
+	}
 	prev_category = catesel;
-	prev_deck = 0;
+	prev_deck = mainGame->cbDBDecks->getSelected();
 }
 void DeckBuilder::ShowDeckManage() {
 	mainGame->RefreshCategoryDeck(mainGame->cbDBCategory, mainGame->cbDBDecks, false);
@@ -1781,7 +1943,7 @@ bool DeckBuilder::push_main(const CardDataC* pointer, int seq) {
 		container.insert(container.begin() + seq, pointer);
 	else
 		container.push_back(pointer);
-	is_modified = true;
+	if(mainGame->is_siding) is_modified = true;
 	GetHoveredCard();
 	return true;
 }
@@ -1796,7 +1958,7 @@ bool DeckBuilder::push_extra(const CardDataC* pointer, int seq) {
 		container.insert(container.begin() + seq, pointer);
 	else
 		container.push_back(pointer);
-	is_modified = true;
+	if(mainGame->is_siding) is_modified = true;
 	GetHoveredCard();
 	return true;
 }
@@ -1809,26 +1971,26 @@ bool DeckBuilder::push_side(const CardDataC* pointer, int seq) {
 		container.insert(container.begin() + seq, pointer);
 	else
 		container.push_back(pointer);
-	is_modified = true;
+	if(mainGame->is_siding) is_modified = true;
 	GetHoveredCard();
 	return true;
 }
 void DeckBuilder::pop_main(int seq) {
 	auto& container = deckManager.current_deck.main;
 	container.erase(container.begin() + seq);
-	is_modified = true;
+	if(mainGame->is_siding) is_modified = true;
 	GetHoveredCard();
 }
 void DeckBuilder::pop_extra(int seq) {
 	auto& container = deckManager.current_deck.extra;
 	container.erase(container.begin() + seq);
-	is_modified = true;
+	if(mainGame->is_siding) is_modified = true;
 	GetHoveredCard();
 }
 void DeckBuilder::pop_side(int seq) {
 	auto& container = deckManager.current_deck.side;
 	container.erase(container.begin() + seq);
-	is_modified = true;
+	if(mainGame->is_siding) is_modified = true;
 	GetHoveredCard();
 }
 bool DeckBuilder::check_limit(const CardDataC* pointer) {
