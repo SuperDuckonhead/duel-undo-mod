@@ -20,6 +20,20 @@ $validator=Join-Path $repo 'tools/Test-InstallLayout.ps1'
 $packager=Join-Path $repo 'tools/Package.ps1'
 $result=& $validator -Manifest $manifest -RuntimeRoot $runtime
 Check ($result.Files.Count -eq $entries.Count) 'actual validator accepts clean incremental layout'
+# Real layout preflight must reject regular files at any proper ancestor.
+$blockedAncestors=@()
+foreach($blocked in @('WindBot','WindBot/undo-deps','undo-mod/licenses')){
+ $blockedRuntime=Join-Path $fixture ('blocked-'+$blocked.Replace('/','-'))
+ $sentinel=Join-Path $blockedRuntime $blocked
+ [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($sentinel)) | Out-Null
+ [IO.File]::WriteAllText($sentinel,('unmanaged ancestor '+$blocked))
+ $sentinelHash=(Get-FileHash -LiteralPath $sentinel -Algorithm SHA256).Hash
+ $refused=Rejects {& $validator -Manifest $manifest -RuntimeRoot $blockedRuntime} '*ancestor*not a directory*'
+ Write-Host "Regular-file ancestor '$blocked' refused: $refused"
+ $blockedAncestors+=@{Path=$blocked;Refused=$refused}
+ Check ((Get-Item -LiteralPath $sentinel) -is [IO.FileInfo] -and (Get-FileHash -LiteralPath $sentinel -Algorithm SHA256).Hash -eq $sentinelHash) ('blocked ancestor preserved '+$blocked)
+}
+foreach($blocked in $blockedAncestors){Check $blocked.Refused ('actual validator rejects regular-file ancestor '+$blocked.Path)}
 foreach($name in @('ygopro.exe','Bot.exe','WindBot/WindBot.exe','system.conf','system-undo.conf','cards.cdb','pics/card.jpg','deck/private.ydk','script/c1.lua','expansions/private.cdb','undo-mod/secret.txt','undo-mod/licenses/nested/MIT.txt','undo-mod/licenses/.hidden.txt','undo-mod/licenses/CON.txt','../ygopro-undo.exe','/ygopro-undo.exe','C:/ygopro-undo.exe','ygopro-undo.exe:stream','YGOPRO-UNDO.EXE','WindBot\\WindBot-undo.exe')){
  $bad=@{}+$entries[0];$bad.destination=$name;$path=SaveJson ([ordered]@{schemaVersion=1;files=@($bad)}) 'bad.json'
  Check (Rejects {& $validator -Manifest $path -RuntimeRoot $runtime}) ('actual validator rejects '+$name)

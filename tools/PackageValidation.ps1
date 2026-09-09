@@ -17,6 +17,7 @@ function Assert-PackagePath([string]$Path,[string]$Root='') {
         $entry=$null
         try{$entry=Get-Item -LiteralPath $cursor -Force -ErrorAction Stop}catch [System.Management.Automation.ItemNotFoundException]{}
         if($entry -and ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw "Package path contains a reparse point: $cursor"}
+        if($entry -and $cursor -ne $full -and -not $entry.PSIsContainer){throw "Package path ancestor is not a directory: $cursor"}
         $parent=[IO.Path]::GetDirectoryName($cursor)
         if($parent -eq $cursor){break}
         $cursor=$parent
