@@ -337,6 +337,26 @@ int main() {
         CHECK(std::any_of(game.dField.hand[0].begin(),
                           game.dField.hand[0].end(),
                           [](ClientCard *c) { return c->code == 70368879; }));
+        if(policy == 0) {
+          Replay network;
+          network.RecordUndoDuel(s->Live().Initial(), s->History(), L"host", L"peer");
+          auto packet = network.ExportUndoReplay();
+          game.wReplay->setVisible(false);
+          game.dField.Clear();
+          CHECK(ReplayMode::cur_replay.LoadUndoReplay(packet));
+          CHECK(!(ReplayMode::cur_replay.pheader.base.flag & REPLAY_SINGLE_MODE));
+          // The previous replay window can still have a pending fade-in.
+          // Wait for this playback to finish, not just for that old animation.
+          game.dInfo.isFinished = false;
+          CHECK(ReplayMode::StartReplay(0));
+          until([] { return game.wReplay->isVisible() && game.dInfo.isFinished && !game.dInfo.isReplay; });
+          CHECK(game.dInfo.isFinished && !game.dInfo.isReplay);
+          CHECK(game.dInfo.curMsg == MSG_WIN && game.dInfo.lp[1] == 8000);
+          CHECK(game.dField.grave[0].size() == 1 && game.dField.grave[0][0]->code == 37812118);
+          CHECK(std::any_of(game.dField.hand[0].begin(), game.dField.hand[0].end(),
+                            [](ClientCard* c) { return c->code == 70368879; }));
+          std::cout << "Actual non-SINGLE memory ReplayMode bootstrap and retained B-only playback passed\n";
+        }
         std::cout << "actual Game SingleMode + ReplayMode: retry, "
                      "manual/automatic input, A undo A undo B end save, epoch "
                      "rejection, LP/card restoration passed\n";

@@ -32,12 +32,18 @@ void validate(const undo::InitialState& initial) {
 }
 }
 void Replay::RecordUndoSingle(const undo::InitialState& initial,const std::vector<undo::ResponseRecord>& records,const wchar_t* host,const wchar_t* peer) {
+ RecordUndo(initial,records,host,peer,true);
+}
+void Replay::RecordUndoDuel(const undo::InitialState& initial,const std::vector<undo::ResponseRecord>& records,const wchar_t* host,const wchar_t* peer) {
+ RecordUndo(initial,records,host,peer,false);
+}
+void Replay::RecordUndo(const undo::InitialState& initial,const std::vector<undo::ResponseRecord>& records,const wchar_t* host,const wchar_t* peer,bool single) {
  validate(initial);require(!is_recording,"Cannot replace active legacy recording");require(host&&peer,"Missing replay player names");
  Bytes bytes;std::vector<std::wstring> nextPlayers;
  for(const auto* name:{host,peer}){uint16_t value[20]{};BufferIO::CopyCharArray(name,value);for(auto c:value)word(bytes,c,2);wchar_t wide[20]{};BufferIO::CopyCharArray(value,wide);nextPlayers.emplace_back(wide);}
  const DuelParameters nextParams{initial.players[0].lp,initial.players[0].startCount,initial.players[0].drawCount,initial.duelOptions};
  word(bytes,nextParams.start_lp);word(bytes,nextParams.start_hand);word(bytes,nextParams.draw_count);word(bytes,nextParams.duel_flag);
- word(bytes,0x31444e55);word(bytes,1,2);
+ word(bytes,0x31444e55);word(bytes,2,2);word(bytes,single?1:0,1);
  for(auto s:initial.seed)word(bytes,s);
  word(bytes,initial.duelOptions);word(bytes,initial.noCheckDeck,1);word(bytes,initial.noShuffleDeck,1);
  for(auto p:initial.players){word(bytes,p.lp);word(bytes,p.startCount);word(bytes,p.drawCount);}
@@ -57,7 +63,7 @@ void Replay::RecordUndoSingle(const undo::InitialState& initial,const std::vecto
  }
  auto checksum=undo::Sha256(bytes);bytes.insert(bytes.end(),checksum.begin(),checksum.end());require(bytes.size()<=MAX_REPLAY_SIZE,"Undo replay exceeds size limit");
  auto nextInitial=initial;ExtendedReplayHeader header{};header.base.id=REPLAY_ID_YRP2;header.base.version=PRO_VERSION;
- header.base.flag=REPLAY_UNIFORM|REPLAY_SINGLE_MODE|REPLAY_UNDO_CORE;header.base.datasize=bytes.size();header.header_version=2;
+ header.base.flag=REPLAY_UNIFORM|REPLAY_UNDO_CORE|(single?REPLAY_SINGLE_MODE:0);header.base.datasize=bytes.size();header.header_version=2;
  std::copy(initial.seed.begin(),initial.seed.end(),header.seed_sequence);
  // All fallible preparation finishes before replacing the memory record.
  Reset();pheader=header;params=nextParams;players.swap(nextPlayers);undo_initial_=std::move(nextInitial);undo_responses_.swap(nextResponses);
@@ -66,11 +72,15 @@ void Replay::RecordUndoSingle(const undo::InitialState& initial,const std::vecto
 bool Replay::ReadUndoInfo() {
  try {
   require(pheader.base.id==REPLAY_ID_YRP2&&pheader.base.version==PRO_VERSION&&pheader.header_version==2,"Unsupported undo replay header");
-  require((pheader.base.flag&(REPLAY_COMPRESSED|REPLAY_TAG))==0 && (pheader.base.flag&REPLAY_SINGLE_MODE),"Unsupported undo replay flags");
+  require(pheader.base.flag==(REPLAY_UNIFORM|REPLAY_UNDO_CORE) || pheader.base.flag==(REPLAY_UNIFORM|REPLAY_UNDO_CORE|REPLAY_SINGLE_MODE),"Unsupported undo replay flags");
+  require(pheader.base.seed==0&&pheader.base.start_time==0&&pheader.value1==0&&pheader.value2==0&&pheader.value3==0&&std::all_of(std::begin(pheader.base.props),std::end(pheader.base.props),[](auto b){return b==0;}),"Invalid reserved undo replay header fields");
   require(replay_size==pheader.base.datasize&&replay_size>=data_position+32,"Invalid undo replay size");
   Reader r{replay_data,data_position,replay_size-32};
   const auto actual=undo::Sha256(Bytes(replay_data,replay_data+r.end));require(std::equal(actual.begin(),actual.end(),replay_data+r.end),"Undo replay checksum mismatch");
-  require(r.word()==0x31444e55&&r.word(2)==1,"Unsupported undo replay body");
+  require(r.word()==0x31444e55,"Unsupported undo replay body");
+  const auto version=r.word(2);
+  if(version==1) require((pheader.base.flag&REPLAY_SINGLE_MODE)!=0,"Legacy undo body is Single only");
+  else { require(version==2,"Unsupported undo replay body version");const auto mode=r.word(1);require(mode<=1&&bool(mode)==bool(pheader.base.flag&REPLAY_SINGLE_MODE),"Undo replay mode mismatch"); }
   undo::InitialState initial;for(unsigned i=0;i<SEED_COUNT;++i){auto seed=r.word();require(seed==pheader.seed_sequence[i],"Undo replay seed mismatch");initial.seed.push_back(seed);}
   initial.duelOptions=r.word();auto noCheck=r.word(1),noShuffle=r.word(1);require(noCheck<=1&&noShuffle<=1,"Invalid undo replay options");initial.noCheckDeck=noCheck;initial.noShuffleDeck=noShuffle;
   for(auto& p:initial.players){p.lp=static_cast<int32_t>(r.word());p.startCount=static_cast<int32_t>(r.word());p.drawCount=static_cast<int32_t>(r.word());}
@@ -81,6 +91,32 @@ bool Replay::ReadUndoInfo() {
   for(unsigned i=0;i<count;++i){UndoResponse item;item.player=r.word(1);auto origin=r.word(1);auto size=r.word(2);require(item.player<2&&origin<=2&&size>0&&size<=256,"Invalid undo replay response");item.origin=static_cast<undo::Origin>(origin);item.response=r.bytes(size);item.promptDigest=r.digest();item.transcriptDigest=r.digest();responses.push_back(std::move(item));}
   require(r.at==r.end,"Trailing undo replay body");undo_initial_=std::move(initial);undo_responses_.swap(responses);undo_response_index_=0;data_position=replay_size;script_name=undo_initial_.scenarioName;return true;
  }catch(const std::exception&){return false;}
+}
+void Replay::SwapUndoRecord(Replay& other) noexcept {
+ using std::swap;
+ swap(pheader,other.pheader);swap(params,other.params);
+ players.swap(other.players);decks.swap(other.decks);script_name.swap(other.script_name);
+ swap(undo_initial_,other.undo_initial_);undo_responses_.swap(other.undo_responses_);swap(undo_response_index_,other.undo_response_index_);
+ swap(replay_data,other.replay_data);swap(comp_data,other.comp_data);
+ swap(replay_size,other.replay_size);swap(comp_size,other.comp_size);swap(data_position,other.data_position);swap(info_offset,other.info_offset);
+ swap(is_recording,other.is_recording);swap(is_replaying,other.is_replaying);swap(can_read,other.can_read);
+}
+bool Replay::LoadUndoReplay(const undo::Bytes& bytes) {
+ try {
+  if(is_recording || bytes.size()<sizeof(ExtendedReplayHeader) || bytes.size()>sizeof(ExtendedReplayHeader)+MAX_REPLAY_SIZE)return false;
+  Replay next;std::memcpy(&next.pheader,bytes.data(),sizeof(next.pheader));
+  if(next.pheader.base.id!=REPLAY_ID_YRP2 || !(next.pheader.base.flag&REPLAY_UNDO_CORE) || next.pheader.base.datasize!=bytes.size()-sizeof(next.pheader))return false;
+  next.replay_size=bytes.size()-sizeof(next.pheader);std::memcpy(next.replay_data,bytes.data()+sizeof(next.pheader),next.replay_size);
+  next.is_replaying=true;next.can_read=true;
+  if(!next.ReadInfo())return false;
+  next.info_offset=next.data_position;next.data_position=0;
+  SwapUndoRecord(next);return true;
+ }catch(const std::exception&){return false;}
+}
+undo::Bytes Replay::ExportUndoReplay() const {
+ require(!is_recording && (pheader.base.flag&REPLAY_UNDO_CORE) && replay_size<=MAX_REPLAY_SIZE,"No complete undo replay to export");
+ Bytes bytes(sizeof(pheader)+replay_size);std::memcpy(bytes.data(),&pheader,sizeof(pheader));std::memcpy(bytes.data()+sizeof(pheader),replay_data,replay_size);
+ Replay checked;require(checked.LoadUndoReplay(bytes),"Invalid undo replay to export");return bytes;
 }
 const undo::InitialState& Replay::UndoInitial() const {
  require((pheader.base.flag&REPLAY_UNDO_CORE)!=0,"Legacy replay has no undo initialization");return undo_initial_;

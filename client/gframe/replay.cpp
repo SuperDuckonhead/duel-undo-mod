@@ -10,8 +10,10 @@
 namespace ygo {
 
 Replay::Replay() {
-	replay_data = new unsigned char[MAX_REPLAY_SIZE];
-	comp_data = new unsigned char[MAX_COMP_SIZE];
+	auto replay = std::make_unique<unsigned char[]>(MAX_REPLAY_SIZE);
+	auto compressed = std::make_unique<unsigned char[]>(MAX_COMP_SIZE);
+	replay_data = replay.release();
+	comp_data = compressed.release();
 }
 Replay::~Replay() {
 	delete[] replay_data;
