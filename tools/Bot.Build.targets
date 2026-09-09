@@ -1,0 +1,6 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!-- Runtime-owned assets are intentionally absent from the imported source tree. -->
+  <ItemGroup>
+    <None Remove="bots.json;Decks\*.ydk;Dialogs\*.json;bot.conf" />
+  </ItemGroup>
+</Project>
