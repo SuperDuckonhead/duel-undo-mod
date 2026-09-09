@@ -1,0 +1,152 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-10",
+  "status": "source-candidates-pinned-runtime-gate-pending",
+  "components": [
+    {
+      "name": "client",
+      "url": "https://github.com/mycard/ygopro.git",
+      "commit": "1e8472b8bd51e1242be133189d547ac2f55eddaa",
+      "destination": "client",
+      "evidenceUrl": "https://github.com/mycard/ygopro/commit/1e8472b8bd51e1242be133189d547ac2f55eddaa",
+      "evidenceNote": "Installed PE embeds mycard/ygopro Release/x64 CI path and 2026-09-01 build timestamp. Installed README, strings and restriction list match commit blobs. Strong reconstruction candidate; no public executable SHA-to-commit manifest, runtime compatibility gate still pending."
+    },
+    {
+      "name": "ocgcore",
+      "url": "https://github.com/mycard/ygopro-core.git",
+      "commit": "e04144d62499c17d0cfa8313f9742434ef99c3a7",
+      "destination": "client/ocgcore",
+      "evidenceUrl": "https://github.com/mycard/ygopro/tree/1e8472b8bd51e1242be133189d547ac2f55eddaa",
+      "evidenceNote": "Exact core gitlink in selected client. Installed constant.lua, utility.lua and procedure.lua match the linked script revision; custom expansions still need runtime validation."
+    },
+    {
+      "name": "windbot",
+      "url": "https://github.com/mycard/windbot.git",
+      "commit": "3a6a462828046e05793e8f74bf446c2d5c713e8c",
+      "destination": "bot",
+      "evidenceUrl": "https://github.com/mycard/windbot/commit/3a6a462828046e05793e8f74bf446c2d5c713e8c",
+      "evidenceNote": "Installed assemblies embed /builds/mycard/windbot paths; commit predates installed timestamp by 2m24s. 70 decks and 20 dialogs match normalized upstream ancestry; config byte-identical; all62 AI-list entries resolve. Rebuild succeeds with portable SDK but binary hash differs; gameplay gate pending."
+    },
+    {
+      "name": "irrlicht",
+      "url": "https://code.moenext.com/mycard/irrlicht-1.9.git",
+      "commit": "20f86d251624334d53585a1809ea4c7178f72a34",
+      "destination": "client/irrlicht",
+      "evidenceUrl": "https://github.com/mercury233/irrlicht/commit/20f86d251624334d53585a1809ea4c7178f72a34",
+      "evidenceNote": "Production URL master observed at this SHA; primary mirror commit dated2026-06-25, preceding installed build. Historical CI fetched mutable master, so exact Sep1 dependency provenance is not proven. This development baseline explicitly freezes the SHA."
+    },
+    {
+      "name": "miniaudio",
+      "url": "https://github.com/mackron/miniaudio.git",
+      "commit": "9634bedb5b5a2ca38c1ee7108a9358a4e233f14d",
+      "destination": "client/miniaudio",
+      "evidenceUrl": "https://github.com/mackron/miniaudio/tree/0.11.25",
+      "evidenceNote": "Selected client .ci/prepare-miniaudio.sh fixes tag0.11.25; ls-remote resolves it to this exact commit."
+    }
+  ],
+  "resourceBaseline": {
+    "scriptsRepository": "https://github.com/mycard/ygopro-scripts.git",
+    "scriptsCommit": "5864b6f6e58d49738e0996b94e96655b51f420bf",
+    "policy": "Use the original installed resource directories directly; scripts are not imported. Pin full logical resource content per duel; static sample equality is not full compatibility proof."
+  },
+  "toolchainArchives": [
+    {
+      "name": "cmake",
+      "version": "4.4.3",
+      "url": "https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-windows-x86_64.zip",
+      "sha256": "4d52ebab7193a698651639ed80d8d04fd903358843572cf44c7fd234cb7c26ab"
+    },
+    {
+      "name": "llvm-mingw",
+      "version": "20260908-ucrt-x86_64",
+      "url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20260908/llvm-mingw-20260908-ucrt-x86_64.zip",
+      "sha256": "1bcf74d06b724aeecaa6412ca85f5b26fb1da770e7cdcefa9263c9c5c3ad34b6"
+    },
+    {
+      "name": "premake",
+      "version": "5.0.0-beta8",
+      "url": "https://github.com/premake/premake-core/releases/download/v5.0.0-beta8/premake-5.0.0-beta8-windows.zip",
+      "sha256": "e64ce2ed8778e0098f63674cca61fe33941b5f0c8d9a4afd651152bdea3758ab"
+    },
+    {
+      "name": "dotnet-sdk",
+      "version": "8.0.425",
+      "url": "https://builds.dotnet.microsoft.com/dotnet/Sdk/8.0.425/dotnet-sdk-8.0.425-win-x64.zip",
+      "sha512": "f0b6f15bf6f1a0507205c0cb102ab99e1dee875c4682c8ed94665be1d580186a06b21455e83b3a01a0ff7f4cd887b67420f2e2fe09ed985534a4cea488ae1af9"
+    }
+  ],
+  "archives": [
+    {
+      "name": "lua",
+      "url": "https://www.lua.org/ftp/lua-5.4.8.tar.gz",
+      "sha256": "4f18ddae154e793e46eeab727c59ef1c0c0c2b744e7b94219710d76f530629ae",
+      "destination": "client/lua"
+    },
+    {
+      "name": "sqlite3",
+      "url": "https://www.sqlite.org/2026/sqlite-autoconf-3530300.tar.gz",
+      "sha256": "c917d7db16648ec95f714974ace5e5dcf46b7dc70e26600a0a102a3141125db0",
+      "destination": "client/sqlite3"
+    },
+    {
+      "name": "freetype",
+      "url": "https://downloads.sourceforge.net/freetype/freetype-2.14.3.tar.gz",
+      "sha256": "e61b31ab26358b946e767ed7eb7f4bb2e507da1cfefeb7a8861ace7fd5c899a1",
+      "destination": "client/freetype"
+    },
+    {
+      "name": "event",
+      "url": "https://github.com/libevent/libevent/releases/download/release-2.1.13-stable/libevent-2.1.13-stable.tar.gz",
+      "sha256": "f7e9383b8c0baa81b687e5b5eecc01beefaf1b19b64151d95ed61647fe7a315c",
+      "destination": "client/event"
+    },
+    {
+      "name": "jpeg",
+      "url": "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.0/libjpeg-turbo-3.2.0.tar.gz",
+      "sha256": "6f30092cef9fb839779646608f4ee14ae3cbac989c47fa05e841b0841f09878e",
+      "destination": "client/jpeg"
+    },
+    {
+      "name": "png",
+      "url": "https://downloads.sourceforge.net/libpng/libpng-1.6.58.tar.gz",
+      "sha256": "8c9b05b675ca7301a458df2c2e46f26e1d41ff36b8863f8c33530bc58c2e6225",
+      "destination": "client/png"
+    },
+    {
+      "name": "zlib",
+      "url": "https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.gz",
+      "sha256": "bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16",
+      "destination": "client/zlib"
+    },
+    {
+      "name": "lzma",
+      "url": "https://github.com/tukaani-project/xz/releases/download/v5.8.3/xz-5.8.3.tar.gz",
+      "sha256": "3d3a1b973af218114f4f889bbaa2f4c037deaae0c8e815eec381c3d546b974a0",
+      "destination": "client/lzma"
+    },
+    {
+      "name": "ogg",
+      "url": "https://github.com/xiph/ogg/releases/download/v1.3.6/libogg-1.3.6.tar.gz",
+      "sha256": "83e6704730683d004d20e21b8f7f55dcb3383cdf84c0daedf30bde175f774638",
+      "destination": "client/miniaudio/external/ogg"
+    },
+    {
+      "name": "opus",
+      "url": "https://github.com/xiph/opus/releases/download/v1.5.2/opus-1.5.2.tar.gz",
+      "sha256": "65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1",
+      "destination": "client/miniaudio/external/opus"
+    },
+    {
+      "name": "opusfile",
+      "url": "https://github.com/xiph/opusfile/releases/download/v0.12/opusfile-0.12.tar.gz",
+      "sha256": "118d8601c12dd6a44f52423e68ca9083cc9f2bfe72da7a8c1acb22a80ae3550b",
+      "destination": "client/miniaudio/external/opusfile"
+    },
+    {
+      "name": "vorbis",
+      "url": "https://github.com/xiph/vorbis/releases/download/v1.3.7/libvorbis-1.3.7.tar.gz",
+      "sha256": "0e982409a9c3fc82ee06e08205b1355e5c6aa4c36bca58146ef399621b0ce5ab",
+      "destination": "client/miniaudio/external/vorbis"
+    }
+  ]
+}
