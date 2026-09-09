@@ -20,6 +20,8 @@ namespace WindBot.Undo
         private bool initialized, failed, disposed;
         public int ProcessId { get { lock (sync) { EnsureInitialized(); return process.Id; } } }
         public int NetworkSendCount { get; private set; }
+        public bool IsConnected { get; private set; }
+        public string TerminalReason { get; private set; }
         public int WorkerProcessId { get; private set; }
         public ReplaySession(BotInit init)
         {
@@ -80,6 +82,7 @@ namespace WindBot.Undo
                 {
                     T result = read(r);
                     NetworkSendCount = r.ReadInt32();
+                    IsConnected = r.ReadBoolean(); TerminalReason = r.ReadString();
                     if (stream.Position != stream.Length) throw new InvalidOperationException("Trailing worker result bytes");
                     return result;
                 }
@@ -140,6 +143,10 @@ namespace WindBot.Undo
         public ulong Cursor
         {
             get { lock (sync) { EnsureInitialized(); return Request(7, w => { }, r => r.ReadUInt64()); } }
+        }
+        public string InspectClientName()
+        {
+            lock (sync) { EnsureInitialized(); return Request(8, w => { }, r => r.ReadString()); }
         }
         public byte[] InspectCard(int code, int setcode)
         {

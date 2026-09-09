@@ -51,7 +51,8 @@ namespace WindBot.Game
             _ai = new GameAI(Game, _duel);
             _ai.Executor = DecksManager.Instantiate(_ai, _duel);
             Game.SetDeckContext(_ai.Executor.GetType().Name);
-            Deck = Deck.Load(Game.DeckFile ?? _ai.Executor.Deck);
+            if (Game.FrozenDeck == null) Deck = Deck.Load(Game.DeckFile ?? _ai.Executor.Deck);
+            else using (var reader = new StreamReader(new MemoryStream(Game.FrozenDeck))) Deck = Deck.Load(reader);
 
             _select_hint = 0;
         }

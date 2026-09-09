@@ -32,6 +32,18 @@ namespace WindBot.Undo
             init.ResourceDigest = settings.ResourceHash();
             return init;
         }
+        public BotSelection Selection { get { var o = ReplayOptions.Decode(Options); return new BotSelection { Name = o.Name, Hand = o.Hand, Executor = Executor, DeckFile = o.DeckFile, Dialog = o.Dialog, Chat = o.Chat, UsePreErrataEffects = o.UsePreErrataEffects, CustomDeckSource = o.DeckSource }; } }
+        public static BotInit CaptureSelected(string root, BotSelection request, int seed, byte[] cards, byte[] engine, byte[] resources)
+        {
+            FrozenCardView.Decode(cards, engine, resources);
+            var selected = request.Resolve(seed);
+            var settings = new ReplayOptions { RuntimeRoot = Path.GetFullPath(root), DatabasePath = "", DeckFile = selected.DeckFile, Dialog = selected.Dialog, Name = selected.Name, Hand = selected.Hand, Chat = selected.Chat, UsePreErrataEffects = selected.UsePreErrataEffects, CustomDeck = selected.CustomDeck != null, DeckSource = selected.CustomDeckSource };
+            ReplayOptions.Decode(settings.Encode()); // Validate paths before first file access.
+            byte[] deck = selected.CustomDeck ?? File.ReadAllBytes(settings.DeckPath);
+            using (var sha = SHA256.Create()) settings.DeckHash = sha.ComputeHash(deck);
+            var init = new BotInit { Executor = selected.Executor, Seed = seed, Deck = (byte[])deck.Clone(), Options = settings.Encode(), MergedCards = (byte[])cards.Clone(), EngineDigest = (byte[])engine.Clone(), CoreResourceDigest = (byte[])resources.Clone() };
+            init.ResourceDigest = settings.ResourceHash(); return init;
+        }
         internal byte[] Encode()
         {
             return ReplayRandom.Encode(w => { w.Write(Executor); w.Write(Seed); WorkerWire.WriteBytes(w, Deck); WorkerWire.WriteBytes(w, ResourceDigest); WorkerWire.WriteBytes(w, Options); WorkerWire.WriteBytes(w, MergedCards); w.Write(EngineDigest); w.Write(CoreResourceDigest); });
@@ -51,18 +63,21 @@ namespace WindBot.Undo
     internal sealed class ReplayOptions
     {
         internal string RuntimeRoot, DatabasePath, DeckFile, Dialog;
-        internal bool Chat, UsePreErrataEffects;
+        internal bool Chat, UsePreErrataEffects, CustomDeck;
+        internal string Name = "WindBot-undo", DeckSource = "";
+        internal int Hand;
+        internal byte[] DeckHash = new byte[0];
         internal string DeckPath { get { return Path.Combine(RuntimeRoot, "Decks", DeckFile + ".ydk"); } }
         internal byte[] Encode()
         {
-            return ReplayRandom.Encode(w => { w.Write(1); w.Write(RuntimeRoot); w.Write(DatabasePath); w.Write(DeckFile); w.Write(Dialog); w.Write(Chat); w.Write(UsePreErrataEffects); });
+            return ReplayRandom.Encode(w => { w.Write(2); w.Write(RuntimeRoot); w.Write(DatabasePath); w.Write(DeckFile); w.Write(Dialog); w.Write(Chat); w.Write(UsePreErrataEffects); w.Write(Name); w.Write(Hand); w.Write(CustomDeck); w.Write(DeckSource); WorkerWire.WriteBytes(w, DeckHash); });
         }
         internal static ReplayOptions Decode(byte[] bytes)
         {
             using (var stream = new MemoryStream(bytes)) using (var r = new BinaryReader(stream))
             {
-                if (r.ReadInt32() != 1) throw new InvalidOperationException("Unsupported BotInit options");
-                var settings = new ReplayOptions { RuntimeRoot = r.ReadString(), DatabasePath = r.ReadString(), DeckFile = r.ReadString(), Dialog = r.ReadString(), Chat = r.ReadBoolean(), UsePreErrataEffects = r.ReadBoolean() };
+                if (r.ReadInt32() != 2) throw new InvalidOperationException("Unsupported BotInit options");
+                var settings = new ReplayOptions { RuntimeRoot = r.ReadString(), DatabasePath = r.ReadString(), DeckFile = r.ReadString(), Dialog = r.ReadString(), Chat = r.ReadBoolean(), UsePreErrataEffects = r.ReadBoolean(), Name = r.ReadString(), Hand = r.ReadInt32(), CustomDeck = r.ReadBoolean(), DeckSource = r.ReadString(), DeckHash = WorkerWire.ReadBytes(r) };
                 if (stream.Position != stream.Length || !Path.IsPathRooted(settings.RuntimeRoot) || (settings.DatabasePath.Length != 0 && !Path.IsPathRooted(settings.DatabasePath)) ||
                     Path.GetFileName(settings.DeckFile) != settings.DeckFile || Path.GetFileName(settings.Dialog) != settings.Dialog)
                     throw new InvalidOperationException("Invalid fixed resource paths");
@@ -76,7 +91,7 @@ namespace WindBot.Undo
 #if UNDO_BUILD
             binaryRoot = Path.Combine(binaryRoot, "undo-deps");
 #endif
-            return new[] { DatabasePath, Path.Combine(RuntimeRoot, "bots.json"), DeckPath, Path.Combine(RuntimeRoot, "Dialogs", Dialog + ".json"), assembly, assembly + ".config", Path.Combine(binaryRoot, "x86", "sqlite3.dll"), Path.Combine(binaryRoot, "x64", "sqlite3.dll") }.Where(path => path.Length != 0).ToArray();
+            return new[] { DatabasePath, Path.Combine(RuntimeRoot, "bots.json"), CustomDeck ? "" : DeckPath, Path.Combine(RuntimeRoot, "Dialogs", Dialog + ".json"), assembly, assembly + ".config", Path.Combine(binaryRoot, "x86", "sqlite3.dll"), Path.Combine(binaryRoot, "x64", "sqlite3.dll") }.Where(path => path.Length != 0).ToArray();
         }
         internal byte[] ResourceHash()
         {
@@ -96,12 +111,15 @@ namespace WindBot.Undo
         }
         internal void Validate(BotInit init)
         {
-            if (!init.ResourceDigest.SequenceEqual(ResourceHash()) || !init.Deck.SequenceEqual(File.ReadAllBytes(DeckPath)))
+            using (var sha = SHA256.Create())
+                if ((DeckHash.Length != 0 && !DeckHash.SequenceEqual(sha.ComputeHash(init.Deck))) || (CustomDeck && (DeckHash.Length != 32 || string.IsNullOrEmpty(DeckSource))))
+                    throw new InvalidOperationException("Fixed deck content binding changed");
+            if (!init.ResourceDigest.SequenceEqual(ResourceHash()) || (!CustomDeck && !init.Deck.SequenceEqual(File.ReadAllBytes(DeckPath))))
                 throw new InvalidOperationException("Bot initialization resources changed");
         }
         internal WindBotInfo Info(BotInit init)
         {
-            return new WindBotInfo { Name = "WindBot-undo", Deck = init.Executor, DeckFile = DeckFile, Dialog = Dialog, Hand = 0, Chat = Chat, Debug = false };
+            return new WindBotInfo { Name = Name, Deck = init.Executor, DeckFile = DeckFile, Dialog = Dialog, Hand = Hand, Chat = Chat, Debug = false };
         }
     }
 }

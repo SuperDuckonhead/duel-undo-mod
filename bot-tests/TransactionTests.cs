@@ -61,11 +61,46 @@ internal static class TransactionTests
         }
         Console.WriteLine("PASS W2 actual named pipe ACL: protected current-user allow, network deny, wrong client PID rejected");
     }
+    static void SelectionAndTerminalTests(FrozenCard[] cards)
+    {
+        var engine = new byte[32]; engine[0] = 1; var resources = new byte[32]; resources[0] = 2;
+        string runtime = Environment.GetEnvironmentVariable("WIND_BOT_RUNTIME") ?? @"F:\MyCardLibrary\ygopro\WindBot";
+        var deck = Encoding.UTF8.GetBytes("#main\n89631139\n46986414\n!side\n89631139\n");
+        var selection = new BotSelection { Command = "Name='Frozen Seat' Deck=Lucky Dialog=gugugu.zh-CN Hand=3 Chat=false", CustomDeckSource = "selected:/public-fixture.ydk", CustomDeck = deck };
+        var init = BotInit.CaptureSelected(runtime, selection, 83, FrozenCardView.Encode(engine, resources, cards), engine, resources);
+        deck[0] = 0;
+        Check(init.Selection.Name == "Frozen Seat" && init.Executor == "Lucky" && init.Selection.DeckFile == "AI_Test", "Actual executor metadata/options were not fixed");
+        using (var child = new ReplaySession(init))
+        {
+            Check(child.InspectClientName() == "Frozen Seat", "Actual GameClient Name changed");
+            var joined = child.Dispatch(new byte[] { 0x12, 0, 0, 0, 0, 0, 0, 5 });
+            var update = joined.Single(p => p[0] == 2);
+            Check(BitConverter.ToInt32(update, 1) == 2 && BitConverter.ToInt32(update, 5) == 1, "Actual OnJoinGame did not load fixed custom deck");
+            Check(BitConverter.ToInt32(update, 9) == 89631139 && BitConverter.ToInt32(update, 13) == 46986414, "Custom deck bytes changed");
+            Check(joined.Length == 1, "Fixed Chat=false did not apply");
+            Check(BitConverter.ToInt32(child.Dispatch(new byte[] { 3 }).Single(), 1) == 3, "Forced Hand not applied by actual callback");
+            var cursor = child.Cursor; var tape = child.Snapshot();
+            using (var candidate = new ReplaySession(init)) { candidate.Replay(tape, (int)cursor); Check(BitConverter.ToInt32(candidate.Dispatch(new byte[] { 3 }).Single(), 1) == 3, "Candidate lost frozen Hand"); }
+            child.Dispatch(new byte[] { 1, 1 });
+            Check(!child.IsConnected && child.TerminalReason.Length != 0, "Actual OnRetry closure not surfaced");
+        }
+        var catalog = Encoding.UTF8.GetBytes("!only\nDeck=Lucky Dialog=gugugu.zh-CN\ndescription\nAI_FIXED\n");
+        var random = BotInit.CaptureSelected(runtime, new BotSelection { Command = "Random=AI_FIXED", Catalog = catalog, CustomDeckSource = "fixture:random", CustomDeck = init.Deck }, 84, init.MergedCards, engine, resources);
+        catalog[0] = 0;
+        Check(random.Executor == "Lucky" && random.Selection.DeckFile == "AI_Test", "Random selection did not freeze actual metadata");
+        using (var child = new ReplaySession(random)) { child.Dispatch(new byte[] { 3 }); using (var candidate = new ReplaySession(random)) { candidate.Replay(child.Snapshot(), (int)child.Cursor); Check(candidate.Dispatch(new byte[] { 3 }).Length == 1, "Resolved Random was chosen again"); } }
+        var defaults = BotInit.CaptureSelected(runtime, new BotSelection { CustomDeck = init.Deck, CustomDeckSource = "fixture:default" }, 85, init.MergedCards, engine, resources);
+        Check(defaults.Executor.Length != 0 && defaults.Selection.DeckFile.Length != 0, "Default executor selection was not resolved");
+        using (var child = new ReplaySession(defaults)) { var name = child.InspectClientName(); Check(name == "WindBot-undo", "Default Name changed"); }
+        using (var child = new ReplaySession(init)) { child.Dispatch(new byte[] { 2, 2, 0, 0, 0, 0, 0, 0, 0x60 }); Check(!child.IsConnected && child.TerminalReason.Length != 0, "Deck error closure not surfaced"); }
+        Console.WriteLine("PASS N2 actual custom deck handshake, Name/Hand/Chat, once-chosen Random and terminal retry");
+    }
     internal static void Run()
     {
         Check(!UndoControl.CanEmitResponse(BotUndoState.Frozen, 7, 7), "Frozen participant emitted");
         PrivateChannelTests();
         var cards = ReadOriginal();
+        SelectionAndTerminalTests(cards);
         // This mimics already-resolved DataManager expansion values; the native
         // fixture separately constructs the bridge from a real merged DataManager.
         var expanded = cards.Single(c => c.Code == 26202165); expanded.Attack = 2468; expanded.Name = "Frozen expansion Sangan"; expanded.RuleCode = 123456; for (int i = 0; i < 15; i++) expanded.Setcodes[i] = (ushort)(i + 1); expanded.Setcodes[15] = 0x1234;

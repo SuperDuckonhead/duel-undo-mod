@@ -74,6 +74,22 @@ namespace WindBot.Game.AI
             return executor;
         }
 
+        // Registry metadata only: selection RNG is separate from gameplay RNG.
+        public static string[] ResolveSelection(string name, Random selectionRandom)
+        {
+            var choices = new List<DeckAttribute>();
+            foreach (Type type in Assembly.GetExecutingAssembly().GetTypes())
+                foreach (object item in type.GetCustomAttributes(typeof(DeckAttribute), false))
+                    choices.Add((DeckAttribute)item);
+            DeckAttribute selected = choices.Find(d => d.Name == name);
+            if (selected == null)
+            {
+                do { selected = choices[selectionRandom.Next(choices.Count)]; }
+                while (selected.Level != "Normal");
+            }
+            return new[] { selected.Name, selected.File };
+        }
+
         public static bool HasDeck(string name)
         {
             return _decks.ContainsKey(name);

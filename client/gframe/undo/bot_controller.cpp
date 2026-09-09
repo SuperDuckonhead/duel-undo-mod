@@ -70,19 +70,23 @@ Bytes CaptureBotCardView(const ResourceView& view,const ygo::DataManager& data,c
  put(out,Sha256(out));return out;
 }
 struct BotController::Impl {
- Handle pipe, process, job;
+ Handle pipe, process, job; BotCancellation cancel; BotSelectionInfo selection;
  SessionId session{};BotState state{BotState::Frozen};std::uint64_t epoch{},cursor{};
  std::uint32_t active{},candidate{},retained{},commits{};std::string failure;
  std::vector<BotOutput> outputs;
  ~Impl(){ job.reset(); if(process.value!=INVALID_HANDLE_VALUE)WaitForSingleObject(process.value,5000); }
  DWORD complete(OVERLAPPED& overlapped) {
-  DWORD result=WaitForSingleObject(overlapped.hEvent,30000);
+  DWORD result=WAIT_TIMEOUT; const auto started=GetTickCount64();
+  do {
+   if(cancel && cancel->load())break;
+   result=WaitForSingleObject(overlapped.hEvent,50);
+  } while(result==WAIT_TIMEOUT && GetTickCount64()-started<30000);
   if(result!=WAIT_OBJECT_0){CancelIoEx(pipe.value,&overlapped);WaitForSingleObject(overlapped.hEvent,INFINITE);throw std::runtime_error("Bot private pipe timed out; participant remains paused");}
   DWORD bytes{};winCheck(GetOverlappedResult(pipe.value,&overlapped,&bytes,FALSE)!=0,"Bot pipe transfer");return bytes;
  }
  void transfer(void* buffer,std::size_t size,bool writing) {
   auto* bytes=static_cast<std::uint8_t*>(buffer);
-  while(size){Handle event(CreateEventW(nullptr,TRUE,FALSE,nullptr));winCheck(event.value!=nullptr,"Create pipe event");OVERLAPPED ov{};ov.hEvent=event.value;DWORD done{};
+  while(size){if(cancel && cancel->load())throw std::runtime_error("Bot operation cancelled");Handle event(CreateEventW(nullptr,TRUE,FALSE,nullptr));winCheck(event.value!=nullptr,"Create pipe event");OVERLAPPED ov{};ov.hEvent=event.value;DWORD done{};
    DWORD chunk=static_cast<DWORD>(std::min<std::size_t>(size,65536));BOOL ok=writing?WriteFile(pipe.value,bytes,chunk,&done,&ov):ReadFile(pipe.value,bytes,chunk,&done,&ov);
    if(!ok){if(GetLastError()!=ERROR_IO_PENDING)winCheck(false,"Bot pipe I/O");done=complete(ov);} if(!done)throw std::runtime_error("Bot pipe closed");bytes+=done;size-=done;
   }
@@ -96,14 +100,15 @@ struct BotController::Impl {
    Bytes body(size);transfer(body.data(),body.size(),false);Reader r{body};bool accepted=r.get(1)!=0;
    auto nextState=r.get(1);if(nextState>static_cast<unsigned>(BotState::Failed))throw std::runtime_error("Invalid bot state");
    auto nextEpoch=r.get(8);auto nextActive=r.get(4),nextCandidate=r.get(4),nextRetained=r.get(4);auto nextCursor=r.get(8),nextCommits=r.get(4);auto nextFailure=r.string();
+   BotSelectionInfo selected; selected.name=r.string();selected.executor=r.string();selected.deckFile=r.string();selected.dialog=r.string();selected.hand=r.get(4);selected.chat=r.get(1)!=0;selected.usePreErrataEffects=r.get(1)!=0;selected.customDeckSource=r.string();
    std::vector<BotOutput> received;auto count=r.get(4);if(count>1000000)throw std::runtime_error("Invalid bot output count");
    for(std::size_t i=0;i<count;i++){BotOutput out;r.array(out.session);out.epoch=r.get(8);out.prompt=r.get(8);out.origin=static_cast<Origin>(r.get(1));out.producerPid=r.get(4);out.packet=r.data();received.push_back(std::move(out));}r.end();
-   state=static_cast<BotState>(nextState);epoch=nextEpoch;active=nextActive;candidate=nextCandidate;retained=nextRetained;cursor=nextCursor;commits=nextCommits;failure=std::move(nextFailure);outputs=std::move(received);return accepted;
+   state=static_cast<BotState>(nextState);epoch=nextEpoch;active=nextActive;candidate=nextCandidate;retained=nextRetained;cursor=nextCursor;commits=nextCommits;failure=std::move(nextFailure);selection=std::move(selected);outputs=std::move(received);return accepted;
   } catch(const std::exception& e){state=BotState::Failed;failure=e.what();outputs.clear();return false;}
  }
 };
-BotController::BotController(const std::wstring& executable,const BotLaunchData& init,SessionId session,std::uint64_t epoch):impl_(new Impl) {
- auto& p=*impl_;p.session=session;p.epoch=epoch;
+BotController::BotController(const std::wstring& executable,const BotLaunchData& init,SessionId session,std::uint64_t epoch,BotCancellation cancel):impl_(new Impl) {
+ auto& p=*impl_;p.session=session;p.epoch=epoch;p.cancel=std::move(cancel);if(p.cancel && p.cancel->load())throw std::runtime_error("Bot initialization cancelled");
  std::array<unsigned char,24> random{};winCheck(BCryptGenRandom(nullptr,random.data(),random.size(),BCRYPT_USE_SYSTEM_PREFERRED_RNG)==0,"Bot pipe random");
  std::wstring name=L"ygopro-undo-";const wchar_t* hex=L"0123456789abcdef";for(auto byte:random){name+=hex[byte>>4];name+=hex[byte&15];}
  const auto sid=userSid();std::wstring sddl=L"O:"+sid+L"D:P(D;;GA;;;NU)(A;;GA;;;"+sid+L")";
@@ -118,6 +123,7 @@ BotController::BotController(const std::wstring& executable,const BotLaunchData&
  Handle connected(CreateEventW(nullptr,TRUE,FALSE,nullptr));OVERLAPPED ov{};ov.hEvent=connected.value;BOOL ready=ConnectNamedPipe(p.pipe.value,&ov);if(!ready){auto error=GetLastError();if(error==ERROR_IO_PENDING)p.complete(ov);else if(error!=ERROR_PIPE_CONNECTED)winCheck(false,"Listen bot pipe");} ULONG clientPid{};winCheck(GetNamedPipeClientProcessId(p.pipe.value,&clientPid)!=0 && clientPid==process.dwProcessId,"Authenticate bot control PID");
  Bytes request{1};put(request,session);put(request,epoch,8);put(request,init.engine);put(request,init.resources);blob(request,init.cardView);
  text(request,init.runtimeRoot);text(request,init.executor);text(request,init.deckFile);text(request,init.dialog);put(request,static_cast<std::uint32_t>(init.seed),4);put(request,init.chat,1);put(request,init.usePreErrataEffects,1);
+ text(request,init.name);put(request,init.hand,4);text(request,init.selectionCommand);blob(request,init.selectionCatalog);text(request,init.customDeckSource);put(request,init.hasCustomDeck,1);if(init.hasCustomDeck)blob(request,init.customDeck);
  if(!p.request(std::move(request)))throw std::runtime_error(p.failure);
 }
 BotController::~BotController()=default;
@@ -125,7 +131,7 @@ std::vector<BotOutput> BotController::Dispatch(SessionId session,std::uint64_t e
  auto& p=*impl_;if(p.state!=BotState::Running || session!=p.session || epoch!=p.epoch)return {};
  Bytes request{2};put(request,session);put(request,epoch,8);put(request,prompt,8);blob(request,packet);if(!p.request(std::move(request)))return {};
  auto output=std::move(p.outputs);p.outputs.clear();std::vector<BotOutput> accepted;
- for(auto& item:output)if(item.session==p.session && item.epoch==p.epoch && item.prompt==prompt && item.origin==Origin::Bot && item.producerPid==p.active && p.state==BotState::Running)accepted.push_back(std::move(item));return accepted;
+ for(auto& item:output)if(AcceptsBotOutput(item,Identity(),prompt))accepted.push_back(std::move(item));return accepted;
 }
 bool BotController::Prepare(const TxKey& tx,std::size_t cursor){Bytes request{3};key(request,tx);put(request,cursor,8);return impl_->request(std::move(request));}
 bool BotController::Commit(const TxKey& tx){Bytes request{4};key(request,tx);return impl_->request(std::move(request));}
@@ -133,8 +139,13 @@ void BotController::Abort(const TxKey& tx){Bytes request{5};key(request,tx);impl
 bool BotController::Resume(const TxKey& tx,std::uint64_t epoch){Bytes request{6};key(request,tx);put(request,epoch,8);return impl_->request(std::move(request));}
 void BotController::Pause(){impl_->request(Bytes{8});impl_->state=BotState::Failed;}
 bool BotController::Deliver(const BotOutput& output,std::uint64_t prompt,const std::function<void(const Bytes&)>& sink) const {
- const auto& p=*impl_;if(p.state!=BotState::Running || output.session!=p.session || output.epoch!=p.epoch || output.prompt!=prompt || output.origin!=Origin::Bot || output.producerPid!=p.active)return false;sink(output.packet);return true;
+ if(!AcceptsBotOutput(output,Identity(),prompt))return false;sink(output.packet);return true;
 }
+bool AcceptsBotOutput(const BotOutput& output,const BotIdentity& identity,std::uint64_t prompt) noexcept {
+ return identity.state==BotState::Running && identity.activePid!=0 && output.session==identity.session && output.epoch==identity.epoch && output.prompt==prompt && output.origin==Origin::Bot && output.producerPid==identity.activePid;
+}
+BotIdentity BotController::Identity()const{return {impl_->session,impl_->epoch,impl_->state,impl_->active};}
+const BotSelectionInfo& BotController::Selection()const{return impl_->selection;}
 std::size_t BotController::Cursor()const{return static_cast<std::size_t>(impl_->cursor);}
 BotState BotController::State()const{return impl_->state;}
 std::uint64_t BotController::Epoch()const{return impl_->epoch;}

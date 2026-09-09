@@ -68,10 +68,12 @@ namespace WindBot.Game
 
         internal bool Offline { get; private set; }
 
-        internal void StartOffline(Action<byte[]> sink)
+        internal byte[] FrozenDeck { get; private set; }
+        internal void StartOffline(Action<byte[]> sink, byte[] deck = null)
         {
             if (Connection != null) throw new InvalidOperationException("Client already started");
             Offline = true;
+            FrozenDeck = deck == null ? null : (byte[])deck.Clone();
             Connection = new YGOClient(sink);
             _behavior = new GameBehavior(this);
             if (_behavior.Deck == null) throw new InvalidOperationException("Fixed deck failed to load");

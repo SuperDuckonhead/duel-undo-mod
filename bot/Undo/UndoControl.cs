@@ -72,6 +72,7 @@ namespace WindBot.Undo
                 try
                 {
                     var packets = active.Dispatch(packet); Cursor = active.Cursor;
+                    if (!active.IsConnected) { State = BotUndoState.Failed; Failure = active.TerminalReason; return new BotOutput[0]; }
                     return packets.Select(p => new BotOutput { Session = (byte[])session.Clone(), Epoch = Epoch, Prompt = prompt, ProducerPid = ActivePid, Packet = (byte[])p.Clone() }).ToArray();
                 }
                 catch (Exception ex) { Failure = ex.Message; State = BotUndoState.Failed; throw; }
@@ -161,9 +162,16 @@ namespace WindBot.Undo
                 candidate = retained = active = null;
             }
         }
+        private void WriteSelection(BinaryWriter w)
+        {
+            var s = init.Selection;
+            FrozenCardView.WriteText(w, s.Name); FrozenCardView.WriteText(w, s.Executor);
+            FrozenCardView.WriteText(w, s.DeckFile); FrozenCardView.WriteText(w, s.Dialog);
+            w.Write(s.Hand); w.Write(s.Chat); w.Write(s.UsePreErrataEffects); FrozenCardView.WriteText(w, s.CustomDeckSource);
+        }
         private void WriteStatus(BinaryWriter w)
         {
-            w.Write((byte)State); w.Write(Epoch); w.Write(ActivePid); w.Write(CandidatePid); w.Write(RetainedPid); w.Write(Cursor); w.Write(CommitCount); FrozenCardView.WriteText(w, Failure ?? "");
+            w.Write((byte)State); w.Write(Epoch); w.Write(ActivePid); w.Write(CandidatePid); w.Write(RetainedPid); w.Write(Cursor); w.Write(CommitCount); FrozenCardView.WriteText(w, Failure ?? ""); WriteSelection(w);
         }
         internal static int Run(string pipeName)
         {
@@ -189,7 +197,10 @@ namespace WindBot.Undo
                                     byte[] engine = r.ReadBytes(32), resources = r.ReadBytes(32), cards = WorkerWire.ReadBytes(r);
                                     string root = FrozenCardView.ReadText(r), executor = FrozenCardView.ReadText(r), deck = FrozenCardView.ReadText(r), dialog = FrozenCardView.ReadText(r);
                                     int seed = r.ReadInt32(); bool chat = r.ReadBoolean(), pre = r.ReadBoolean();
-                                    control = new UndoControl(BotInit.CaptureMerged(root, executor, deck, dialog, seed, chat, pre, cards, engine, resources), sid, epoch);
+                                    var selection = new BotSelection { Executor = executor, DeckFile = deck, Dialog = dialog, Chat = chat, UsePreErrataEffects = pre,
+                                        Name = FrozenCardView.ReadText(r), Hand = r.ReadInt32(), Command = FrozenCardView.ReadText(r), Catalog = WorkerWire.ReadBytes(r), CustomDeckSource = FrozenCardView.ReadText(r) };
+                                    if (r.ReadBoolean()) selection.CustomDeck = WorkerWire.ReadBytes(r);
+                                    control = new UndoControl(BotInit.CaptureSelected(root, selection, seed, cards, engine, resources), sid, epoch);
                                 }
                                 else
                                 {

@@ -45,47 +45,50 @@ namespace WindBot.Game
             {
                 reader = new StreamReader(Program.ReadFile("Decks", name, "ydk"));
 
-                Deck deck = new Deck();
-                bool side = false;
-
-                while (!reader.EndOfStream)
-                {
-                    string line = reader.ReadLine();
-                    if (line == null)
-                        continue;
-
-                    line = line.Trim();
-                    if (line.StartsWith("#"))
-                        continue;
-                    if (line.Equals("!side"))
-                    {
-                        side = true;
-                        continue;
-                    }
-
-                    int id;
-                    if (!int.TryParse(line, out id))
-                        continue;
-
-                    deck.AddNewCard(id, side);
-                }
-
-                reader.Close();
-
-                if (deck.Cards.Count > 60)
-                    return null;
-                if (deck.ExtraCards.Count > 15)
-                    return null;
-                if (deck.SideCards.Count > 15)
-                    return null;
-
-                return deck;
+                using (reader) return Load(reader);
             }
             catch (Exception)
             {
                 reader?.Close();
                 return null;
             }
+        }
+        public static Deck Load(TextReader reader)
+        {
+            Deck deck = new Deck();
+            bool side = false;
+
+            while (reader.Peek() >= 0)
+            {
+                string line = reader.ReadLine();
+                if (line == null)
+                    continue;
+
+                line = line.Trim();
+                if (line.StartsWith("#"))
+                    continue;
+                if (line.Equals("!side"))
+                {
+                    side = true;
+                    continue;
+                }
+
+                int id;
+                if (!int.TryParse(line, out id))
+                    continue;
+
+                deck.AddNewCard(id, side);
+            }
+
+
+            if (deck.Cards.Count > 60)
+                return null;
+            if (deck.ExtraCards.Count > 15)
+                return null;
+            if (deck.SideCards.Count > 15)
+                return null;
+
+            return deck;
         }
     }
 }

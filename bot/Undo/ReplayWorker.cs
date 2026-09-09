@@ -33,7 +33,7 @@ namespace WindBot.Undo
                 NamedCardsManager.InitFrozen(FrozenCardView.Decode(init.MergedCards, init.EngineDigest, init.CoreResourceDigest));
             else NamedCardsManager.Init(options.DatabasePath, true);
             game = new GameClient(options.Info(init));
-            game.StartOffline(OnOutput);
+            game.StartOffline(OnOutput, init.Deck);
             options.Validate(init);
         }
         private void OnOutput(byte[] bytes)
@@ -44,6 +44,7 @@ namespace WindBot.Undo
         internal byte[][] Dispatch(byte[] message)
         {
             if (message.Length == 0 || message.Length > 65535) throw new InvalidOperationException("Invalid visible packet length");
+            if (!game.Connection.IsConnected) throw new InvalidOperationException("Offline bot already closed");
             output.Clear();
             currentMessage = (byte[])message.Clone();
             tape.Observe(new TapeEntry { Kind = TapeKind.Message, Call = "STOC", Input = currentMessage, Output = new byte[0] });
@@ -111,6 +112,7 @@ namespace WindBot.Undo
                                     }
                                     else if (command == 4) WorkerWire.WriteTape(w, tape.Snapshot());
                                     else if (command == 5) WorkerWire.WriteBytes(w, worker.Digest());
+                                    else if (command == 8) w.Write(worker.game.Username);
                                     else if (command == 7) w.Write((ulong)tape.Cursor);
                                     else if (command == 6)
                                     {
@@ -122,6 +124,8 @@ namespace WindBot.Undo
                                 }
                                 if (stream.Position != stream.Length) throw new InvalidOperationException("Trailing worker command bytes");
                                 w.Write(worker.game.Connection.NetworkSendCount);
+                                w.Write(worker.game.Connection.IsConnected);
+                                w.Write(worker.game.Connection.IsConnected ? "" : "Offline GameBehavior closed after STOC " + BitConverter.ToString(worker.currentMessage.Take(2).ToArray()));
                             }
                         });
                         output.Write(true); WorkerWire.WriteBytes(output, result); output.Flush();
