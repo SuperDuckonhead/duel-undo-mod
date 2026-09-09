@@ -7,7 +7,9 @@
 #include "deck.h"
 #include "network.h"
 
+namespace undo { struct RoomConfig; }
 namespace ygo {
+class RoomClient;
 
 #define CONNECT_STATE_NONE			0x0
 #define CONNECT_STATE_CONNECTING	0x1
@@ -27,6 +29,11 @@ private:
 
 public:
 	static unsigned char selftype;
+ static std::shared_ptr<RoomClient> Room();
+ static void ConfigureRoom(std::shared_ptr<const undo::RoomConfig>);
+ static void RoomPoll(EventSocket, short, void*);
+ static void SendLegacyPacket(unsigned char, const void*, size_t);
+ static void HandleLegacySTOC(unsigned char*, size_t);
 	static bool StartClient(unsigned int ip, unsigned short port, bool create_game = true);
 	static void ConnectTimeout(EventSocket fd, short events, void* arg);
 	static void StopClient(unsigned reason = CLIENT_CLOSE_REASON_STOP);
@@ -45,30 +52,15 @@ public:
  static DuelPromptContext CapturePromptContext();
  static void RestorePromptContext(const DuelPromptContext&) noexcept;
 	static void SendUpdateDeck(const Deck& deck);
-	static void SendPacketToServer(unsigned char proto) {
-		auto p = duel_client_write;
-		BufferIO::Write<uint16_t>(p, 1);
-		BufferIO::Write<uint8_t>(p, proto);
-		WriteBufferEvent(client_bev, duel_client_write, 3);
-	}
-	template<typename ST>
-	static void SendPacketToServer(unsigned char proto, const ST& st) {
-		auto p = duel_client_write;
-		static_assert(sizeof(ST) <= MAX_DATA_SIZE, "Packet size is too large.");
-		BufferIO::Write<uint16_t>(p, (uint16_t)(1 + sizeof(ST)));
-		BufferIO::Write<uint8_t>(p, proto);
-		std::memcpy(p, &st, sizeof(ST));
-		WriteBufferEvent(client_bev, duel_client_write, sizeof(ST) + 3);
-	}
-	static void SendBufferToServer(unsigned char proto, void* buffer, size_t len) {
-		auto p = duel_client_write;
-		if (len > MAX_DATA_SIZE)
-			len = MAX_DATA_SIZE;
-		BufferIO::Write<uint16_t>(p, (uint16_t)(1 + len));
-		BufferIO::Write<uint8_t>(p, proto);
-		std::memcpy(p, buffer, len);
-		WriteBufferEvent(client_bev, duel_client_write, len + 3);
-	}
+	static void SendPacketToServer(unsigned char proto) { SendLegacyPacket(proto,nullptr,0); }
+	template<typename ST> static void SendPacketToServer(unsigned char proto,const ST& st) {
+        static_assert(sizeof(ST)<=MAX_DATA_SIZE,"Packet size is too large.");
+        SendLegacyPacket(proto,&st,sizeof(ST));
+    }
+    static void SendBufferToServer(unsigned char proto,void* buffer,size_t len) {
+        if(len>MAX_DATA_SIZE)return;
+        SendLegacyPacket(proto,buffer,len);
+    }
 
 	static std::vector<HostPacket> hosts;
 	static void BeginRefreshHost();

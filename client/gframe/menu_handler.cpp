@@ -1,4 +1,5 @@
 ﻿#include "undo/runtime_paths.h"
+#include "undo/room_config.h"
 #include "config.h"
 #include "menu_handler.h"
 #include "data_manager.h"
@@ -53,6 +54,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 				break;
 			}
 			case BUTTON_JOIN_HOST: {
+                DuelClient::ConfigureRoom(nullptr);
 				mainGame->bot_mode = false;
 				mainGame->TrimText(mainGame->ebJoinHost);
 				mainGame->TrimText(mainGame->ebJoinPort);
@@ -103,7 +105,13 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 			case BUTTON_HOST_CONFIRM: {
 				mainGame->bot_mode = false;
 				BufferIO::CopyWideString(mainGame->ebServerName->getText(), mainGame->gameConf.gamename);
-				if(!NetServer::StartServer(mainGame->gameConf.serverport)) {
+                if(mainGame->cbMatchMode->getSelected()==1){mainGame->env->addMessageBox(L"",L"撤回房间暂不支持 Match 对战。");break;}
+				if(mainGame->cbMatchMode->getSelected()==2){mainGame->env->addMessageBox(L"",L"撤回房间仅支持两名对战玩家");break;}
+                std::shared_ptr<const undo::RoomConfig> config;
+                try{config=undo::CaptureRoomConfig(dataManager,mainGame->runtime_root.u8string(),mainGame->gameConf.prefer_expansion_script!=0,mainGame->chkUndoLoopback->isChecked()?undo::RoomMode::LoopbackFree:undo::RoomMode::ConsentLan);}
+                catch(const std::exception& error){mainGame->ErrorLog(error.what());mainGame->env->addMessageBox(L"",L"无法冻结对战资源");break;}
+                DuelClient::ConfigureRoom(config);
+                if(!NetServer::StartServer(mainGame->gameConf.serverport,mainGame->chkUndoLoopback->isChecked()?0x7f000001:0,nullptr,!mainGame->chkUndoLoopback->isChecked(),&config->capability,config)) {
 					soundManager.PlaySoundEffect(SOUND_INFO);
 					mainGame->env->addMessageBox(L"", dataManager.GetSysString(1402));
 					break;
@@ -133,6 +141,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 				break;
 			}
 			case BUTTON_HP_OBSERVER: {
+                if(DuelClient::Room()){mainGame->env->addMessageBox(L"",L"撤回房间仅支持两名对战玩家");break;}
 				DuelClient::SendPacketToServer(CTOS_HS_TOOBSERVER);
 				break;
 			}
@@ -314,33 +323,18 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 					bot_server_port = mainGame->gameConf.serverport;
 					bot_server_listen = 0; // INADDR_ANY
 				}
-				if(!NetServer::StartServer(bot_server_port, bot_server_listen, &bot_server_port, bot_server_public)) {
-					soundManager.PlaySoundEffect(SOUND_INFO);
-					mainGame->env->addMessageBox(L"", dataManager.GetSysString(1402));
-					break;
-				}
-				std::vector<std::wstring> processArgs;
-				wchar_t arg1[512];
-				if(mainGame->botInfo[sel].select_deckfile) {
-					wchar_t botdeck[256];
-					DeckManager::GetDeckFile(botdeck, mainGame->cbBotDeckCategory->getSelected(), mainGame->cbBotDeckCategory->getText(), mainGame->cbBotDeck->getText());
-					myswprintf(arg1, L"%ls DeckFile='%ls'", mainGame->botInfo[sel].command, botdeck);
-				}
-				else
-					myswprintf(arg1, L"%ls", mainGame->botInfo[sel].command);
-				processArgs.push_back(arg1);
-				int flag = 0;
-				flag += (mainGame->chkBotHand->isChecked() ? 0x1 : 0);
-				processArgs.push_back(std::to_wstring(flag));
-				processArgs.push_back(std::to_wstring(bot_server_port));
-#ifdef _WIN32
-				std::wstring executableName = undo::ResourcePath(mainGame->runtime_root, L"WindBot/WindBot-undo.exe").wstring();
-                processArgs = undo::BotArguments(arg1, bot_server_port, mainGame->chkBotHand->isChecked(), mainGame->runtime_root);
-#else
-				std::wstring executableName = L"./bot";
-#endif
-				mainGame->pending_bot_executable = executableName;
-				mainGame->pending_bot_args = processArgs;
+                std::string custom;char utf8[2048]{};
+                if(mainGame->botInfo[sel].select_deckfile){wchar_t path[256];DeckManager::GetDeckFile(path,mainGame->cbBotDeckCategory->getSelected(),mainGame->cbBotDeckCategory->getText(),mainGame->cbBotDeck->getText());BufferIO::EncodeUTF8(path,utf8);custom=utf8;}
+                BufferIO::EncodeUTF8(mainGame->botInfo[sel].command,utf8);std::string selection=utf8;
+                bool free=mainGame->chkBotUndoLoopback->isChecked();
+                if(free){bot_server_listen=localhost;bot_server_public=false;}
+                std::shared_ptr<const undo::RoomConfig> config;
+                try{auto captured=std::make_shared<undo::RoomConfig>(*undo::CaptureRoomConfig(dataManager,mainGame->runtime_root.u8string(),mainGame->gameConf.prefer_expansion_script!=0,free?undo::RoomMode::LoopbackFree:undo::RoomMode::ConsentLan,selection,custom));captured->bot->handOverride=mainGame->chkBotHand->isChecked()?1:0;config=std::move(captured);}
+                catch(const std::exception& error){mainGame->ErrorLog(error.what());mainGame->env->addMessageBox(L"",L"无法冻结 AI 与对战资源");break;}
+                DuelClient::ConfigureRoom(config);
+                if(!NetServer::StartServer(bot_server_port,bot_server_listen,&bot_server_port,bot_server_public,&config->capability,config)){mainGame->env->addMessageBox(L"",dataManager.GetSysString(1402));break;}
+                mainGame->pending_bot_executable.clear();mainGame->pending_bot_args.clear();
+
 				if(!DuelClient::StartClient(localhost, bot_server_port)) {
 					mainGame->pending_bot_executable.clear();
 					mainGame->pending_bot_args.clear();

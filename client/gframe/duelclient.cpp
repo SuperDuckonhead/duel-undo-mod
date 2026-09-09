@@ -4,6 +4,10 @@
 #include <random>
 #include "config.h"
 #include "duelclient.h"
+#include "room_client.h"
+#include "undo/room_policy.h"
+#include "undo/room_config.h"
+#include <deque>
 #include "data_manager.h"
 #include "client_card.h"
 #include "materials.h"
@@ -19,6 +23,12 @@
 
 namespace ygo {
 namespace {
+std::shared_ptr<RoomClient> roomClient;
+std::shared_ptr<const undo::RoomConfig> roomConfig;
+std::unique_ptr<undo::ClientRoomHandshake> roomHandshake;
+std::mutex outboundMutex;
+std::deque<undo::Bytes> lobbyOutbound;
+event* roomPollEvent{};
 std::mutex responseMutex;
 undo::InputSubmission pendingSubmission;
 thread_local undo::Origin responseOrigin=undo::Origin::Manual;
@@ -76,10 +86,28 @@ int DuelClient::WriteBufferEvent(bufferevent* bufev, const void* data, size_t si
 	return bufferevent_write(bufev, data, size);
 }
 
+std::shared_ptr<RoomClient> DuelClient::Room(){return std::atomic_load(&roomClient);}
+void DuelClient::ConfigureRoom(std::shared_ptr<const undo::RoomConfig> c){roomConfig=std::move(c);}
+void DuelClient::SendLegacyPacket(unsigned char proto,const void* data,size_t len){
+ if(len>MAX_DATA_SIZE||(!data&&len))return;
+ undo::Bytes packet{proto};if(len){auto*p=static_cast<const uint8_t*>(data);packet.insert(packet.end(),p,p+len);}
+ if(auto room=Room()){
+  if(proto==CTOS_RESPONSE)return;
+  if(proto==CTOS_TIME_CONFIRM||proto==CTOS_CHAT||proto==CTOS_SURRENDER){room->QueueLegacy(packet);return;}
+ }
+ std::lock_guard<std::mutex> lock(outboundMutex);lobbyOutbound.push_back(std::move(packet));
+}
+void DuelClient::RoomPoll(EventSocket,short,void*){
+ if(auto room=Room())room->Poll();
+ std::deque<undo::Bytes> pending;{std::lock_guard<std::mutex> lock(outboundMutex);pending.swap(lobbyOutbound);}
+ for(auto&packet:pending){uint16_t length=uint16_t(packet.size());undo::Bytes bytes{uint8_t(length),uint8_t(length>>8)};bytes.insert(bytes.end(),packet.begin(),packet.end());WriteBufferEvent(client_bev,bytes.data(),bytes.size());}
+}
 bool DuelClient::StartClient(unsigned int ip, unsigned short port, bool create_game) {
 	if(connect_state != CONNECT_STATE_NONE)
 		return false;
-	sockaddr_in sin;
+	try{if(!roomConfig)roomConfig=undo::CaptureRoomConfig(dataManager,mainGame->runtime_root.u8string(),mainGame->gameConf.prefer_expansion_script!=0,undo::RoomMode::ConsentLan);}catch(const std::exception&){mainGame->env->addMessageBox(L"",L"无法冻结对战资源");return false;}
+    {std::lock_guard<std::mutex> lock(outboundMutex);lobbyOutbound.clear();}
+    sockaddr_in sin;
 	client_base = event_base_new();
 	if(!client_base)
 		return false;
@@ -99,12 +127,14 @@ bool DuelClient::StartClient(unsigned int ip, unsigned short port, bool create_g
 	}
 	connect_state = CONNECT_STATE_CONNECTING;
 	rnd.seed(std::random_device()());
-	if(!create_game) {
+	{
 		timeval timeout = {5, 0};
 		connect_timeout_event = event_new(client_base, 0, EV_TIMEOUT, ConnectTimeout, 0);
 		event_add(connect_timeout_event, &timeout);
 	}
-	std::thread(ClientThread).detach();
+	roomPollEvent=event_new(client_base,-1,EV_PERSIST,RoomPoll,nullptr);
+    timeval pollInterval{0,10000};event_add(roomPollEvent,&pollInterval);
+    std::thread(ClientThread).detach();
 	return true;
 }
 void DuelClient::ConnectTimeout(EventSocket fd, short events, void* arg) {
@@ -154,6 +184,11 @@ void DuelClient::ClientRead(bufferevent* bev, void* ctx) {
 void DuelClient::ClientEvent(bufferevent* bev, short events, void* ctx) {
 	if (events & BEV_EVENT_CONNECTED) {
 		bool create_game = (intptr_t)ctx;
+        sockaddr_in peer{};socklen_t peerLen=sizeof(peer);
+        bool actualLoopback=getpeername(bufferevent_getfd(bev),reinterpret_cast<sockaddr*>(&peer),&peerLen)==0&&peer.sin_family==AF_INET&&(ntohl(peer.sin_addr.s_addr)>>24)==127;
+        roomHandshake=std::make_unique<undo::ClientRoomHandshake>(roomConfig->capability,actualLoopback);
+        auto offer=undo::Encode(roomHandshake->Offer());
+        SendBufferToServer(undo::RoomOuterOpcode,offer.data(),offer.size());
 		if(!create_game) {
 			uint16_t hostname_buf[LEN_HOSTNAME];
 			auto hostname_len = BufferIO::CopyCharArray(mainGame->ebJoinHost->getText(), hostname_buf);
@@ -280,13 +315,40 @@ void DuelClient::ClientEvent(bufferevent* bev, short events, void* ctx) {
 void DuelClient::ClientThread() {
 	event_base_dispatch(client_base);
 	CancelConnectTimeout();
+    if(roomPollEvent){event_free(roomPollEvent);roomPollEvent=nullptr;}
+    auto closing=Room();if(closing)closing->Close();
+    std::atomic_store(&roomClient,std::shared_ptr<RoomClient>{});roomHandshake.reset();roomConfig.reset();
 	bufferevent_free(client_bev);
 	event_base_free(client_base);
 	client_bev = 0;
 	client_base = 0;
 	connect_state = CONNECT_STATE_NONE;
 }
-void DuelClient::HandleSTOCPacketLan(unsigned char* data, size_t len) {
+void DuelClient::HandleSTOCPacketLan(unsigned char* data,size_t len){
+ if(!len)return;
+ try{
+  if(data[0]==undo::RoomOuterOpcode){
+   auto envelope=undo::Decode(undo::Bytes(data+1,data+len));
+   if(envelope.kind==undo::WireKind::Hello){
+    if(!roomHandshake)throw std::runtime_error("Unexpected capability");
+    auto echo=roomHandshake->Receive(envelope);
+    if(echo){auto bytes=undo::Encode(*echo);SendBufferToServer(undo::RoomOuterOpcode,bytes.data(),bytes.size());}
+    if(roomHandshake->Ready()&&!Room()){
+     auto send=[](const undo::Envelope&e){auto body=undo::Encode(e);uint16_t n=uint16_t(body.size()+1);undo::Bytes bytes{uint8_t(n),uint8_t(n>>8),undo::RoomOuterOpcode};bytes.insert(bytes.end(),body.begin(),body.end());if(WriteBufferEvent(client_bev,bytes.data(),bytes.size())!=0)throw std::runtime_error("Room transport failed");};
+     std::atomic_store(&roomClient,std::make_shared<RoomClient>(*mainGame,roomHandshake->Session(),send,
+       [](const undo::Bytes& b){HandleLegacySTOC(const_cast<uint8_t*>(b.data()),b.size());},
+       [](const undo::InputSubmission&i){SendResponse(i);}));
+    }
+   }else{auto room=Room();if(!room)throw std::runtime_error("Room not authenticated");room->Receive(envelope);}
+   return;
+  }
+  if(roomHandshake&&(data[0]==STOC_GAME_MSG||data[0]==STOC_TIME_LIMIT||data[0]==STOC_REPLAY||data[0]==STOC_DUEL_END))throw std::runtime_error("Unwrapped game traffic");
+  if(roomHandshake&&(data[0]==STOC_DUEL_START||data[0]==STOC_SELECT_HAND||data[0]==STOC_SELECT_TP)&&!roomHandshake->Ready())throw std::runtime_error("Duel started before capability confirmation");
+  if(auto room=Room();room&&room->Token().prompt&&data[0]==STOC_CHAT)throw std::runtime_error("Unwrapped duel chat");
+  HandleLegacySTOC(data,len);
+ }catch(const std::exception& error){mainGame->ErrorLog(error.what());StopClient();}
+}
+void DuelClient::HandleLegacySTOC(unsigned char* data, size_t len) {
 	unsigned char* pdata = data;
 	unsigned char pktType = BufferIO::Read<uint8_t>(pdata);
 	switch(pktType) {
@@ -303,6 +365,29 @@ void DuelClient::HandleSTOCPacketLan(unsigned char* data, size_t len) {
 		std::memcpy(&packet, pdata, sizeof packet);
 		const auto* pkt = &packet;
 		switch(pkt->msg) {
+        case undo::RoomPolicyError: {
+            const auto* message=undo::PolicyMessage(pkt->code);
+            if(!message)break;
+            const bool fatal=(pkt->code & undo::RoomPolicyFatal)!=0;
+            {
+                std::lock_guard<std::mutex> lock(mainGame->gMutex);
+                if(fatal) {
+                    mainGame->btnCreateHost->setEnabled(true);
+                    mainGame->btnJoinHost->setEnabled(true);
+                    mainGame->btnJoinCancel->setEnabled(true);
+                    mainGame->btnStartBot->setEnabled(true);
+                    mainGame->btnBotCancel->setEnabled(true);
+                    mainGame->wHostPrepare->setVisible(false);
+                    mainGame->wChat->setVisible(false);
+                    if(mainGame->bot_mode)mainGame->ShowElement(mainGame->wSinglePlay);
+                    else mainGame->ShowElement(mainGame->wLanWindow);
+                }
+                soundManager.PlaySoundEffect(SOUND_INFO);
+                mainGame->env->addMessageBox(L"",message);
+            }
+            if(fatal)StopClient();
+            break;
+        }
 		case ERRMSG_JOINERROR: {
 			mainGame->btnCreateHost->setEnabled(true);
 			mainGame->btnJoinHost->setEnabled(true);
@@ -789,14 +874,19 @@ void DuelClient::HandleSTOCPacketLan(unsigned char* data, size_t len) {
 	case STOC_REPLAY: {
 		if (len < 1 + sizeof(ExtendedReplayHeader))
 			return;
+        Replay new_replay;
+        bool undoReplay=false;
+        if(Room()){
+            if(!new_replay.LoadUndoReplay(undo::Bytes(pdata,pdata+len-1)))return;
+            undoReplay=true;
+        }
 		mainGame->gMutex.lock();
 		mainGame->wPhase->setVisible(false);
 		if(mainGame->dInfo.player_type < 7)
 			mainGame->btnLeaveGame->setVisible(false);
 		mainGame->CloseGameButtons();
 		auto prep = pdata;
-		Replay new_replay;
-		std::memcpy(&new_replay.pheader, prep, sizeof new_replay.pheader);
+		if(!undoReplay)std::memcpy(&new_replay.pheader, prep, sizeof new_replay.pheader);
 		prep += sizeof new_replay.pheader;
 		size_t data_size = len - (1 + sizeof new_replay.pheader);
 		if (data_size > MAX_COMP_SIZE)
@@ -826,8 +916,8 @@ void DuelClient::HandleSTOCPacketLan(unsigned char* data, size_t len) {
 			mainGame->WaitFrameSignal(30);
 		}
 		if(mainGame->actionParam || !is_host) {
-			std::memcpy(new_replay.comp_data, prep, data_size);
-			new_replay.comp_size = data_size;
+			if(!undoReplay){std::memcpy(new_replay.comp_data, prep, data_size);
+			new_replay.comp_size = data_size;}
 			if (mainGame->actionParam) {
 				bool save_result = new_replay.SaveReplay(mainGame->ebRSName->getText());
 				if (!save_result)
@@ -4068,14 +4158,16 @@ void DuelClient::SwapField() {
 	is_swapping = true;
 }
 void DuelClient::SetResponseI(int32_t respI) {
- auto token=SingleMode::CurrentToken();
+ auto room=Room();
+ auto token=mainGame->dInfo.isSingleMode?SingleMode::CurrentToken():(room?room->Token():undo::InputToken{});
  std::lock_guard<std::mutex> lock(responseMutex);
 	std::memcpy(response_buf, &respI, sizeof respI);
 	response_len = sizeof respI;
  pendingSubmission={undo::Bytes(response_buf,response_buf+response_len),responseOrigin,token};
 }
 void DuelClient::SetResponseB(void* respB, size_t len) {
- auto token=SingleMode::CurrentToken();
+ auto room=Room();
+ auto token=mainGame->dInfo.isSingleMode?SingleMode::CurrentToken():(room?room->Token():undo::InputToken{});
  std::lock_guard<std::mutex> lock(responseMutex);
 	if (len > SIZE_RETURN_VALUE || (!respB && len)) { pendingSubmission={};response_len=0;return; }
 	std::memcpy(response_buf, respB, len);
@@ -4091,6 +4183,7 @@ void DuelClient::SendResponse(const undo::InputSubmission& submission) {
  if(submission.response.empty() || submission.response.size()>SIZE_RETURN_VALUE)return;
  // Reject stale callbacks before touching the installed prompt widgets.
  if(mainGame->dInfo.isSingleMode && !SingleMode::SetResponse(submission))return;
+ if(!mainGame->dInfo.isSingleMode){auto room=Room();if(room&&!room->Submit(submission))return;}
 	switch(mainGame->dInfo.curMsg) {
 	case MSG_SELECT_BATTLECMD: {
 		mainGame->dField.ClearCommandFlag();
@@ -4122,7 +4215,7 @@ void DuelClient::SendResponse(const undo::InputSubmission& submission) {
 		mainGame->singleSignal.Set();
 	} else {
 		mainGame->dInfo.time_player = 2;
-		SendBufferToServer(CTOS_RESPONSE, const_cast<unsigned char*>(submission.response.data()), submission.response.size());
+		if(!Room())SendBufferToServer(CTOS_RESPONSE, const_cast<unsigned char*>(submission.response.data()), submission.response.size());
 	}
 }
 void DuelClient::SendUpdateDeck(const Deck& deck) {

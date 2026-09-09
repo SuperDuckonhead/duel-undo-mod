@@ -466,6 +466,10 @@ public:
 	irr::gui::IGUIComboBox* cbDuelRule{};
 	irr::gui::IGUICheckBox* chkNoCheckDeck{};
 	irr::gui::IGUICheckBox* chkNoShuffleDeck{};
+ irr::gui::IGUICheckBox* chkUndoLoopback{};
+ irr::gui::IGUICheckBox* chkBotUndoLoopback{};
+ irr::gui::IGUIButton* btnUndoApprove{};
+ irr::gui::IGUIButton* btnUndoDecline{};
 	irr::gui::IGUIButton* btnHostConfirm{};
 	irr::gui::IGUIButton* btnHostCancel{};
 	//host panel
@@ -928,6 +932,9 @@ extern Game* mainGame;
 #define SCROLL_RESIZE_POPUP_MENU	385
 #define CHECKBOX_RESIZE_SELECT_WINDOW	386
 #define CHECKBOX_SWAP_YES_NO_BUTTON	387
+
+#define BUTTON_UNDO_APPROVE 388
+#define BUTTON_UNDO_DECLINE 389
 
 #define AVAIL_OCG					0x1
 #define AVAIL_TCG					0x2

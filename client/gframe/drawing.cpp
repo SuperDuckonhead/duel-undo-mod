@@ -10,6 +10,7 @@
 #include "deck_manager.h"
 #include "sound_manager.h"
 #include "duelclient.h"
+#include "room_client.h"
 #include "single_mode.h"
 
 namespace ygo {
@@ -546,7 +547,8 @@ void Game::DrawCards() {
 	}
 }
 void Game::DrawCard(ClientCard* pcard) {
-	if(pcard->aniFrame) {
+ auto room=DuelClient::Room();
+	if(pcard->aniFrame && !(room&&room->PresentationFrozen())) {
 		if(pcard->is_moving) {
 			pcard->curPos += pcard->dPos;
 			pcard->curRot += pcard->dRot;
@@ -633,6 +635,7 @@ void Game::DrawShadowText(irr::gui::CGUITTFont* font, const T& text, const irr::
 	font->drawUstring(text, position, color, hcenter, vcenter, clip);
 }
 void Game::DrawMisc() {
+ auto room=DuelClient::Room();
 	static irr::core::vector3df act_rot(0, 0, 0);
 	int rule = (dInfo.duel_rule >= 4) ? 1 : 0;
 	irr::core::matrix4 im, ic, it, ig;
@@ -774,7 +777,7 @@ void Game::DrawMisc() {
 	auto tLPFrameRect = irr::core::recti(0, 0, imageManager.tLPFrame->getOriginalSize().Width, imageManager.tLPFrame->getOriginalSize().Height);
 	driver->draw2DImage(imageManager.tLPFrame, Resize(329, 10, 629, 30), tLPFrameRect, 0, 0, true);
 	driver->draw2DImage(imageManager.tLPFrame, Resize(691, 10, 991, 30), tLPFrameRect, 0, 0, true);
-	if(lpframe) {
+	if(lpframe && !(room&&room->PresentationFrozen())) {
 		dInfo.lp[lpplayer] -= lpd;
 		myswprintf(dInfo.strLP[lpplayer], L"%d", dInfo.lp[lpplayer]);
 		lpccolor -= 0x19000000;
@@ -938,7 +941,9 @@ void Game::DrawStatus(ClientCard* pcard, int x1, int y1, int x2, int y2) {
 	}
 }
 void Game::DrawGUI() {
+ auto room=DuelClient::Room();
  UpdateDuelUndoStatus();
+ if(room&&room->PresentationFrozen()){env->drawAll();return;}
 	while(btnImagePending.size()) {
 		auto mit = btnImagePending.cbegin();
 		auto button = mit->first;
@@ -952,7 +957,7 @@ void Game::DrawGUI() {
 	for(auto fit = fadingList.begin(); fit != fadingList.end();) {
 		auto fthis = fit++;
 		FadingUnit& fu = *fthis;
-  if(fu.signalAction && mainGame->dInfo.isSingleMode && SingleMode::InputPaused())continue;
+  if(fu.signalAction && ((mainGame->dInfo.isSingleMode && SingleMode::InputPaused())||(room&&room->InputPaused())))continue;
 		if(fu.fadingFrame) {
 			fu.guiFading->setVisible(true);
 			if(fu.isFadein) {
@@ -1004,6 +1009,8 @@ void Game::DrawGUI() {
 	env->drawAll();
 }
 void Game::DrawSpec() {
+ auto room=DuelClient::Room();
+ if(room&&room->PresentationFrozen())return;
 	irr::s32 midx = 574 + (CARD_IMG_WIDTH * 0.5);
 	irr::s32 midy = 150 + (CARD_IMG_HEIGHT * 0.5);
 	if(showcard) {

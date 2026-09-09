@@ -4,6 +4,7 @@
 #include "network.h"
 #include "game.h"
 #include "duelclient.h"
+#include "room_client.h"
 #include "data_manager.h"
 #include "image_manager.h"
 #include "sound_manager.h"
@@ -15,8 +16,15 @@
 namespace ygo {
 
 bool ClientField::OnEvent(const irr::SEvent& event) {
- if(event.EventType==irr::EET_GUI_EVENT && event.GUIEvent.EventType==irr::gui::EGET_BUTTON_CLICKED && event.GUIEvent.Caller->getID()==BUTTON_DUEL_UNDO){SingleMode::RequestUndo(0);return true;}
+ if(event.EventType==irr::EET_GUI_EVENT && event.GUIEvent.EventType==irr::gui::EGET_BUTTON_CLICKED && event.GUIEvent.Caller->getID()==BUTTON_DUEL_UNDO){if(auto room=DuelClient::Room())room->RequestUndo();else SingleMode::RequestUndo(0);return true;}
 
+ if(auto room=DuelClient::Room()){
+  if(event.EventType==irr::EET_GUI_EVENT&&event.GUIEvent.EventType==irr::gui::EGET_BUTTON_CLICKED){auto id=event.GUIEvent.Caller->getID();if(id==BUTTON_UNDO_APPROVE||id==BUTTON_UNDO_DECLINE){room->Consent(id==BUTTON_UNDO_APPROVE);return true;}}
+  bool lobbyChoice=false;
+  if(event.EventType==irr::EET_GUI_EVENT&&event.GUIEvent.EventType==irr::gui::EGET_BUTTON_CLICKED&&!room->Token().prompt){auto id=event.GUIEvent.Caller->getID();lobbyChoice=(id>=BUTTON_HAND1&&id<=BUTTON_HAND3)||id==BUTTON_FIRST||id==BUTTON_SECOND;}
+  bool acknowledgment=event.EventType==irr::EET_GUI_EVENT&&event.GUIEvent.EventType==irr::gui::EGET_BUTTON_CLICKED&&(event.GUIEvent.Caller->getID()==BUTTON_MSG_OK||event.GUIEvent.Caller->getID()==BUTTON_REPLAY_SAVE||event.GUIEvent.Caller->getID()==BUTTON_REPLAY_CANCEL);
+  if(room->InputPaused()&&!acknowledgment&&!lobbyChoice)return true;
+ }
 	if(OnCommonEvent(event))
 		return false;
  if(mainGame->dInfo.isSingleMode && SingleMode::InputPaused())return true;

@@ -10,6 +10,7 @@
 #include "sound_manager.h"
 #include "materials.h"
 #include "duelclient.h"
+#include "room_client.h"
 #include "netserver.h"
 #include "single_mode.h"
 #include <thread>
@@ -309,6 +310,7 @@ bool Game::Initialize(const std::filesystem::path& root) {
 	cbDuelRule->setSelected(gameConf.default_rule - 1);
 	chkNoCheckDeck = env->addCheckBox(false, irr::core::rect<irr::s32>(20, 210, 170, 230), wCreateHost, -1, dataManager.GetSysString(1229));
 	chkNoShuffleDeck = env->addCheckBox(false, irr::core::rect<irr::s32>(180, 210, 360, 230), wCreateHost, -1, dataManager.GetSysString(1230));
+ chkUndoLoopback=env->addCheckBox(false,irr::core::rect<irr::s32>(20,325,370,348),wCreateHost,-1,L"仅本机自由撤回（局域网须双方同意）");
 	env->addStaticText(dataManager.GetSysString(1231), irr::core::rect<irr::s32>(20, 240, 320, 260), false, false, wCreateHost);
 	myswprintf(strbuf, L"%d", 8000);
 	ebStartLP = env->addEditBox(strbuf, irr::core::rect<irr::s32>(140, 235, 220, 260), true, wCreateHost);
@@ -911,6 +913,7 @@ bool Game::Initialize(const std::filesystem::path& root) {
 		chkBotHand = env->addCheckBox(false, irr::core::rect<irr::s32>(360, 200, 560, 220), tabBot, -1, dataManager.GetSysString(1384));
 		chkBotNoCheckDeck = env->addCheckBox(false, irr::core::rect<irr::s32>(360, 230, 560, 250), tabBot, -1, dataManager.GetSysString(1229));
 		chkBotNoShuffleDeck = env->addCheckBox(false, irr::core::rect<irr::s32>(360, 260, 560, 280), tabBot, -1, dataManager.GetSysString(1230));
+ chkBotUndoLoopback=env->addCheckBox(false,irr::core::rect<irr::s32>(360,290,580,315),tabBot,-1,L"仅本机自由撤回");
 	} else { // avoid null pointer
 		btnStartBot = env->addButton(irr::core::rect<irr::s32>(0, 0, 0, 0), wSinglePlay);
 		btnBotCancel = env->addButton(irr::core::rect<irr::s32>(0, 0, 0, 0), wSinglePlay);
@@ -992,6 +995,9 @@ bool Game::Initialize(const std::filesystem::path& root) {
  btnUndoDuel=env->addButton(irr::core::rect<irr::s32>(205,45,295,70),0,BUTTON_DUEL_UNDO,L"撤回选择");
  stUndoDuel=env->addStaticText(L"没有可撤回的选择",irr::core::rect<irr::s32>(205,75,295,115),false,true,0,TEXT_DUEL_UNDO_STATUS);
  btnUndoDuel->setVisible(false);stUndoDuel->setVisible(false);
+ btnUndoApprove=env->addButton(irr::core::rect<irr::s32>(300,45,375,75),0,BUTTON_UNDO_APPROVE,L"同意撤回");
+ btnUndoDecline=env->addButton(irr::core::rect<irr::s32>(380,45,455,75),0,BUTTON_UNDO_DECLINE,L"拒绝撤回");
+ btnUndoApprove->setVisible(false);btnUndoDecline->setVisible(false);
 	//tip
 	stTip = env->addStaticText(L"", irr::core::rect<irr::s32>(0, 0, 150, 150), false, true, 0, -1, true);
 	stTip->setBackgroundColor(0xc0ffffff);
@@ -1059,8 +1065,9 @@ void Game::MainLoop() {
 			if(!device->isWindowActive()) deckBuilder.CancelEditorDrag();
 			deckBuilder.RefreshEditorUndo();
 		}
+		auto room=DuelClient::Room();
 		auto size = driver->getScreenSize();
-		if(window_size != size) {
+		if(window_size != size && !(room&&room->InputPaused())) {
 			window_size = size;
 			xScale = window_size.Width / static_cast<float>(GAME_WINDOW_WIDTH);
 			yScale = window_size.Height / static_cast<float>(GAME_WINDOW_HEIGHT);
@@ -1166,7 +1173,7 @@ void Game::MainLoop() {
 			lastFpsTime += std::chrono::milliseconds(1000);
 			if(now - lastFpsTime > std::chrono::milliseconds(1000))
 				lastFpsTime = now;
-			if(dInfo.time_player == 0 || dInfo.time_player == 1)
+			if((dInfo.time_player == 0 || dInfo.time_player == 1) && !(room&&room->InputPaused()))
 				if(dInfo.time_left[dInfo.time_player])
 					dInfo.time_left[dInfo.time_player]--;
 		}
@@ -2535,13 +2542,17 @@ bool Game::SpawnAsync(const std::wstring& exePath, const std::vector<std::wstrin
 namespace ygo {
 void Game::UpdateDuelUndoStatus(){
  if(!btnUndoDuel || !stUndoDuel)return;
- bool visible=dInfo.isSingleMode && !dInfo.isReplay && dInfo.isStarted;
+ auto room=DuelClient::Room();
+ bool visible=(dInfo.isSingleMode||room) && !dInfo.isReplay && dInfo.isStarted;
+ bool ask=visible&&!dInfo.isFinished&&room&&room->NeedsConsent();btnUndoApprove->setVisible(ask);btnUndoDecline->setVisible(ask);
  btnUndoDuel->setVisible(visible);stUndoDuel->setVisible(visible);
+ stUndoDuel->setRelativePosition(room?Resize(300,80,800,150):Resize(205,75,295,115));
  btnLeaveGame->setRelativePosition(Resize(205,5,295,visible?40:80));
  btnChainIgnore->setRelativePosition(Resize(205,visible?120:100,295,visible?145:135));
  btnChainAlways->setRelativePosition(Resize(205,visible?150:140,295,175));
  btnChainWhenAvail->setRelativePosition(Resize(205,180,295,visible?205:215));
  if(!visible)return;
+ if(room&&!dInfo.isSingleMode){btnUndoDuel->setEnabled(!dInfo.isFinished&&room->CanUndo());stUndoDuel->setText(dInfo.isFinished?L"本局已结束":room->StatusText().c_str());return;}
  btnUndoDuel->setEnabled(!dInfo.isFinished && SingleMode::CanUndo(0));
  if(dInfo.isFinished)stUndoDuel->setText(L"本局已结束");
  else if(SingleMode::InputPaused())stUndoDuel->setText(L"正在恢复");
