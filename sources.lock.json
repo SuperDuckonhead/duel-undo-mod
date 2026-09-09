@@ -33,7 +33,9 @@
       "commit": "20f86d251624334d53585a1809ea4c7178f72a34",
       "destination": "client/irrlicht",
       "evidenceUrl": "https://github.com/mercury233/irrlicht/commit/20f86d251624334d53585a1809ea4c7178f72a34",
-      "evidenceNote": "Production URL master observed at this SHA; primary mirror commit dated2026-06-25, preceding installed build. Historical CI fetched mutable master, so exact Sep1 dependency provenance is not proven. This development baseline explicitly freezes the SHA."
+      "evidenceNote": "Production URL master observed at this SHA; primary mirror commit dated2026-06-25, preceding installed build. Historical CI fetched mutable master, so exact Sep1 dependency provenance is not proven. This development baseline explicitly freezes the SHA.",
+      "archiveUrl": "https://codeload.github.com/mercury233/irrlicht/tar.gz/20f86d251624334d53585a1809ea4c7178f72a34",
+      "sha256": "fdbc0d1fabc9adda7abc665316425d3560498d132c0be650c5b5eff78b10d393"
     },
     {
       "name": "miniaudio",
@@ -41,7 +43,9 @@
       "commit": "9634bedb5b5a2ca38c1ee7108a9358a4e233f14d",
       "destination": "client/miniaudio",
       "evidenceUrl": "https://github.com/mackron/miniaudio/tree/0.11.25",
-      "evidenceNote": "Selected client .ci/prepare-miniaudio.sh fixes tag0.11.25; ls-remote resolves it to this exact commit."
+      "evidenceNote": "Selected client .ci/prepare-miniaudio.sh fixes tag0.11.25; ls-remote resolves it to this exact commit.",
+      "archiveUrl": "https://codeload.github.com/mackron/miniaudio/tar.gz/9634bedb5b5a2ca38c1ee7108a9358a4e233f14d",
+      "sha256": "1a3a79b80fc6f0b0cc155e28b954a598e0ddfa2db64e2afa8466be88c476fa55"
     }
   ],
   "resourceBaseline": {
