@@ -1,7 +1,7 @@
 ﻿/********************************************************
  * ADO.NET 2.0 Data Provider for SQLite Version 3.X
  * Written by Robert Simpson (robert@blackcastlesoft.com)
- * 
+ *
  * Released to the public domain, use at your own risk!
  ********************************************************/
 
@@ -29,7 +29,11 @@ namespace Mono.Data.Sqlite
       {
         // Preload the matching native module so the architecture-neutral sqlite3 imports resolve to it.
         string architecture = Environment.Is64BitProcess ? "x64" : "x86";
+#if UNDO_BUILD
+        string sqlitePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "undo-deps", architecture, "sqlite3.dll");
+#else
         string sqlitePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, architecture, "sqlite3.dll");
+#endif
         if (!File.Exists(sqlitePath))
           throw new DllNotFoundException("SQLite native library was not found: " + sqlitePath);
 
@@ -73,7 +77,7 @@ namespace Mono.Data.Sqlite
     private const string SQLITE_DLL = "sqlite3";
 #endif
 
-    // This section uses interop calls that also fetch text length to optimize conversion.  
+    // This section uses interop calls that also fetch text length to optimize conversion.
     // When using the standard dll, we can replace these calls with normal sqlite calls and do unoptimized conversions instead afterwards
     #region interop added textlength calls
 
@@ -172,7 +176,7 @@ namespace Mono.Data.Sqlite
     [DllImport(SQLITE_DLL)]
 #endif
     internal static extern int sqlite3_close(IntPtr db);
-		
+
 #if !PLATFORM_COMPACTFRAMEWORK
     [DllImport(SQLITE_DLL, CallingConvention = CallingConvention.Cdecl)]
 #else
@@ -390,7 +394,7 @@ namespace Mono.Data.Sqlite
 
     #endregion
 
-    // These are obsolete and will be removed in the future 
+    // These are obsolete and will be removed in the future
     #region windows ntfs filesystem only
 
 #if !SQLITE_STANDARD
@@ -782,7 +786,7 @@ namespace Mono.Data.Sqlite
   {
     private bool _isClosed;
     protected IntPtr handle;
-    
+
     protected CriticalHandle(IntPtr invalidHandleValue)
     {
       handle = invalidHandleValue;

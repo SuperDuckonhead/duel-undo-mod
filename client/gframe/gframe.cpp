@@ -1,5 +1,6 @@
-#include "config.h"
+﻿#include "config.h"
 #include "game.h"
+#include "undo/runtime_paths.h"
 #include "data_manager.h"
 #include <event2/thread.h>
 #include <clocale>
@@ -31,15 +32,21 @@ static int mymain(int wargc, const wchar_t* const wargv[]) {
 	ygo::Game::FixMacOSBundleWorkingDirectory();
 #endif //__APPLE__
 #ifdef _WIN32
-	if (wargc == 2 && (ygo::IsExtension(wargv[1], L".ydk") || ygo::IsExtension(wargv[1], L".yrp"))) { // open file from explorer
-		wchar_t exepath[MAX_PATH];
-		GetModuleFileNameW(nullptr, exepath, MAX_PATH);
-		wchar_t* p = std::wcsrchr(exepath, L'\\');
-		if (p) {
-			*p = 0;
-			SetCurrentDirectoryW(exepath);
-		}
-	}
+    // Resolve caller-relative file arguments before anchoring every legacy resource loader.
+    std::vector<std::wstring> arguments;
+    for(int i = 0; i < wargc; ++i) arguments.emplace_back(wargv[i]);
+    if(wargc == 2 && (ygo::IsExtension(wargv[1], L".ydk") || ygo::IsExtension(wargv[1], L".yrp")))
+        arguments[1] = std::filesystem::absolute(arguments[1]).wstring();
+    for(int i = 1; i + 1 < wargc; ++i)
+        if(arguments[i] == L"-e") arguments[i + 1] = std::filesystem::absolute(arguments[i + 1]).wstring();
+    for(int i = 1; i < wargc; ++i)
+        if(arguments[i].size() > 2 && arguments[i].substr(0, 2) == L"-e")
+            arguments[i] = L"-e" + std::filesystem::absolute(arguments[i].substr(2)).wstring();
+    std::vector<const wchar_t*> argumentPointers;
+    for(const auto& argument : arguments) argumentPointers.push_back(argument.c_str());
+    wargv = argumentPointers.data();
+    try { undo::AnchorRuntime(undo::ExecutableRoot()); }
+    catch(const std::exception& error) { MessageBoxA(nullptr, error.what(), "YGOPro undo", MB_ICONERROR); return EXIT_FAILURE; }
 #endif //_WIN32
 #ifdef _WIN32
 	WORD wVersionRequested;

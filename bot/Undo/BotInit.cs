@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -62,6 +62,9 @@ namespace WindBot.Undo
         {
             string assembly = typeof(BotInit).Assembly.Location;
             string binaryRoot = Path.GetDirectoryName(assembly);
+#if UNDO_BUILD
+            binaryRoot = Path.Combine(binaryRoot, "undo-deps");
+#endif
             return new[] { DatabasePath, Path.Combine(RuntimeRoot, "bots.json"), DeckPath, Path.Combine(RuntimeRoot, "Dialogs", Dialog + ".json"), assembly, assembly + ".config", Path.Combine(binaryRoot, "x86", "sqlite3.dll"), Path.Combine(binaryRoot, "x64", "sqlite3.dll") };
         }
         internal byte[] ResourceHash()

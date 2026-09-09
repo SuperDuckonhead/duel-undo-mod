@@ -1,3 +1,4 @@
+﻿#include "undo/runtime_paths.h"
 #include "config.h"
 #include "menu_handler.h"
 #include "data_manager.h"
@@ -333,7 +334,8 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 				processArgs.push_back(std::to_wstring(flag));
 				processArgs.push_back(std::to_wstring(bot_server_port));
 #ifdef _WIN32
-				std::wstring executableName = L"Bot.exe";
+				std::wstring executableName = undo::ResourcePath(mainGame->runtime_root, L"WindBot/WindBot-undo.exe").wstring();
+                processArgs = undo::BotArguments(arg1, bot_server_port, mainGame->chkBotHand->isChecked(), mainGame->runtime_root);
 #else
 				std::wstring executableName = L"./bot";
 #endif
@@ -401,7 +403,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 						}
 					}
 					mainGame->open_file = false;
-				} 
+				}
 				else if(mainGame->cbDBCategory->getSelected() != -1 && mainGame->cbDBDecks->getSelected() != -1) {
 					deckManager.LoadCurrentDeck(mainGame->cbDBCategory->getSelected(), mainGame->cbDBCategory->getText(), mainGame->cbDBDecks->getText());
 					mainGame->ebDeckname->setText(L"");

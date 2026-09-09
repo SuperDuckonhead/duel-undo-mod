@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using WindBot.Undo;
@@ -22,6 +22,7 @@ class UndoTests
     }
     static void TapeTests()
     {
+        RuntimeTests.Run();
         var tape = new DecisionTape();
         tape.BeginReplay(new[] { Entry(2) });
         Reject(() => tape.Observe(Entry(3)), "AI divergence accepted");

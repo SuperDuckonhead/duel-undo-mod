@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "files": [
+    "ygopro-undo.exe",
+    "WindBot/WindBot-undo.exe",
+    "WindBot/WindBot-undo.exe.config",
+    "WindBot/undo-deps/x86/sqlite3.dll",
+    "WindBot/undo-deps/x64/sqlite3.dll"
+  ],
+  "generatedRuntimeFiles": ["system-undo.conf", "undo-logs/client-<process>-<session>.log"],
+  "notes": "Added-file allowlist only; shared resources and original executables, DLLs and configuration never ship. Licensing/source notices and final package metadata belong to R2 packaging. AI session undo is not enabled by R1 launch isolation."
+}

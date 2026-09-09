@@ -1,7 +1,8 @@
-#include "game.h"
+﻿#include "game.h"
 #include "deck_manager.h"
 #include "data_manager.h"
 #include "test_support.h"
+#include "undo/runtime_paths.h"
 #include <iostream>
 #include <windows.h>
 #include <fstream>
@@ -48,8 +49,40 @@ static void waitFor(const char* name) {
 }
 int main(int argc, char** argv) {
     try {
+        if(argc == 5 && std::string(argv[1]) == "--spawn-probe") {
+            std::ofstream probe(argv[2], std::ios::binary);
+            probe << std::filesystem::current_path().u8string() << '\n' << argv[3] << '\n' << argv[4];
+            return 0;
+        }
         static Game game; mainGame = &game;
-        CHECK(game.Initialize());
+        if(argc == 1) {
+            // Controlled imported legacy choice unsupported by the portable --no-dxsdk build.
+            std::ofstream("system.conf") << "use_d3d = 1\n";
+            std::filesystem::remove("system-undo.conf");
+        }
+        const auto originalConfig = bytes("system.conf");
+        { std::ofstream("load-once.conf") << "# R1 controlled sentinel\n"; }
+        CHECK(game.Initialize(std::filesystem::current_path()));
+        if(argc == 1) CHECK(!game.gameConf.use_d3d);
+        const bool oldLogExists = std::filesystem::exists("error.log");
+        const auto oldLog = oldLogExists ? bytes("error.log") : std::string{};
+        game.ErrorLog("R1 session log probe");
+        CHECK(std::filesystem::exists("error.log") == oldLogExists);
+        if(oldLogExists) CHECK(bytes("error.log") == oldLog);
+        CHECK(undo::ConfigStore(game.runtime_root).Save({{"other_process_setting", "preserve"}}));
+        const auto probePath = game.runtime_root / ("spawn-probe-" + std::to_string(GetCurrentProcessId()) + ".txt");
+        std::filesystem::remove(probePath);
+        CHECK(Game::SpawnAsync((undo::ExecutableRoot() / "editor_integration_tests.exe").wstring(),
+            {L"--spawn-probe", probePath.wstring(), L"Name=two \"quoted\" words", L"RuntimeRoot=C:\\test space\\"}));
+        for(int i=0; i<500 && (!std::filesystem::exists(probePath) || !std::filesystem::file_size(probePath)); ++i) Sleep(10);
+        const auto probe = bytes(probePath.string().c_str());
+        CHECK(probe == undo::ExecutableRoot().u8string() + "\nName=two \"quoted\" words\nRuntimeRoot=C:\\test space\\");
+        game.ebNickName->setText(L"R1 isolated");
+        game.SaveConfig();
+        CHECK(bytes("system.conf") == originalConfig);
+        CHECK(std::filesystem::exists("load-once.conf"));
+        CHECK(std::filesystem::exists("system-undo.conf"));
+        CHECK(undo::ConfigStore(game.runtime_root).Load().at("other_process_setting") == "preserve");
         game.wMainMenu->setVisible(false);
         game.cbDBCategory->clear();
         game.cbDBCategory->addItem(L"pack"); game.cbDBCategory->addItem(L"bot");

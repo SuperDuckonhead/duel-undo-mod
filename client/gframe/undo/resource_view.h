@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "duel_history.h"
 #include "../../ocgcore/card_data.h"
 #include <map>
@@ -26,6 +26,8 @@ private:
  std::map<std::string,Bytes> contents_;
  std::map<std::uint32_t,card_data> cards_;
  std::vector<std::string> priority_;
+ // Diagnostics only: never enters canonical bytes or the resource fingerprint.
+ std::string source_root_;
  Digest digest_{};
 };
 }

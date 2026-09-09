@@ -1,6 +1,7 @@
-#include "config.h"
+﻿#include "config.h"
 #include "game.h"
 #include "undo/strings_zh.h"
+#include "undo/runtime_paths.h"
 #include "CGUITTFont.h"
 #include "file_system.h"
 #include "image_manager.h"
@@ -81,9 +82,12 @@ void DuelInfo::Clear() {
 	time_left[1] = 0;
 }
 
-bool Game::Initialize() {
-	LoadConfig("system.conf");
-	LoadConfig("load-once.conf");
+bool Game::Initialize(const std::filesystem::path& root) {
+    runtime_root = root.empty() ? undo::ExecutableRoot() : std::filesystem::absolute(root);
+    undo::AnchorRuntime(runtime_root);
+    config_store = std::make_unique<undo::ConfigStore>(runtime_root);
+    try { LoadConfig(config_store->Load()); }
+    catch(const std::exception& error) { ErrorLog(error.what()); return false; }
 	irr::SIrrlichtCreationParameters params{};
 	params.AntiAlias = gameConf.antialias;
 	if(gameConf.use_d3d)
@@ -92,6 +96,11 @@ bool Game::Initialize() {
 		params.DriverType = irr::video::EDT_OPENGL;
 	params.WindowSize = irr::core::dimension2d<irr::u32>(gameConf.window_width, gameConf.window_height);
 	device = irr::createDeviceEx(params);
+    if(!device && gameConf.use_d3d) {
+        params.DriverType = irr::video::EDT_OPENGL;
+        device = irr::createDeviceEx(params);
+        if(device) gameConf.use_d3d = false;
+    }
 #ifdef __APPLE__
 	FixMacOSBundleWorkingDirectory();
 #endif
@@ -115,7 +124,7 @@ bool Game::Initialize() {
 	}
 	dataManager.IrrFileSystem = device->getFileSystem();
 	if(!dataManager.LoadDB("cards.cdb")) {
-		std::string errmsg = "Failed to load card database (cards.cdb)! ";
+		std::string errmsg = "Failed to load card database: " + (runtime_root / "cards.cdb").u8string() + " : ";
 		errmsg.append(dataManager.errmsg);
 		ErrorLog(errmsg.c_str());
 		return false;
@@ -181,7 +190,7 @@ bool Game::Initialize() {
 			}
 		});
 		if(fpath[0] == 0) {
-			ErrorLog("No fonts found! Please place appropriate font file in the fonts directory, or edit system.conf manually.");
+			ErrorLog("No fonts found! Please place an appropriate font in the runtime fonts directory, or edit system-undo.conf manually.");
 			return false;
 		}
 		if(!numFont) {
@@ -1017,6 +1026,8 @@ bool Game::Initialize() {
 	gMutex.lock();
 	OnResize();
 	gMutex.unlock();
+    initial_config = ConfigSnapshot();
+    if(!config_store->Save({})) ErrorLog(("Cannot initialize configuration: " + (runtime_root / "system-undo.conf").u8string()).c_str());
 	return true;
 }
 void Game::MainLoop() {
@@ -1437,14 +1448,12 @@ void Game::RefreshBot() {
 		RefreshCategoryDeck(cbBotDeckCategory, cbBotDeck);
 	}
 }
-void Game::LoadConfig(const char* file) {
-	FILE* fp = myfopen(file, "r");
-	if(!fp)
-		return;
-	char linebuf[CONFIG_LINE_SIZE]{};
+void Game::LoadConfig(const undo::ConfigValues& values) {
 	char strbuf[64]{};
 	char valbuf[960]{};
-	while(std::fgets(linebuf, sizeof linebuf, fp)) {
+	for(const auto& [key, value] : values) {
+        const auto entry = key + " = " + value;
+        const auto* linebuf = entry.c_str();
 		if (std::sscanf(linebuf, "%63s = %959s", strbuf, valbuf) != 2)
 			continue;
 		if(!std::strcmp(strbuf, "antialias")) {
@@ -1580,85 +1589,101 @@ void Game::LoadConfig(const char* file) {
 			}
 		}
 	}
-	std::fclose(fp);
 }
-void Game::SaveConfig() {
-	FileSystem::RemoveFile("load-once.conf");
-	FILE* fp = myfopen("system.conf", "w");
-	std::fprintf(fp, "#config file\n#nickname & gamename should be less than 20 characters\n");
+undo::ConfigValues Game::ConfigSnapshot() {
+    std::string snapshot;
+    auto append = [&](const char* format, auto... values) {
+        const auto size = std::snprintf(nullptr, 0, format, values...);
+        if(size < 0) throw std::runtime_error("Configuration formatting failed");
+        std::vector<char> buffer(static_cast<size_t>(size) + 1);
+        std::snprintf(buffer.data(), buffer.size(), format, values...);
+        snapshot.append(buffer.data(), static_cast<size_t>(size));
+    };
+	append("#config file\n#nickname & gamename should be less than 20 characters\n");
 	char linebuf[CONFIG_LINE_SIZE];
-	std::fprintf(fp, "use_d3d = %d\n", gameConf.use_d3d ? 1 : 0);
+	append("use_d3d = %d\n", gameConf.use_d3d ? 1 : 0);
 #ifdef _OPENMP
-	std::fprintf(fp, "use_image_scale_multi_thread = %d\n", gameConf.use_image_scale_multi_thread ? 1 : 0);
+	append("use_image_scale_multi_thread = %d\n", gameConf.use_image_scale_multi_thread ? 1 : 0);
 #endif
-	std::fprintf(fp, "use_image_load_background_thread = %d\n", gameConf.use_image_load_background_thread ? 1 : 0);
-	std::fprintf(fp, "antialias = %d\n", gameConf.antialias);
-	std::fprintf(fp, "errorlog = %u\n", gameConf.enable_log);
+	append("use_image_load_background_thread = %d\n", gameConf.use_image_load_background_thread ? 1 : 0);
+	append("antialias = %d\n", gameConf.antialias);
+	append("errorlog = %u\n", gameConf.enable_log);
 	BufferIO::CopyWideString(ebNickName->getText(), gameConf.nickname);
 	BufferIO::EncodeUTF8(gameConf.nickname, linebuf);
-	std::fprintf(fp, "nickname = %s\n", linebuf);
+	append("nickname = %s\n", linebuf);
 	BufferIO::EncodeUTF8(gameConf.gamename, linebuf);
-	std::fprintf(fp, "gamename = %s\n", linebuf);
+	append("gamename = %s\n", linebuf);
 	BufferIO::EncodeUTF8(gameConf.lastcategory, linebuf);
-	std::fprintf(fp, "lastcategory = %s\n", linebuf);
+	append("lastcategory = %s\n", linebuf);
 	BufferIO::EncodeUTF8(gameConf.lastdeck, linebuf);
-	std::fprintf(fp, "lastdeck = %s\n", linebuf);
-	std::fprintf(fp, "textfont = %s %d\n", gameConf.textfont, gameConf.textfontsize);
-	std::fprintf(fp, "numfont = %s\n", gameConf.numfont);
-	std::fprintf(fp, "serverport = %d\n", gameConf.serverport);
+	append("lastdeck = %s\n", linebuf);
+	append("textfont = %s %d\n", gameConf.textfont, gameConf.textfontsize);
+	append("numfont = %s\n", gameConf.numfont);
+	append("serverport = %d\n", gameConf.serverport);
 	BufferIO::EncodeUTF8(gameConf.lasthost, linebuf);
-	std::fprintf(fp, "lasthost = %s\n", linebuf);
+	append("lasthost = %s\n", linebuf);
 	BufferIO::EncodeUTF8(gameConf.lastport, linebuf);
-	std::fprintf(fp, "lastport = %s\n", linebuf);
+	append("lastport = %s\n", linebuf);
 	//settings
-	std::fprintf(fp, "automonsterpos = %d\n", (chkMAutoPos->isChecked() ? 1 : 0));
-	std::fprintf(fp, "autospellpos = %d\n", (chkSTAutoPos->isChecked() ? 1 : 0));
-	std::fprintf(fp, "randompos = %d\n", (chkRandomPos->isChecked() ? 1 : 0));
-	std::fprintf(fp, "autochain = %d\n", (chkAutoChain->isChecked() ? 1 : 0));
-	std::fprintf(fp, "waitchain = %d\n", (chkWaitChain->isChecked() ? 1 : 0));
-	std::fprintf(fp, "showchain = %d\n", (chkDefaultShowChain->isChecked() ? 1 : 0));
-	std::fprintf(fp, "mute_opponent = %d\n", (chkIgnore1->isChecked() ? 1 : 0));
-	std::fprintf(fp, "mute_spectators = %d\n", (chkIgnore2->isChecked() ? 1 : 0));
-	std::fprintf(fp, "use_lflist = %d\n", gameConf.use_lflist);
-	std::fprintf(fp, "default_lflist = %d\n", gameConf.default_lflist);
-	std::fprintf(fp, "default_rule = %d\n", gameConf.default_rule == DEFAULT_DUEL_RULE ? 0 : gameConf.default_rule);
-	std::fprintf(fp, "hide_setname = %d\n", gameConf.hide_setname);
-	std::fprintf(fp, "hide_hint_button = %d\n", gameConf.hide_hint_button);
-	std::fprintf(fp, "#control_mode = 0: Key A/S/D/R Chain Buttons. control_mode = 1: MouseLeft/MouseRight/NULL/F9 Without Chain Buttons\n");
-	std::fprintf(fp, "control_mode = %d\n", gameConf.control_mode);
-	std::fprintf(fp, "draw_field_spell = %d\n", gameConf.draw_field_spell);
-	std::fprintf(fp, "separate_clear_button = %d\n", gameConf.separate_clear_button);
-	std::fprintf(fp, "#auto_search_limit >= 0: Start search automatically when the user enters N chars\n");
-	std::fprintf(fp, "auto_search_limit = %d\n", gameConf.auto_search_limit);
-	std::fprintf(fp, "#search_multiple_keywords = 0: Disable. 1: Search mutiple keywords with separator \" \". 2: with separator \"+\"\n");
-	std::fprintf(fp, "search_multiple_keywords = %d\n", gameConf.search_multiple_keywords);
-	std::fprintf(fp, "ignore_deck_changes = %d\n", (chkIgnoreDeckChanges->isChecked() ? 1 : 0));
-	std::fprintf(fp, "default_ot = %d\n", gameConf.defaultOT);
-	std::fprintf(fp, "enable_bot_mode = %d\n", gameConf.enable_bot_mode);
+	append("automonsterpos = %d\n", (chkMAutoPos->isChecked() ? 1 : 0));
+	append("autospellpos = %d\n", (chkSTAutoPos->isChecked() ? 1 : 0));
+	append("randompos = %d\n", (chkRandomPos->isChecked() ? 1 : 0));
+	append("autochain = %d\n", (chkAutoChain->isChecked() ? 1 : 0));
+	append("waitchain = %d\n", (chkWaitChain->isChecked() ? 1 : 0));
+	append("showchain = %d\n", (chkDefaultShowChain->isChecked() ? 1 : 0));
+	append("mute_opponent = %d\n", (chkIgnore1->isChecked() ? 1 : 0));
+	append("mute_spectators = %d\n", (chkIgnore2->isChecked() ? 1 : 0));
+	append("use_lflist = %d\n", gameConf.use_lflist);
+	append("default_lflist = %d\n", gameConf.default_lflist);
+	append("default_rule = %d\n", gameConf.default_rule == DEFAULT_DUEL_RULE ? 0 : gameConf.default_rule);
+	append("hide_setname = %d\n", gameConf.hide_setname);
+	append("hide_hint_button = %d\n", gameConf.hide_hint_button);
+	append("#control_mode = 0: Key A/S/D/R Chain Buttons. control_mode = 1: MouseLeft/MouseRight/NULL/F9 Without Chain Buttons\n");
+	append("control_mode = %d\n", gameConf.control_mode);
+	append("draw_field_spell = %d\n", gameConf.draw_field_spell);
+	append("separate_clear_button = %d\n", gameConf.separate_clear_button);
+	append("#auto_search_limit >= 0: Start search automatically when the user enters N chars\n");
+	append("auto_search_limit = %d\n", gameConf.auto_search_limit);
+	append("#search_multiple_keywords = 0: Disable. 1: Search mutiple keywords with separator \" \". 2: with separator \"+\"\n");
+	append("search_multiple_keywords = %d\n", gameConf.search_multiple_keywords);
+	append("ignore_deck_changes = %d\n", (chkIgnoreDeckChanges->isChecked() ? 1 : 0));
+	append("default_ot = %d\n", gameConf.defaultOT);
+	append("enable_bot_mode = %d\n", gameConf.enable_bot_mode);
 	BufferIO::EncodeUTF8(gameConf.bot_deck_path, linebuf);
-	std::fprintf(fp, "bot_deck_path = %s\n", linebuf);
-	std::fprintf(fp, "bot_room_public = %d\n", gameConf.bot_room_public);
-	std::fprintf(fp, "quick_animation = %d\n", gameConf.quick_animation);
-	std::fprintf(fp, "auto_save_replay = %d\n", (chkAutoSaveReplay->isChecked() ? 1 : 0));
-	std::fprintf(fp, "draw_single_chain = %d\n", gameConf.draw_single_chain);
-	std::fprintf(fp, "solid_selection_line = %d\n", gameConf.solid_selection_line);
-	std::fprintf(fp, "hide_player_name = %d\n", gameConf.hide_player_name);
-	std::fprintf(fp, "prefer_expansion_script = %d\n", gameConf.prefer_expansion_script);
-	std::fprintf(fp, "swap_yes_no_button = %d\n", (chkSwapYesNoButton->isChecked() ? 1 : 0));
-	std::fprintf(fp, "window_maximized = %d\n", (gameConf.window_maximized ? 1 : 0));
-	std::fprintf(fp, "window_width = %d\n", gameConf.window_width);
-	std::fprintf(fp, "window_height = %d\n", gameConf.window_height);
-	std::fprintf(fp, "resize_select_window = %d\n", (chkResizeSelectWindow->isChecked() ? 1 : 0));
-	std::fprintf(fp, "resize_popup_menu = %d\n", gameConf.resize_popup_menu);
+	append("bot_deck_path = %s\n", linebuf);
+	append("bot_room_public = %d\n", gameConf.bot_room_public);
+	append("quick_animation = %d\n", gameConf.quick_animation);
+	append("auto_save_replay = %d\n", (chkAutoSaveReplay->isChecked() ? 1 : 0));
+	append("draw_single_chain = %d\n", gameConf.draw_single_chain);
+	append("solid_selection_line = %d\n", gameConf.solid_selection_line);
+	append("hide_player_name = %d\n", gameConf.hide_player_name);
+	append("prefer_expansion_script = %d\n", gameConf.prefer_expansion_script);
+	append("swap_yes_no_button = %d\n", (chkSwapYesNoButton->isChecked() ? 1 : 0));
+	append("window_maximized = %d\n", (gameConf.window_maximized ? 1 : 0));
+	append("window_width = %d\n", gameConf.window_width);
+	append("window_height = %d\n", gameConf.window_height);
+	append("resize_select_window = %d\n", (chkResizeSelectWindow->isChecked() ? 1 : 0));
+	append("resize_popup_menu = %d\n", gameConf.resize_popup_menu);
 #ifdef YGOPRO_USE_AUDIO
-	std::fprintf(fp, "enable_sound = %d\n", (chkEnableSound->isChecked() ? 1 : 0));
-	std::fprintf(fp, "enable_music = %d\n", (chkEnableMusic->isChecked() ? 1 : 0));
-	std::fprintf(fp, "#Volume of sound and music, between 0 and 100\n");
-	std::fprintf(fp, "sound_volume = %d\n", gameConf.sound_volume);
-	std::fprintf(fp, "music_volume = %d\n", gameConf.music_volume);
-	std::fprintf(fp, "music_mode = %d\n", (chkMusicMode->isChecked() ? 1 : 0));
+	append("enable_sound = %d\n", (chkEnableSound->isChecked() ? 1 : 0));
+	append("enable_music = %d\n", (chkEnableMusic->isChecked() ? 1 : 0));
+	append("#Volume of sound and music, between 0 and 100\n");
+	append("sound_volume = %d\n", gameConf.sound_volume);
+	append("music_volume = %d\n", gameConf.music_volume);
+	append("music_mode = %d\n", (chkMusicMode->isChecked() ? 1 : 0));
 #endif
-	std::fclose(fp);
+    return undo::ConfigStore::Parse(snapshot);
+}
+void Game::SaveConfig() {
+    if(!config_store) return;
+    const auto current = ConfigSnapshot();
+    undo::ConfigValues changed;
+    for(const auto& [key, value] : current) {
+        const auto before = initial_config.find(key);
+        if(before == initial_config.end() || before->second != value) changed[key] = value;
+    }
+    if(!config_store->Save(changed))
+        ErrorLog(("Cannot save configuration: " + (runtime_root / "system-undo.conf").u8string()).c_str());
 }
 void Game::ShowCardInfo(int code, bool resize) {
 	if(showingcode == code && !resize)
@@ -1854,7 +1879,12 @@ void Game::ErrorLog(const char* msg) {
 #else
 	std::fprintf(stderr, "%s\n", msg);
 #endif
-	FILE* fp = myfopen("error.log", "a");
+	const auto root = mainGame && !mainGame->runtime_root.empty() ? mainGame->runtime_root : undo::ExecutableRoot();
+    static const auto sessionName = "client-" + std::to_string(GetCurrentProcessId()) + "-" + std::to_string(GetTickCount64()) + ".log";
+    std::error_code directoryError;
+    std::filesystem::create_directories(root / "undo-logs", directoryError);
+    if(directoryError) return;
+    FILE* fp = _wfopen((root / "undo-logs" / sessionName).c_str(), L"a");
 	if(!fp)
 		return;
 	time_t nowtime = std::time(nullptr);
@@ -2442,12 +2472,22 @@ void Game::SetCursor(irr::gui::ECURSOR_ICON icon) {
 }
 bool Game::SpawnAsync(const std::wstring& exePath, const std::vector<std::wstring>& args) {
 #ifdef _WIN32
-	std::wstring cmdLine = L"\"" + exePath + L"\"";
-	for (const auto& arg : args) {
-		cmdLine += L" \"" + arg + L"\"";
-	}
+	// Quote according to CommandLineToArgvW, including embedded quotes and trailing slashes.
+    auto quote = [](const std::wstring& argument) {
+        std::wstring out = L"\"";
+        size_t slashes = 0;
+        for(wchar_t c : argument) {
+            if(c == L'\\') { ++slashes; continue; }
+            if(c == L'"') out.append(slashes * 2 + 1, L'\\');
+            else out.append(slashes, L'\\');
+            out += c; slashes = 0;
+        }
+        out.append(slashes * 2, L'\\'); out += L'"'; return out;
+    };
+    std::wstring cmdLine = quote(exePath);
+    for(const auto& arg : args) cmdLine += L" " + quote(arg);
 
-	STARTUPINFOW si;
+    STARTUPINFOW si;
 	PROCESS_INFORMATION pi;
 	ZeroMemory(&si, sizeof(si));
 	si.cb = sizeof(si);
@@ -2458,7 +2498,7 @@ bool Game::SpawnAsync(const std::wstring& exePath, const std::vector<std::wstrin
 	std::vector<wchar_t> cmdBuffer(cmdLine.begin(), cmdLine.end());
 	cmdBuffer.push_back(L'\0');
 
-	if (!CreateProcessW(exePath.c_str(), cmdBuffer.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
+	if (!CreateProcessW(exePath.c_str(), cmdBuffer.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, std::filesystem::path(exePath).parent_path().c_str(), &si, &pi)) {
 		return false;
 	}
 

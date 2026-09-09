@@ -1,4 +1,4 @@
-#include "core_fixture.h"
+﻿#include "core_fixture.h"
 #include "data_manager.h"
 #include <IFileSystem.h>
 #include <IFileArchive.h>
@@ -9,6 +9,7 @@ int main() {
  try {
   const std::string root=UNDO_RESOURCE_FIXTURE;
   fixture::database(root);
+  std::filesystem::remove(std::filesystem::u8path(root+"/script/created-after-capture.lua"));
   fixture::WriteFixtureFile(root+"/script/c900000001.lua",{1,2,3});
   auto view=ResourceView::Capture(root);auto original=view->Read("script/c900000001.lua");
   fixture::WriteFixtureFile(root+"/pics/900000001.jpg",{9,8,7});
@@ -22,7 +23,7 @@ int main() {
   CHECK(view->Read("script/c900000001.lua")==original);
   CHECK(view->Fingerprint()!=ResourceView::Capture(root)->Fingerprint());
   fixture::WriteFixtureFile(root+"/script/created-after-capture.lua",{4,5});
-  bool missing=false;try {view->Read("script/created-after-capture.lua");}catch(const std::exception& e){missing=std::string(e.what())=="Pinned resource missing: script/created-after-capture.lua";}CHECK(missing);
+  bool missing=false;try {view->Read("script/created-after-capture.lua");}catch(const std::exception& e){missing=std::string(e.what()).find(std::filesystem::absolute(std::filesystem::u8path(root+"/script/created-after-capture.lua")).lexically_normal().u8string())!=std::string::npos;}CHECK(missing);
   // Clean only this known test-created file, so repeated runs keep the same precondition.
   std::filesystem::remove(std::filesystem::u8path(root+"/script/created-after-capture.lua"));
   const std::string archives=root+"-archives";

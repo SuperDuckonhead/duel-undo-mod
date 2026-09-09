@@ -1,4 +1,4 @@
-param([ValidateSet('Debug', 'Release')][string[]]$Configuration = @('Debug', 'Release'))
+﻿param([ValidateSet('Debug', 'Release')][string[]]$Configuration = @('Debug', 'Release'))
 $ErrorActionPreference = 'Stop'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $logRoot = Join-Path $repoRoot 'out/w1-build-isolation'
@@ -13,7 +13,7 @@ function Invoke-BuildCheck {
 
 function Require-BotArtifacts {
     param([string]$OutputPath, [string]$Stage)
-    foreach ($name in @('WindBot.exe', 'WindBot.exe.config', 'WindBot-undo.exe', 'WindBot-undo.exe.config', 'Bot.exe', 'Bot.exe.config', 'x86/sqlite3.dll', 'x64/sqlite3.dll')) {
+    foreach ($name in @('WindBot.exe', 'WindBot.exe.config', 'WindBot-undo.exe', 'WindBot-undo.exe.config', 'Bot.exe', 'Bot.exe.config', 'x86/sqlite3.dll', 'x64/sqlite3.dll', 'undo-deps/x86/sqlite3.dll', 'undo-deps/x64/sqlite3.dll')) {
         if (-not (Test-Path -LiteralPath (Join-Path $OutputPath $name) -PathType Leaf)) {
             throw "$Stage lost required artifact: $name"
         }
@@ -45,7 +45,7 @@ foreach ($buildConfiguration in $Configuration) {
     Invoke-BuildCheck 'tools/Build.ps1' @('-Target', 'Bot', '-Configuration', $buildConfiguration) "$buildConfiguration-profile.log"
     Require-BotArtifacts $outputPath "$buildConfiguration combined Bot profile"
 
-    $adaptedHashes = Snapshot-Artifacts $outputPath @('WindBot-undo.exe', 'WindBot-undo.exe.config', 'x86/sqlite3.dll', 'x64/sqlite3.dll')
+    $adaptedHashes = Snapshot-Artifacts $outputPath @('WindBot-undo.exe', 'WindBot-undo.exe.config', 'undo-deps/x86/sqlite3.dll', 'undo-deps/x64/sqlite3.dll')
     # Reverse order: rebuild normal after adapted already exists.
     Invoke-BuildCheck 'tools/Build-Bot.ps1' @('-Configuration', $buildConfiguration, '-OutputDirectory', "out/bot/$buildConfiguration") "$buildConfiguration-normal-rebuild.log"
     Require-BotArtifacts $outputPath "$buildConfiguration adapted -> normal rebuild"

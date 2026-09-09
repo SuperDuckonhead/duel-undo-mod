@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Release',
     [switch]$PrepareOnly
@@ -81,7 +81,7 @@ finally {
     $env:Path = $previousPath
 }
 
-$builtBinary = Join-Path $client "bin/$($Configuration.ToLowerInvariant())/YGOPro.exe"
+$builtBinary = Join-Path $client "bin/$($Configuration.ToLowerInvariant())/ygopro-undo.exe"
 if (-not (Test-Path -LiteralPath $builtBinary -PathType Leaf)) {
     throw "Expected client binary was not produced: $builtBinary"
 }
@@ -90,7 +90,5 @@ $outputDirectory = Join-Path $root "out/client/$Configuration"
 New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
 $outputBinary = Join-Path $outputDirectory 'ygopro-undo.exe'
 Copy-Item -LiteralPath $builtBinary -Destination $outputBinary -Force
-foreach ($runtime in @('libc++.dll', 'libunwind.dll')) {
-    Copy-Item -LiteralPath (Join-Path $llvmBin $runtime) -Destination (Join-Path $outputDirectory $runtime) -Force
-}
+& (Join-Path $PSScriptRoot 'Test-RuntimeImports.ps1') -Binary "out/client/$Configuration/ygopro-undo.exe"
 Write-Host "Built client: $outputBinary"

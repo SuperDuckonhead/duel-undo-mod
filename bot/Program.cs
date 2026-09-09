@@ -4,6 +4,9 @@ using System.Threading;
 using System.Net;
 using System.Web;
 using System.Diagnostics;
+using System.Collections.Generic;
+using System.Linq;
+using System.Runtime.InteropServices;
 using WindBot.Game;
 using WindBot.Game.AI;
 using YGOSharp.OCGWrapper;
@@ -18,16 +21,39 @@ namespace WindBot
 
         internal static void Main(string[] args)
         {
+#if UNDO_BUILD
+            try { MainCore(args); }
+            catch(Exception error) { Console.Error.WriteLine(error.Message); Environment.ExitCode = 1; }
+#else
+            MainCore(args);
+#endif
+        }
+
+        private static void MainCore(string[] args)
+        {
             if (args.Length == 1 && args[0] == "--undo-replay-worker")
             {
                 Environment.ExitCode = Undo.ReplayWorker.Run();
                 return;
             }
+#if UNDO_BUILD
+            Console.OutputEncoding = new System.Text.UTF8Encoding(false);
+            Console.InputEncoding = new System.Text.UTF8Encoding(false);
+            Directory.SetCurrentDirectory(AppDomain.CurrentDomain.BaseDirectory);
+#endif
             Logger.WriteLine("WindBot starting...");
 
             Config.Load(args);
 
+#if UNDO_BUILD
+            string runtimeRoot = Path.GetFullPath(Config.GetString("RuntimeRoot", Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..")));
+            Directory.SetCurrentDirectory(Path.Combine(runtimeRoot, "WindBot"));
+            args = ExpandRandomBot(args, runtimeRoot);
+            Config.Load(args);
+            string databasePath = Config.GetString("DbPath", Path.Combine(runtimeRoot, "cards.cdb"));
+#else
             string databasePath = Config.GetString("DbPath", "cards.cdb");
+#endif
 
             InitDatas(databasePath);
 
@@ -52,24 +78,67 @@ namespace WindBot
             }
         }
 
+#if UNDO_BUILD
+        [DllImport("shell32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern IntPtr CommandLineToArgvW(string command, out int count);
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr LocalFree(IntPtr memory);
+
+        private static string[] ExpandRandomBot(string[] args, string runtimeRoot)
+        {
+            string random = args.FirstOrDefault(a => a.StartsWith("Random=", StringComparison.OrdinalIgnoreCase));
+            if(random == null) return args;
+            string flag = random.Substring(7);
+            var commands = new List<string>();
+            // Preserve the old wrapper's four-line records and exact flag matching.
+            using(var reader = new StreamReader(Path.Combine(runtimeRoot, "bot.conf"))) {
+                while(!reader.EndOfStream) {
+                    string line = reader.ReadLine().Trim();
+                    if(line.Length == 0 || line[0] != '!') continue;
+                    string command = reader.ReadLine();
+                    string description = reader.ReadLine();
+                    string flags = reader.ReadLine();
+                    if(command == null || description == null || flags == null) break;
+                    if(flags.Trim().Split(' ').Contains(flag)) commands.Add(command.Trim());
+                }
+            }
+            string chosen = commands.Count == 0 ? "" : commands[new Random().Next(commands.Count)];
+            int count;
+            IntPtr argv = CommandLineToArgvW("WindBot " + chosen.Replace('\'', '"'), out count);
+            if(argv == IntPtr.Zero) throw new InvalidOperationException("Cannot parse selected bot command");
+            var result = new List<string>();
+            try {
+                for(int i = 1; i < count; ++i) result.Add(Marshal.PtrToStringUni(Marshal.ReadIntPtr(argv, i * IntPtr.Size)));
+            } finally { LocalFree(argv); }
+            result.AddRange(args.Where(a => !a.StartsWith("Random=", StringComparison.OrdinalIgnoreCase)));
+            return result.ToArray();
+        }
+#endif
+
         public static void InitDatas(string databasePath)
         {
             Rand = new Random();
             DecksManager.Init();
             string absolutePath = Path.GetFullPath(databasePath);
+#if !UNDO_BUILD
             if (!File.Exists(absolutePath))
                 // In case windbot is placed in a folder under ygopro folder
                 absolutePath = Path.GetFullPath("../" + databasePath);
             if (!File.Exists(absolutePath))
                 // In case windbot is placed in a folder under ygopro2 folder
                 absolutePath = Path.GetFullPath("../cdb/" + databasePath);
+#endif
             if (!File.Exists(absolutePath))
             {
+#if UNDO_BUILD
+                throw new FileNotFoundException("Cannot find cards database: " + absolutePath, absolutePath);
+#else
                 Logger.WriteErrorLine("Can't find cards database file.", null);
                 Logger.WriteErrorLine("Please place cards.cdb next to WindBot.exe or Bot.exe .", null);
                 Logger.WriteLine("Press any key to quit...");
                 Console.ReadKey();
                 System.Environment.Exit(1);
+#endif
             }
             NamedCardsManager.Init(absolutePath);
         }
@@ -231,6 +300,9 @@ namespace WindBot
                 fullpath = Path.Combine("../", tryfilename);
             if (!File.Exists(fullpath))
                 fullpath = Path.Combine("../deck/", tryfilename);
+#if UNDO_BUILD
+            if(!File.Exists(fullpath)) Logger.WriteErrorLine("AI resource was not found: " + Path.GetFullPath(fullpath), null);
+#endif
             return new FileStream(fullpath, FileMode.Open, FileAccess.Read);
         }
     }

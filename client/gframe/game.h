@@ -1,4 +1,4 @@
-#ifndef GAME_H
+﻿#ifndef GAME_H
 #define GAME_H
 
 #include "config.h"
@@ -6,6 +6,8 @@
 #include "client_field.h"
 #include "deck_con.h"
 #include "menu_handler.h"
+#include "undo/config_store.h"
+#include <memory>
 #include <ctime>
 #include <unordered_map>
 #include <vector>
@@ -172,7 +174,7 @@ struct FadingUnit {
 class Game {
 
 public:
-	bool Initialize();
+	bool Initialize(const std::filesystem::path& root = {});
 	void MainLoop();
 	void BuildProjectionMatrix(irr::core::matrix4& mProjection, irr::f32 left, irr::f32 right, irr::f32 bottom, irr::f32 top, irr::f32 znear, irr::f32 zfar);
 	void FixFontGlitch();
@@ -207,7 +209,11 @@ public:
 	void WaitFrameSignal(int frame);
 	void DrawThumb(const CardDataC* cp, irr::core::vector2di pos, const LFList* lflist, bool drag = false);
 	void DrawDeckBd();
-	void LoadConfig(const char* file);
+	void LoadConfig(const undo::ConfigValues& values);
+    undo::ConfigValues ConfigSnapshot();
+    std::filesystem::path runtime_root;
+    std::unique_ptr<undo::ConfigStore> config_store;
+    undo::ConfigValues initial_config;
 	void SaveConfig();
 	void ShowCardInfo(int code, bool resize = false);
 	void ClearCardInfo(int player = 0);

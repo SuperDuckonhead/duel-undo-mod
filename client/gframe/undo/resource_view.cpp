@@ -1,4 +1,4 @@
-#include "resource_view.h"
+﻿#include "resource_view.h"
 #include "../data_manager.h"
 #include "../file_system.h"
 #include <IFileSystem.h>
@@ -97,7 +97,8 @@ std::shared_ptr<const ResourceView> ResourceView::Capture(const std::string& roo
 }
 std::shared_ptr<const ResourceView> ResourceView::Capture(const std::string& root,const ygo::DataManager& data,bool prefer) {
  auto result=std::shared_ptr<ResourceView>(new ResourceView); std::set<std::string> names;
- const auto base=fs::absolute(fs::u8path(root)); auto* files=data.IrrFileSystem;
+ const auto base=fs::absolute(fs::u8path(root)).lexically_normal(); auto* files=data.IrrFileSystem;
+ result->source_root_=base.u8string();
  result->priority_.push_back(prefer ? "expansion,archives,loose" : "archives,loose,expansion");
  for(const char* folder:{"script","expansions/script","single"}) {
   auto path=base/folder; if(!fs::exists(path))continue;
@@ -117,7 +118,7 @@ std::shared_ptr<const ResourceView> ResourceView::Capture(const std::string& roo
  }
  // Resolve each equivalence class once in loader order; enumeration order and
  // colliding source spellings must never select the winner.
- for(auto& n:names) { auto b=Resolve(root,files,prefer,n); if(!b)throw std::runtime_error("Pinned resource missing: "+n); result->contents_.emplace(n,std::move(*b)); }
+ for(auto& n:names) { auto b=Resolve(root,files,prefer,n); if(!b)throw std::runtime_error("Resource capture failed: "+(base/fs::u8path(n)).lexically_normal().u8string()+"; expansion/archive source directory: "+(base/"expansions").u8string()); result->contents_.emplace(n,std::move(*b)); }
  for(auto& entry:data.GetDataTable()) { card_data cd{}; data.GetData(entry.first,&cd); result->cards_.emplace(entry.first,cd); }
  Bytes encoded; name(encoded,"ygopro-resources-v1");
  for(auto& p:result->priority_)name(encoded,p);
@@ -130,7 +131,7 @@ std::shared_ptr<const ResourceView> ResourceView::Capture(const std::string& roo
  result->digest_=Sha256(encoded); return result;
 }
 const Bytes& ResourceView::Read(const std::string& input) const {
- auto n=logical(input); auto it=contents_.find(n); if(it==contents_.end())throw std::runtime_error("Pinned resource missing: "+n); return it->second;
+ auto n=logical(input); auto it=contents_.find(n); if(it==contents_.end())throw std::runtime_error("Resource absent from frozen view (no disk lookup): "+(fs::u8path(source_root_)/fs::u8path(n)).lexically_normal().u8string()+"; captured expansion/archive source directory: "+(fs::u8path(source_root_)/"expansions").u8string()); return it->second;
 }
 const card_data& ResourceView::Card(uint32_t code) const {
  auto it=cards_.find(code); if(it==cards_.end())throw std::runtime_error("Pinned card missing: "+std::to_string(code)); return it->second;
