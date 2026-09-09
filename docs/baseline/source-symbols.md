@@ -1,0 +1,20 @@
+# Fixed-source integration map
+
+These symbols were inspected at client 1e8472b8bd51e1242be133189d547ac2f55eddaa, core e04144d62499c17d0cfa8313f9742434ef99c3a7 and bot 3a6a462828046e05793e8f74bf446c2d5c713e8c. They are implementation entry points, not completed behavior.
+
+| Area | Actual entry points and constraints |
+| --- | --- |
+| Startup/config | client/gframe/gframe.cpp mymain only changes working directory for Explorer file association. game.cpp Game::Initialize loads system.conf then load-once.conf; MainLoop calls SaveConfig, which writes system.conf. A differently named binary alone does not isolate settings. |
+| Deck editor | DeckBuilder::OnEvent, Initialize, Terminate in deck_con.cpp; current ordered vectors live in deckManager.current_deck. push_main/extra/side and pop_main/extra/side are primitive mutations, not gesture boundaries. DeckManager::LoadCurrentDeck/SaveDeck handle persistence. |
+| Starting flags | game.cpp creates chkNoCheckDeck/chkNoShuffleDeck and chkBotNoCheckDeck/chkBotNoShuffleDeck. duelclient.cpp copies each pair to HostInfo. SingleDuel::UpdateDeck guards checks with no_check_deck; TPResult guards initial shuffle with no_shuffle_deck and includes DUEL_PSEUDO_SHUFFLE in options. |
+| Single scenarios | SingleMode::SinglePlayThread creates/runs core, SinglePlayAnalyze dispatches messages, SetResponse writes input and replay. MSG_RETRY removes the preceding provisional replay response. SinglePlayReload refreshes the existing client field. |
+| Hosted duel | SingleDuel::TPResult seeds and performs the initial shuffle, then records cards in reversed deck order via new_card. Process/Analyze route output; GetResponse receives responses; TimerTick/TimeConfirm own clocks; EndDuel owns completion. |
+| Core API | create_duel_v2 takes SEED_COUNT values; process/get_message, set_responseb, query_field_info/query_field_card, preload_script and end_duel are available. Core has global callbacks, default script buffer and duel_set; call serialization/RAII callback binding must cover creation and destruction as well as processing. |
+| Script resolution | DataManager::ScriptReaderEx checks ./script prefix. With prefer_expansion_script: loose expansions/script, Irrlicht filesystem, loose script. Otherwise: Irrlicht filesystem, loose script, loose expansions/script. Non-card scenario paths use direct-file reader. Preserve actual Irrlicht archive ordering. |
+| Database/archives | Game::LoadExpansions loads loose .cdb and .conf, registers .zip/.ypk archives, then loads archived .cdb/.conf and pack deck references. DataManager::LoadDB and CardReader expose final card records. Resource pinning must capture resolved script bytes and normalized card records, not just raw database checksums. |
+| Bot launch | menu_handler.cpp BUTTON_BOT_START builds wrapper command/hand/port arguments; pending_bot_executable defaults Bot.exe. This wrapper launches original WindBot.exe. Undo launch must separately resolve compatible arguments and shared data paths. |
+| Bot callbacks | GameClient owns Connection and private GameBehavior; GameBehavior::OnPacket routes actual packet/message callbacks to GameAI. Responses flow through YGOClient; inject a controlled sink there. Program.Rand and external inputs require deterministic session ownership. |
+| Protocol | Existing network.h constants occupy CTOS/STOC 0x01-0x30 with gaps; never extend native padded HostInfo silently for old clients. New extension must use explicit serialization, capability handshake and epoch-gated gameplay. |
+| Visibility | SingleDuel RefreshMzone/Szone/Hand/Single already filters live queries; restore must obey equivalent per-player visibility and cannot send the host replay/state digest. |
+
+Gate-A runtime checks remain pending. The desktop automation kernel failed twice before any app interaction with a Windows sandbox helper setup error. This is a tooling limitation, not a successful UI smoke or a failed game test. Automated integration evidence will be reported separately.
