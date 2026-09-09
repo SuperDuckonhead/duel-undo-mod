@@ -12,7 +12,7 @@ struct TxKey {
 };
 enum class WireKind : std::uint8_t {
  Hello=1, Response=2, Request=3, Consent=4, Prepare=5, Ready=6,
- Commit=7, CommitAck=8, Resume=9, Abort=10, AbortAck=11
+ Commit=7, CommitAck=8, Resume=9, Abort=10, AbortAck=11, Game=12, Status=13
 };
 struct Envelope { WireKind kind; TxKey key; Bytes payload; };
 constexpr std::size_t WireHeaderSize = 79;
