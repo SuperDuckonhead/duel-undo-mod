@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Pipes;
 using System.Linq;
 using System.Threading.Tasks;
 
@@ -13,35 +14,56 @@ namespace WindBot.Undo
         private readonly BotInit init;
         private readonly object sync = new object();
         private Process process;
+        private NamedPipeServerStream pipe;
         private BinaryWriter writer;
         private BinaryReader reader;
         private bool initialized, failed, disposed;
         public int ProcessId { get { lock (sync) { EnsureInitialized(); return process.Id; } } }
         public int NetworkSendCount { get; private set; }
+        public int WorkerProcessId { get; private set; }
         public ReplaySession(BotInit init)
         {
             if (init == null) throw new ArgumentNullException("init");
             this.init = init.Copy();
         }
-        private void Start()
+        private void Start(bool candidate)
         {
             if (disposed || failed) throw new InvalidOperationException("Replay session is closed or failed");
             if (process != null) return;
-            var info = new ProcessStartInfo(typeof(ReplaySession).Assembly.Location, "--undo-replay-worker")
+            string name = PrivatePipe.NewName();
+            pipe = PrivatePipe.Server(name);
+            var connected = pipe.BeginWaitForConnection(null, null);
+            var info = new ProcessStartInfo(typeof(ReplaySession).Assembly.Location, (candidate ? "--undo-candidate" : "--undo-worker") + " --control-pipe " + name)
             {
                 UseShellExecute = false, CreateNoWindow = true,
                 RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
                 WorkingDirectory = Path.GetDirectoryName(typeof(ReplaySession).Assembly.Location)
             };
-            process = Process.Start(info);
-            process.ErrorDataReceived += (sender, args) => { };
-            process.BeginErrorReadLine();
-            writer = new BinaryWriter(process.StandardInput.BaseStream);
-            reader = new BinaryReader(process.StandardOutput.BaseStream);
+            try
+            {
+                process = Process.Start(info);
+                WorkerProcessId = process.Id;
+                process.ErrorDataReceived += (sender, args) => { };
+                process.BeginErrorReadLine();
+                if (!connected.AsyncWaitHandle.WaitOne(10000))
+                    throw new InvalidOperationException("Worker pipe connection timed out");
+                pipe.EndWaitForConnection(connected);
+                PrivatePipe.VerifyClient(pipe, process.Id);
+                writer = new BinaryWriter(pipe);
+                reader = new BinaryReader(pipe);
+            }
+            catch
+            {
+                failed = true;
+                pipe.Dispose();
+                if (process != null && !process.HasExited) { process.Kill(); process.WaitForExit(); }
+                throw;
+            }
+            finally { connected.AsyncWaitHandle.Dispose(); }
         }
         private T Request<T>(byte command, Action<BinaryWriter> body, Func<BinaryReader, T> read)
         {
-            Start();
+            Start(command == 2);
             try
             {
                 byte[] data = ReplayRandom.Encode(w => { w.Write(command); body(w); });
@@ -115,6 +137,14 @@ namespace WindBot.Undo
         {
             lock (sync) { EnsureInitialized(); return Request(5, w => { }, WorkerWire.ReadBytes); }
         }
+        public ulong Cursor
+        {
+            get { lock (sync) { EnsureInitialized(); return Request(7, w => { }, r => r.ReadUInt64()); } }
+        }
+        public byte[] InspectCard(int code, int setcode)
+        {
+            lock (sync) { EnsureInitialized(); return Request(6, w => { w.Write(code); w.Write(setcode); }, WorkerWire.ReadBytes); }
+        }
         public void Dispose()
         {
             lock (sync)
@@ -128,6 +158,7 @@ namespace WindBot.Undo
                     if (reader != null) reader.Dispose();
                     process.Dispose();
                 }
+                if (pipe != null) pipe.Dispose();
             }
         }
     }

@@ -31,6 +31,16 @@ namespace WindBot
 
         private static void MainCore(string[] args)
         {
+            if (args.Length == 3 && args[1] == "--control-pipe" && (args[0] == "--undo-worker" || args[0] == "--undo-candidate"))
+            {
+                Environment.ExitCode = Undo.ReplayWorker.Run(args[2]);
+                return;
+            }
+            if (args.Length == 3 && args[0] == "--undo-control" && args[1] == "--control-pipe")
+            {
+                Environment.ExitCode = Undo.UndoControl.Run(args[2]);
+                return;
+            }
             if (args.Length == 1 && args[0] == "--undo-replay-worker")
             {
                 Environment.ExitCode = Undo.ReplayWorker.Run();

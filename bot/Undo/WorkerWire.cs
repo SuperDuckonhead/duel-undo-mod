@@ -3,7 +3,7 @@ using System.IO;
 
 namespace WindBot.Undo
 {
-    // Private W1 test transport over redirected standard streams; not the W2 host protocol.
+    // Bounded binary framing shared by private replay-worker and W2 control pipes.
     internal static class WorkerWire
     {
         internal const int MaximumFrame = 64 * 1024 * 1024;

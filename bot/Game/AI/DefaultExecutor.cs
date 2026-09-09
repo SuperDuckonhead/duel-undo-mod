@@ -766,12 +766,7 @@ namespace WindBot.Game.AI
                 ChainInfo currentSolvingChain = Duel.GetCurrentSolvingChainInfo();
                 if (currentSolvingChain != null && currentLocation == (int)CardLocation.Removed)
                 {
-                    int originId = card.Id;
-                    if (card.Data != null)
-                    {
-                        if (card.Data.Alias > 0) originId = card.Data.Alias;
-                        else originId = card.Id;
-                    }
+                    int originId = card.GetOriginCode();
                     if (currentSolvingChain.IsActivateCode(_CardId.CalledByTheGrave))
                     {
                         calledbytheGraveIdCountMap[originId] = 2;
@@ -2080,8 +2075,7 @@ namespace WindBot.Game.AI
         {
             if (card == null) return true;
             if (card.Data == null) return card.IsDisabled();
-            int originId = card.Data.Alias;
-            if (originId == 0) originId = card.Data.Id;
+            int originId = card.GetOriginCode();
             return crossoutDesignatorIdList.Contains(originId)
                 || (calledbytheGraveIdCountMap.ContainsKey(originId) && calledbytheGraveIdCountMap[originId] > 0)
                 || (card.IsDisabled() && ((int)card.Location & (int)CardLocation.Onfield) > 0);

@@ -6,7 +6,7 @@
   </PropertyGroup>
   <ItemGroup><Reference Include="System"/><Reference Include="System.Core"/>
     <Reference Include="WindBot-undo"><HintPath>$(BotOutputPath)\WindBot-undo.exe</HintPath><Private>true</Private></Reference>
-    <Compile Include="Program.cs"/><Compile Include="RuntimeTests.cs"/>
+    <Compile Include="TransactionTests.cs"/><Compile Include="Program.cs"/><Compile Include="RuntimeTests.cs"/>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets"/>
 </Project>

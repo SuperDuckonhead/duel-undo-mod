@@ -82,7 +82,7 @@ namespace WindBot.Game
             if (Data != null)
             {
                 Name = Data.Name;
-                Alias = Data.Alias;
+                Alias = Data.RuleCode != 0 ? Data.RuleCode : Data.Alias;
             } else {
                 Name = null;
                 Alias = 0;
@@ -345,17 +345,7 @@ namespace WindBot.Game
 
         public bool HasSetcode(int setcode)
         {
-            if (Data == null) return false;
-            long setcodes = Data.Setcode;
-            int settype = setcode & 0xfff;
-            int setsubtype = setcode & 0xf000;
-            while (setcodes > 0)
-            {
-                long check_setcode = setcodes & 0xffff;
-                setcodes >>= 16;
-                if ((check_setcode & 0xfff) == settype && (check_setcode & 0xf000 & setsubtype) == setsubtype) return true;
-            }
-            return false;
+            return Data != null && Data.HasSetcode(setcode);
         }
 
         public bool IsMonster()
@@ -466,7 +456,8 @@ namespace WindBot.Game
             int code = Id;
             if (Data != null)
             {
-                if (Data.Alias > 0) code = Data.Alias;
+                if (Data.RuleCode > 0) code = Data.RuleCode;
+                else if (Data.Alias > 0) code = Data.Alias;
                 else code = Data.Id;
             }
             return code;

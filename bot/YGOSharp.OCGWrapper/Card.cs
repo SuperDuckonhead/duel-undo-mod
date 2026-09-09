@@ -21,6 +21,8 @@ namespace YGOSharp.OCGWrapper
             public int LinkMarker;
         }
 
+        private ushort[] normalizedSetcodes;
+        public int RuleCode { get; private set; }
         public int Id { get; private set; }
         public int Ot { get; private set; }
         public int Alias { get; private set; }
@@ -51,6 +53,15 @@ namespace YGOSharp.OCGWrapper
 
         public bool HasSetcode(int setcode)
         {
+            if (normalizedSetcodes != null)
+            {
+                foreach (ushort value in normalizedSetcodes)
+                {
+                    if (value == 0) break;
+                    if ((value & 0xfff) == (setcode & 0xfff) && (value & setcode & 0xf000) == (setcode & 0xf000)) return true;
+                }
+                return false;
+            }
             long setcodes = Setcode;
             int settype = setcode & 0xfff;
             int setsubtype = setcode & 0xf000;
@@ -66,6 +77,17 @@ namespace YGOSharp.OCGWrapper
         public bool IsExtraCard()
         {
             return (HasType(CardType.Fusion) || HasType(CardType.Synchro) || HasType(CardType.Xyz) || HasType(CardType.Link));
+        }
+
+        internal Card(WindBot.Undo.FrozenCard card)
+        {
+            Id = (int)card.Code; Ot = (int)card.Ot; Alias = (int)card.Alias; Type = (int)card.Type;
+            normalizedSetcodes = (ushort[])card.Setcodes.Clone();
+            ulong packed = 0; for (int i = 0; i < 4; i++) packed |= (ulong)card.Setcodes[i] << (i * 16); Setcode = (long)packed;
+            Level = (int)card.Level; LScale = (int)card.LScale; RScale = (int)card.RScale;
+            LinkMarker = (int)card.LinkMarker; RuleCode = (int)card.RuleCode;
+            Attribute = (int)card.Attribute; Race = (int)card.Race; Attack = card.Attack; Defense = card.Defense;
+            Data = new CardData { Code = Id, Alias = Alias, Setcode = Setcode, Type = Type, Level = Level, Attribute = Attribute, Race = Race, Attack = Attack, Defense = Defense, LScale = LScale, RScale = RScale, LinkMarker = LinkMarker };
         }
 
         internal Card(IDataRecord reader)

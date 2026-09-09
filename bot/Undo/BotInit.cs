@@ -13,6 +13,9 @@ namespace WindBot.Undo
         public byte[] Deck;
         public byte[] ResourceDigest;
         public byte[] Options;
+        public byte[] MergedCards = new byte[0];
+        public byte[] EngineDigest = new byte[32];
+        public byte[] CoreResourceDigest = new byte[32];
 
         public static BotInit Capture(string runtimeRoot, string databasePath, string executor, string deckFile, string dialog, int seed, bool chat, bool usePreErrataEffects = false)
         {
@@ -21,17 +24,25 @@ namespace WindBot.Undo
             init.ResourceDigest = settings.ResourceHash();
             return init;
         }
+        public static BotInit CaptureMerged(string runtimeRoot, string executor, string deckFile, string dialog, int seed, bool chat, bool preErrata, byte[] cards, byte[] engine, byte[] resources)
+        {
+            FrozenCardView.Decode(cards, engine, resources);
+            var settings = new ReplayOptions { RuntimeRoot = Path.GetFullPath(runtimeRoot), DatabasePath = "", DeckFile = deckFile, Dialog = dialog, Chat = chat, UsePreErrataEffects = preErrata };
+            var init = new BotInit { Executor = executor, Seed = seed, Options = settings.Encode(), Deck = File.ReadAllBytes(settings.DeckPath), MergedCards = (byte[])cards.Clone(), EngineDigest = (byte[])engine.Clone(), CoreResourceDigest = (byte[])resources.Clone() };
+            init.ResourceDigest = settings.ResourceHash();
+            return init;
+        }
         internal byte[] Encode()
         {
-            return ReplayRandom.Encode(w => { w.Write(Executor); w.Write(Seed); WorkerWire.WriteBytes(w, Deck); WorkerWire.WriteBytes(w, ResourceDigest); WorkerWire.WriteBytes(w, Options); });
+            return ReplayRandom.Encode(w => { w.Write(Executor); w.Write(Seed); WorkerWire.WriteBytes(w, Deck); WorkerWire.WriteBytes(w, ResourceDigest); WorkerWire.WriteBytes(w, Options); WorkerWire.WriteBytes(w, MergedCards); w.Write(EngineDigest); w.Write(CoreResourceDigest); });
         }
         internal static BotInit Read(BinaryReader r)
         {
-            return new BotInit { Executor = r.ReadString(), Seed = r.ReadInt32(), Deck = WorkerWire.ReadBytes(r), ResourceDigest = WorkerWire.ReadBytes(r), Options = WorkerWire.ReadBytes(r) };
+            return new BotInit { Executor = r.ReadString(), Seed = r.ReadInt32(), Deck = WorkerWire.ReadBytes(r), ResourceDigest = WorkerWire.ReadBytes(r), Options = WorkerWire.ReadBytes(r), MergedCards = WorkerWire.ReadBytes(r), EngineDigest = r.ReadBytes(32), CoreResourceDigest = r.ReadBytes(32) };
         }
         internal BotInit Copy()
         {
-            if (string.IsNullOrEmpty(Executor) || Deck == null || ResourceDigest == null || ResourceDigest.Length != 32 || Options == null)
+            if (string.IsNullOrEmpty(Executor) || Deck == null || ResourceDigest == null || ResourceDigest.Length != 32 || Options == null || MergedCards == null || EngineDigest == null || EngineDigest.Length != 32 || CoreResourceDigest == null || CoreResourceDigest.Length != 32)
                 throw new InvalidOperationException("Incomplete fixed BotInit");
             using (var r = new BinaryReader(new MemoryStream(Encode()))) return Read(r);
         }
@@ -52,7 +63,7 @@ namespace WindBot.Undo
             {
                 if (r.ReadInt32() != 1) throw new InvalidOperationException("Unsupported BotInit options");
                 var settings = new ReplayOptions { RuntimeRoot = r.ReadString(), DatabasePath = r.ReadString(), DeckFile = r.ReadString(), Dialog = r.ReadString(), Chat = r.ReadBoolean(), UsePreErrataEffects = r.ReadBoolean() };
-                if (stream.Position != stream.Length || !Path.IsPathRooted(settings.RuntimeRoot) || !Path.IsPathRooted(settings.DatabasePath) ||
+                if (stream.Position != stream.Length || !Path.IsPathRooted(settings.RuntimeRoot) || (settings.DatabasePath.Length != 0 && !Path.IsPathRooted(settings.DatabasePath)) ||
                     Path.GetFileName(settings.DeckFile) != settings.DeckFile || Path.GetFileName(settings.Dialog) != settings.Dialog)
                     throw new InvalidOperationException("Invalid fixed resource paths");
                 return settings;
@@ -65,7 +76,7 @@ namespace WindBot.Undo
 #if UNDO_BUILD
             binaryRoot = Path.Combine(binaryRoot, "undo-deps");
 #endif
-            return new[] { DatabasePath, Path.Combine(RuntimeRoot, "bots.json"), DeckPath, Path.Combine(RuntimeRoot, "Dialogs", Dialog + ".json"), assembly, assembly + ".config", Path.Combine(binaryRoot, "x86", "sqlite3.dll"), Path.Combine(binaryRoot, "x64", "sqlite3.dll") };
+            return new[] { DatabasePath, Path.Combine(RuntimeRoot, "bots.json"), DeckPath, Path.Combine(RuntimeRoot, "Dialogs", Dialog + ".json"), assembly, assembly + ".config", Path.Combine(binaryRoot, "x86", "sqlite3.dll"), Path.Combine(binaryRoot, "x64", "sqlite3.dll") }.Where(path => path.Length != 0).ToArray();
         }
         internal byte[] ResourceHash()
         {

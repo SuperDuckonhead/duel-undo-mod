@@ -48,6 +48,12 @@ namespace YGOSharp.OCGWrapper
             }
         }
 
+        internal static void InitFrozen(WindBot.Undo.FrozenCard[] cards)
+        {
+            _cards = new Dictionary<int, NamedCard>();
+            foreach (var card in cards) _cards.Add((int)card.Code, new NamedCard(card));
+        }
+
         internal static NamedCard GetCard(int id)
         {
             if (_cards.ContainsKey(id))

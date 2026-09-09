@@ -29,7 +29,9 @@ namespace WindBot.Undo
             Config.Load(new[] { "UsePreErrataEffects=" + options.UsePreErrataEffects.ToString() });
             DecksManager.Init(Program.Rand);
             if (!DecksManager.HasDeck(init.Executor)) throw new InvalidOperationException("Unknown fixed executor");
-            NamedCardsManager.Init(options.DatabasePath, true);
+            if (init.MergedCards.Length != 0)
+                NamedCardsManager.InitFrozen(FrozenCardView.Decode(init.MergedCards, init.EngineDigest, init.CoreResourceDigest));
+            else NamedCardsManager.Init(options.DatabasePath, true);
             game = new GameClient(options.Info(init));
             game.StartOffline(OnOutput);
             options.Validate(init);
@@ -52,11 +54,12 @@ namespace WindBot.Undo
         {
             return StateFingerprint.Compute(game.OfflineState(), tape.Snapshot());
         }
-        internal static int Run()
+        internal static int Run(string pipeName = null)
         {
             // Keep protocol bytes separate from legacy logger/Executor console output.
-            using (var input = new BinaryReader(Console.OpenStandardInput()))
-            using (var output = new BinaryWriter(Console.OpenStandardOutput()))
+            using (var pipe = pipeName == null ? null : PrivatePipe.ConnectToCreator(pipeName))
+            using (var input = new BinaryReader(pipe == null ? Console.OpenStandardInput() : pipe))
+            using (var output = new BinaryWriter(pipe == null ? Console.OpenStandardOutput() : pipe))
             {
                 System.Threading.Thread.CurrentThread.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
                 System.Threading.Thread.CurrentThread.CurrentUICulture = System.Globalization.CultureInfo.InvariantCulture;
@@ -108,6 +111,13 @@ namespace WindBot.Undo
                                     }
                                     else if (command == 4) WorkerWire.WriteTape(w, tape.Snapshot());
                                     else if (command == 5) WorkerWire.WriteBytes(w, worker.Digest());
+                                    else if (command == 7) w.Write((ulong)tape.Cursor);
+                                    else if (command == 6)
+                                    {
+                                        var card = NamedCard.Get(r.ReadInt32()); int setcode = r.ReadInt32();
+                                        if (card == null) throw new InvalidOperationException("Unknown normalized card");
+                                        WorkerWire.WriteBytes(w, ReplayRandom.Encode(info => { FrozenCardView.WriteText(info, card.Name); info.Write(card.Attack); info.Write(card.Defense); info.Write(card.RuleCode); info.Write(card.HasSetcode(setcode)); var visible = new ClientCard(card.Id, YGOSharp.OCGWrapper.Enums.CardLocation.Hand, 0); info.Write(visible.HasSetcode(setcode)); info.Write(visible.IsCode(card.RuleCode)); }));
+                                    }
                                     else throw new InvalidOperationException("Unknown W1 worker command");
                                 }
                                 if (stream.Position != stream.Length) throw new InvalidOperationException("Trailing worker command bytes");

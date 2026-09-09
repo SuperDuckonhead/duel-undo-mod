@@ -7,6 +7,13 @@ namespace YGOSharp.OCGWrapper
     {
         public string Name { get; private set; }
         public string Description { get; private set; }
+        private string[] effectDescriptions = new string[16];
+        public string[] EffectDescriptions { get { return (string[])effectDescriptions.Clone(); } }
+
+        internal NamedCard(WindBot.Undo.FrozenCard card) : base(card)
+        {
+            Name = card.Name; Description = card.Text; effectDescriptions = (string[])card.Descriptions.Clone();
+        }
 
         internal NamedCard(IDataRecord reader) : base(reader)
         {
