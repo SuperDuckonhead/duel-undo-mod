@@ -1,12 +1,227 @@
 {
-  "schemaVersion": 1,
-  "files": [
-    "ygopro-undo.exe",
-    "WindBot/WindBot-undo.exe",
-    "WindBot/WindBot-undo.exe.config",
-    "WindBot/undo-deps/x86/sqlite3.dll",
-    "WindBot/undo-deps/x64/sqlite3.dll"
-  ],
-  "generatedRuntimeFiles": ["system-undo.conf", "undo-logs/client-<process>-<session>.log"],
-  "notes": "Added-file allowlist only; shared resources and original executables, DLLs and configuration never ship. Licensing/source notices and final package metadata belong to R2 packaging. AI session undo is not enabled by R1 launch isolation."
+    "schemaVersion":  1,
+    "files":  [
+                  {
+                      "source":  "ygopro-undo.exe",
+                      "destination":  "ygopro-undo.exe",
+                      "sha256":  "e8caab0799bb9d0cba20d7f75c1c735bdd6e75fb6a03306124e06f2bbbec009f",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "WindBot/WindBot-undo.exe",
+                      "destination":  "WindBot/WindBot-undo.exe",
+                      "sha256":  "6582a35a5a270c93854449ea135892f055ba731cbb370a2e26d80334e720ad61",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "WindBot/WindBot-undo.exe.config",
+                      "destination":  "WindBot/WindBot-undo.exe.config",
+                      "sha256":  "b730b7e626dbb92711f7a1a478214dd0913a814a966c6084aa0533094346f80e",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "WindBot/undo-deps/x86/sqlite3.dll",
+                      "destination":  "WindBot/undo-deps/x86/sqlite3.dll",
+                      "sha256":  "1c2fcfa7632b6025829e3539142f1b7ebdbc5bb44d4fd6cc0f42f83715d2eb9f",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "WindBot/undo-deps/x64/sqlite3.dll",
+                      "destination":  "WindBot/undo-deps/x64/sqlite3.dll",
+                      "sha256":  "ab57d0437795ecc757cb693f32ea224173fa9856594d95cfa6b5033e645cd1ec",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/BUILD.md",
+                      "destination":  "undo-mod/BUILD.md",
+                      "sha256":  "47b8fb0aae1024fa1f428ce4998142f82dd70fe826686a99f99119552ba064cc",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/INSTALL.md",
+                      "destination":  "undo-mod/INSTALL.md",
+                      "sha256":  "ad5214af9001010561f2f479fba504904cc1c0fde913b323fa6fbe6ba3b0fc52",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/COMPATIBILITY.md",
+                      "destination":  "undo-mod/COMPATIBILITY.md",
+                      "sha256":  "562c44cbf408a68825ff359e82b1cc90459d0a0787ed43c01addb362e06427c1",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/RELEASE-NOTES.md",
+                      "destination":  "undo-mod/RELEASE-NOTES.md",
+                      "sha256":  "492b94fc6296e38a93b97d542721c4b0cbbece7cf000c5bc9f981191e0235f78",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/THIRD-PARTY.md",
+                      "destination":  "undo-mod/THIRD-PARTY.md",
+                      "sha256":  "6ab1a07a9955e083346a380c28d0d60de068ec2155cbf1d7e5c7857023ba19bd",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/bzip2.txt",
+                      "destination":  "undo-mod/licenses/bzip2.txt",
+                      "sha256":  "7638575a2a20f32b4f658611b9a9f58885f5a6769d9e05031c12c508c2068a24",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/freetype.txt",
+                      "destination":  "undo-mod/licenses/freetype.txt",
+                      "sha256":  "84f47dc7f0887dd56b05f2f218060581c055e443bd7af18e46677bec3dcc2473",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/freetype-additional.txt",
+                      "destination":  "undo-mod/licenses/freetype-additional.txt",
+                      "sha256":  "a4669841019d1f81d128654b008e80f30a765a1e3fd14598c2d80156b151f8d9",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/freetype-gpl2.txt",
+                      "destination":  "undo-mod/licenses/freetype-gpl2.txt",
+                      "sha256":  "6046da9f0fbc470892625b2f1313f16b5ca375b5c869b3540ea7ef2ad8877a12",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/irrlicht.txt",
+                      "destination":  "undo-mod/licenses/irrlicht.txt",
+                      "sha256":  "ca38f1ba4ab901111f6eee50009bd46dbd866e6beb98d592d843f7c162d73409",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/jpeg.txt",
+                      "destination":  "undo-mod/licenses/jpeg.txt",
+                      "sha256":  "cff8701dc999e39b5044ece8f22ed65b3a10d6a8dbddca8ffb802d24580181db",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/jpeg-ijg.txt",
+                      "destination":  "undo-mod/licenses/jpeg-ijg.txt",
+                      "sha256":  "db16a04128171879c60708d171b88d97345a2dd20f9bfc173680a4497c73f704",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/libevent.txt",
+                      "destination":  "undo-mod/licenses/libevent.txt",
+                      "sha256":  "0775ab4e6c296986ed69eea7174cdbb499b9f9414c3b8a48065f40438067477e",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/liblzma.txt",
+                      "destination":  "undo-mod/licenses/liblzma.txt",
+                      "sha256":  "4dbe5cdb52dad9399c88936770aea0d59198f1bd35a0031fbdcc7c151c4b1cf1",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/liblzma-0bsd.txt",
+                      "destination":  "undo-mod/licenses/liblzma-0bsd.txt",
+                      "sha256":  "54a423f7b2c890a1e4d6541f88f4e5702c0414988ba3f6247f4578d3b8bca5b7",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/libpng.txt",
+                      "destination":  "undo-mod/licenses/libpng.txt",
+                      "sha256":  "452390433ba0f88aa3e2b122c647741b72a0c117cd6ed7a329b49785aecb5511",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/llvm.txt",
+                      "destination":  "undo-mod/licenses/llvm.txt",
+                      "sha256":  "a9ed3eae930adbc631b83300b78ab5d228c9b1e4560d64ec4b4ea2bcf69f4569",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/lua.txt",
+                      "destination":  "undo-mod/licenses/lua.txt",
+                      "sha256":  "474341433b6817117c841fa6bc39600117c334f42ec5f8cddbcae6c044ab1f72",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/mingw-runtime.txt",
+                      "destination":  "undo-mod/licenses/mingw-runtime.txt",
+                      "sha256":  "6f8707c004133080b2e11da8caefd1d71531b7423ae9c9e3d6043801d24bf5b2",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/miniaudio.txt",
+                      "destination":  "undo-mod/licenses/miniaudio.txt",
+                      "sha256":  "cf00884e3bae1ec7b49e96bc014079f5b4c803987586b894ac431779927c67b3",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/ocgcore.txt",
+                      "destination":  "undo-mod/licenses/ocgcore.txt",
+                      "sha256":  "ee0546412e0ba886583513be77463b5d70c460cf2ace64a5174f86c42fe41b57",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/ogg.txt",
+                      "destination":  "undo-mod/licenses/ogg.txt",
+                      "sha256":  "29460b3b44148114c28cc2480737368428747e68374d16cb8d910949ded03d19",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/opus.txt",
+                      "destination":  "undo-mod/licenses/opus.txt",
+                      "sha256":  "cbd8bd07329a234413710c02b19d22c0cf78fc451882593e817130779b5455e3",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/opusfile.txt",
+                      "destination":  "undo-mod/licenses/opusfile.txt",
+                      "sha256":  "54e125c8250361407b34322e0f328f6bdf7fd30cd4f2941a321e47b41f9c159d",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/sqlite.txt",
+                      "destination":  "undo-mod/licenses/sqlite.txt",
+                      "sha256":  "36396e6f98fb7cec2c75148c47680b532b09dde60b81e836db8650a17b0705cc",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/sqlite-provider.txt",
+                      "destination":  "undo-mod/licenses/sqlite-provider.txt",
+                      "sha256":  "f6872cbd9e1740b91e9674c51d994927ff4818c293cb97641e442e1870f80b38",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/vorbis.txt",
+                      "destination":  "undo-mod/licenses/vorbis.txt",
+                      "sha256":  "1300208dc709bce1f7b1bf5295acb4df8eca42a67a301ce4317c9b901560092a",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/windbot.txt",
+                      "destination":  "undo-mod/licenses/windbot.txt",
+                      "sha256":  "e01b0c6039f997b8a4112f8eae433e3848a8483e8c2f84d716ca89444fb8c174",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/winpthreads.txt",
+                      "destination":  "undo-mod/licenses/winpthreads.txt",
+                      "sha256":  "1c8d23063c3772b9435831410b31b51fef3d9cf2138a442dc367ef5d72239f67",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/ygopro.txt",
+                      "destination":  "undo-mod/licenses/ygopro.txt",
+                      "sha256":  "189b1af95d661151e054cea10c91b3d754e4de4d3fecfb074c1fb29476f7167b",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/licenses/zlib.txt",
+                      "destination":  "undo-mod/licenses/zlib.txt",
+                      "sha256":  "439c75ab12b340c5362b9d4b08ff05ec3a4d0eb7667a6fff49a9b16d8795c78e",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/build-manifest.json",
+                      "destination":  "undo-mod/build-manifest.json",
+                      "sha256":  "888dd624d738df9cd6915d1df1ee8dcc712f96206a24255afcad7fec87ae7eeb",
+                      "license":  "See undo-mod/THIRD-PARTY.md."
+                  }
+              ]
 }
