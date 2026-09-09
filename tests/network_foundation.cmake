@@ -1,0 +1,8 @@
+add_undo_test(protocol_tests tests/protocol_tests.cpp)
+target_sources(protocol_tests PRIVATE client/gframe/undo/protocol.cpp)
+add_undo_test(coordinator_tests tests/coordinator_tests.cpp)
+target_sources(coordinator_tests PRIVATE client/gframe/undo/coordinator.cpp client/gframe/undo/protocol.cpp)
+if(WIN32)
+    target_link_libraries(protocol_tests PRIVATE bcrypt)
+    target_link_libraries(coordinator_tests PRIVATE bcrypt)
+endif()
