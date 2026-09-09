@@ -1,0 +1,20 @@
+[
+    {
+        "relativePath":  "ygopro.exe",
+        "fileVersion":  "1.036.2",
+        "sha256":  "128BE9A4FB9037AD2517B7ADD62BCD78E016A47DDE6572F11650E57D20EB7E12",
+        "peMachine":  "0x8664"
+    },
+    {
+        "relativePath":  "Bot.exe",
+        "fileVersion":  "1.0.0.0",
+        "sha256":  "5D895D53B2F17E33B26BDDCCB6AD849314BB010C1898F35E7EF10BEC876BE9BA",
+        "peMachine":  "0x014C"
+    },
+    {
+        "relativePath":  "WindBot/WindBot.exe",
+        "fileVersion":  "1.0.0.0",
+        "sha256":  "B50828423CB247B6AC56B00A3775C6E0F6697E8794A82F6D5144FADB7C3AFBE9",
+        "peMachine":  "0x014C"
+    }
+]
