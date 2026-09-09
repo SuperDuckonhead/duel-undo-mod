@@ -25,7 +25,7 @@ Build facts and gates:
 - The original client CI used Premake beta8, VS2026/MSVC, Release/x64, SSE2 and the dependency archives recorded in its [.gitlab-ci.yml](https://github.com/mycard/ygopro/blob/1e8472b8bd51e1242be133189d547ac2f55eddaa/.gitlab-ci.yml).
 - This machine has no Visual Studio/Windows SDK. Portable CMake4.4.3, LLVM-MinGW20260908 and .NETSDK8.0.425 are confined to ignored .cache/tools. LLVM builds are compatibility builds, not MSVC binary reproductions.
 - A clean WindBot/Wrapper rebuild succeeded with portable SDK MSBuild plus official net48 reference assemblies1.0.3; executable sizes match, hashes differ. Legacy Framework MSBuild cannot compile the source's modern C#.
-- Client compilation and all GUI/single/AI/LAN runtime smoke are still pending; Gate-A is **not passed** merely from source fingerprints or the successful bot compilation.
+- Client Release compilation succeeded with the documented LLVM-MinGW adapters. Original and rebuilt clients both initialized and entered their render loops using linked original resources in an isolated test directory. Full editor/single/AI/LAN interaction smoke remains pending; Gate-A is **not passed** by startup alone. See [client build](baseline/client-build.md) and [runtime smoke](baseline/runtime-smoke.md).
 - Gate-B (engine and AI deterministic candidate reconstruction) has not started. No undo functionality is claimed by this baseline.
 
 Resource/source boundary: do not track bot/Decks or bot/Dialogs runtime data. Do track bot/Game/AI/Decks because it contains required C# executor source. Upstream dependencies remain reproducible from pinned sources/checksums; installed resource trees are neither copied nor treated as source dependencies.
