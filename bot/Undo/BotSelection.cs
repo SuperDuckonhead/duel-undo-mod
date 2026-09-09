@@ -18,6 +18,7 @@ namespace WindBot.Undo
         public FrozenBotConfig[] Configs = new FrozenBotConfig[0];
         public FrozenBotConfig AppSettings;
         public int Hand;
+        public int? HandOverride; // explicit menu checkbox policy, after option resolution
         public bool Chat = true, UsePreErrataEffects;
         [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
         private static extern IntPtr CommandLineToArgvW(string command, out int count);
@@ -119,6 +120,11 @@ namespace WindBot.Undo
                         if (cli.ContainsKey(option.Key)) throw new InvalidOperationException("Unsupported fixed bot option: " + option.Key);
                         break; // Config can contain fields unrelated to this participant.
                 }
+            }
+            if (HandOverride.HasValue)
+            {
+                if (HandOverride.Value < 0 || HandOverride.Value > 1) throw new InvalidOperationException("Invalid menu Hand override");
+                result.Hand = HandOverride.Value;
             }
             var metadata = DecksManager.ResolveSelection(result.Executor, rng);
             result.Executor = metadata[0]; if (string.IsNullOrEmpty(result.DeckFile)) result.DeckFile = metadata[1];

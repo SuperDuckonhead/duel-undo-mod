@@ -161,6 +161,8 @@ BotController::BotController(const std::wstring& executable,const BotLaunchData&
  auto config=[&](const BotFrozenConfig& c){if(c.source.empty()||c.source.size()>4096||c.content.size()>1024*1024||Sha256(c.content)!=c.sha256)throw std::invalid_argument("Invalid frozen configuration binding");text(request,c.source);blob(request,c.content);put(request,c.sha256);};
  put(request,init.selectionConfigs.size(),4);for(const auto& c:init.selectionConfigs)config(c);
  put(request,init.appSettings.has_value(),1);if(init.appSettings)config(*init.appSettings);
+ if(init.handOverride && (*init.handOverride<0 || *init.handOverride>1))throw std::invalid_argument("Invalid menu Hand override");
+ put(request,init.handOverride.has_value(),1);if(init.handOverride)put(request,*init.handOverride,4);
  if(!p.request(std::move(request)))throw std::runtime_error(p.failure);
 }
 BotController::~BotController()=default;

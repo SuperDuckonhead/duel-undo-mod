@@ -29,6 +29,8 @@ struct BotLaunchData {
  Bytes cardView;
  std::string name{"WindBot-undo"}, selectionCommand, customDeckSource;
  std::int32_t hand{};
+ // Explicit menu checkbox policy, applied after command/config selection.
+ std::optional<std::int32_t> handOverride; // only 0 (unchecked) or 1 (checked)
  Bytes selectionCatalog, customDeck;
  bool hasCustomDeck{};
  std::vector<BotFrozenConfig> selectionConfigs;

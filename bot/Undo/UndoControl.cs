@@ -203,6 +203,7 @@ namespace WindBot.Undo
                                     int configCount = r.ReadInt32(); if (configCount < 0 || configCount > 64) throw new InvalidOperationException("Invalid frozen Config source count");
                                     selection.Configs = new FrozenBotConfig[configCount]; for (int i = 0; i < configCount; ++i) selection.Configs[i] = FrozenBotConfig.Read(r);
                                     if (r.ReadBoolean()) selection.AppSettings = FrozenBotConfig.Read(r);
+                                    if (r.ReadBoolean()) selection.HandOverride = r.ReadInt32();
                                     control = new UndoControl(BotInit.CaptureSelected(root, selection, seed, cards, engine, resources), sid, epoch);
                                 }
                                 else

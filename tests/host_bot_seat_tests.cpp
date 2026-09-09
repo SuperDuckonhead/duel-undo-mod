@@ -269,6 +269,42 @@ int main(int argc, char **argv) {
       CHECK((sources == std::vector<std::string>{"catalog config.conf", "main config.conf", "second.conf"}));
     }
     CHECK(measurement::CountDescendants() == base);
+    for(bool catalogHand : {false,true}) for(int menuHand : {0,1}) {
+      auto selected = init;
+      selected.selectionCommand = "Random=MENU_FIXED";
+      const std::string catalog = std::string("!Menu\nConfig=menu.conf") + (catalogHand ? " Hand=3" : "") + "\nfixture\nMENU_FIXED\n";
+      selected.selectionCatalog = Bytes(catalog.begin(),catalog.end());
+      const std::string text = "Deck=Lucky\nName=Menu Seat\nHand=2\nChat=false\nDialog=default\n";
+      selected.selectionConfigs = {{"menu.conf",Bytes(text.begin(),text.end()),{}}};
+      selected.selectionConfigs[0].sha256 = Sha256(selected.selectionConfigs[0].content);
+      selected.handOverride = menuHand;
+      HostBotSeat seat(executable,selected,session,7,50+catalogHand*2+menuHand);
+      selected.handOverride = 1-menuHand; // caller mutation cannot change the candidate
+      auto result=wait(seat,1);
+      CHECK(result.accepted && result.selection.hand==menuHand);
+      auto cursor=result.cursor;
+      auto original=wait(seat,seat.Dispatch(7,1,Bytes{3}));
+      CHECK(original.outputs.size()==1);
+      auto expected=original.outputs[0].packet;
+      if(menuHand==1) CHECK(expected.at(1)==1);
+      TxKey key{session,7,1,0,{}};key.targetDigest[0]=12;
+      CHECK(wait(seat,seat.Prepare(key,cursor)).accepted);
+      CHECK(wait(seat,seat.Commit(key)).accepted);
+      CHECK(wait(seat,seat.Resume(key,8)).accepted);
+      auto replayed=wait(seat,seat.Dispatch(8,1,Bytes{3}));
+      CHECK(replayed.outputs.at(0).packet==expected);
+      bool randomVaried=false;
+      for(unsigned i=0;i<12;++i) {
+        auto choice=wait(seat,seat.Dispatch(8,2+i,Bytes{3})).outputs.at(0).packet.at(1);
+        CHECK(choice>=1 && choice<=3);
+        if(menuHand==1) CHECK(choice==1);
+        else if(choice!=expected.at(1)) randomVaried=true;
+      }
+      CHECK(menuHand==1 || randomVaried);
+      seat.Stop();
+    }
+    CHECK(measurement::CountDescendants()==base);
+    std::cout << "PASS actual Random/Config menu Hand unchecked0/checked1 and frozen candidate continuation\n";
     std::cout << "actual private-process ordered jobs/fence, fixed selection, "
                  "Prepare/Commit/Resume, terminal closure and blocked "
                  "read/connect Stop passed\n";
