@@ -96,13 +96,20 @@ if ($Target -in @('All','Tools')) {
         $archive = Get-VerifiedArchive $records[0] $layout.cache
         $destination = Assert-LocalDestination $layout.destination
         $probe = Assert-LocalDestination $layout.probe
+        $incomplete = Assert-LocalDestination ".cache/tools/.undo-bootstrap-$name-incomplete"
+        if (Test-Path -LiteralPath $incomplete) {
+            throw "Existing tool extraction is incomplete; use a fresh cache after inspection: $name"
+        }
         if (Test-Path -LiteralPath $probe -PathType Leaf) {
             Write-Host "Verified cached archive; preserving existing tool: $name"
             continue
         }
         [IO.Directory]::CreateDirectory($destination) | Out-Null
+        [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($incomplete)) | Out-Null
+        [IO.File]::WriteAllText($incomplete, 'Extraction in progress')
         [IO.Compression.ZipFile]::ExtractToDirectory($archive, $destination)
         if (-not (Test-Path -LiteralPath $probe -PathType Leaf)) { throw "Tool extraction did not produce expected executable: $probe" }
+        Remove-Item -LiteralPath $incomplete
         Write-Host "Prepared tool: $name"
     }
 }

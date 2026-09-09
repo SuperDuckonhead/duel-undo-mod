@@ -30,6 +30,48 @@ function Run-Bootstrap([string]$Fixture) {
     $ErrorActionPreference = 'Continue'; $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Fixture 'tools/Bootstrap.ps1') -Target Libraries -LibraryName lua -Offline 2>&1
     return @{ Code=$LASTEXITCODE; Text=($output -join ' ') }
 }
+function New-ToolFixture([string]$Name) {
+    $fixture = Join-Path $area $Name
+    foreach ($dir in @('tools','.cache/tools','fixture/tool-package','client')) {
+        [IO.Directory]::CreateDirectory((Join-Path $fixture $dir)) | Out-Null
+    }
+    foreach ($tool in @('Bootstrap.ps1','Test-SourceLock.ps1')) {
+        Copy-Item -LiteralPath (Join-Path $repo "tools/$tool") -Destination (Join-Path $fixture "tools/$tool")
+    }
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [IO.File]::WriteAllText((Join-Path $fixture 'fixture/tool-package/payload.txt'), 'fixed tool fixture')
+    $archiveTemplate = Join-Path $fixture 'fixture/tool.zip'
+    [IO.Compression.ZipFile]::CreateFromDirectory((Join-Path $fixture 'fixture/tool-package'), $archiveTemplate)
+    $toolSpecs = @(
+        @{name='cmake';cache='.cache/tools/cmake.zip';probe='.cache/tools/cmake-4.4.3-windows-x86_64/bin/cmake.exe'},
+        @{name='llvm-mingw';cache='.cache/tools/llvm-mingw.zip';probe='.cache/tools/llvm-mingw-20260908-ucrt-x86_64/bin/clang++.exe'},
+        @{name='premake';cache='.cache/tools/premake.zip';probe='.cache/tools/premake/premake5.exe'},
+        @{name='dotnet-sdk';cache='.cache/tools/dotnet-sdk-8.0.425.zip';probe='.cache/tools/dotnet/dotnet.exe'},
+        @{name='net48-reference-assemblies';cache='.cache/microsoft.netframework.referenceassemblies.net48.1.0.3.nupkg';probe='.cache/net48-ref/build/.NETFramework/v4.8/mscorlib.dll'}
+    )
+    $toolRecords = @()
+    foreach ($spec in $toolSpecs) {
+        $cache = Join-Path $fixture $spec.cache
+        [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($cache)) | Out-Null
+        Copy-Item -LiteralPath $archiveTemplate -Destination $cache
+        $probe = Join-Path $fixture $spec.probe
+        [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($probe)) | Out-Null
+        [IO.File]::WriteAllText($probe, 'existing probe')
+        $toolRecords += @{name=$spec.name;url="https://example.invalid/$($spec.name).zip";sha256=(Get-FileHash -LiteralPath $cache -Algorithm SHA256).Hash.ToLowerInvariant()}
+    }
+    $lock = @{
+        components=@(@{name='client';url='https://example.invalid/client.git';commit=('a'*40);destination='client';evidenceUrl='https://example.invalid/commit';evidenceNote='Test fixture'})
+        archives=@()
+        toolchainArchives=$toolRecords
+    }
+    [IO.File]::WriteAllText((Join-Path $fixture 'sources.lock.json'), ($lock | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+    return $fixture
+}
+function Run-BootstrapTools([string]$Fixture) {
+    $ErrorActionPreference = 'Continue'; $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Fixture 'tools/Bootstrap.ps1') -Target Tools -Offline 2>&1
+    return @{ Code=$LASTEXITCODE; Text=($output -join ' ') }
+}
 function Case([string]$Name, [scriptblock]$Body) {
     try { & $Body; $script:passed++; Write-Output "PASS: $Name" }
     catch { $script:failed++; Write-Output "FAIL: $Name - $_" }
@@ -73,6 +115,16 @@ Case 'incomplete existing dependency refuses rather than reporting ready' {
     [IO.Directory]::CreateDirectory((Join-Path $fixture 'client/lua')) | Out-Null
     $result = Run-Bootstrap $fixture
     Check ($result.Code -ne 0 -and $result.Text -match 'incomplete') 'Incomplete dependency was accepted'
+}
+Case 'interrupted tool extraction with an existing probe is rejected' {
+    $fixture = New-ToolFixture 'partial-tool'
+    $marker = Join-Path $fixture '.cache/tools/.undo-bootstrap-premake-incomplete'
+    [IO.File]::WriteAllText($marker, 'Extraction in progress')
+    $probe = Join-Path $fixture '.cache/tools/premake/premake5.exe'
+    $result = Run-BootstrapTools $fixture
+    Check ($result.Code -ne 0 -and $result.Text -match 'incomplete') 'Interrupted tool extraction was reported ready'
+    Check ([IO.File]::ReadAllText($probe) -eq 'existing probe') 'Existing partial tool probe was modified'
+    Check (Test-Path -LiteralPath $marker -PathType Leaf) 'Interrupted extraction marker was removed'
 }
 
 Write-Output "Result: $passed passed, $failed failed"
