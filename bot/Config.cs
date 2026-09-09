@@ -41,7 +41,7 @@ namespace WindBot
             }
         }
 
-        private static Dictionary<string, string> LoadArgs(string[] args)
+        internal static Dictionary<string, string> LoadArgs(string[] args)
         {
             Dictionary<string, string> fields = new Dictionary<string, string>();
             for (int i = 0; i < args.Length; ++i)
@@ -66,32 +66,24 @@ namespace WindBot
 
         private static Dictionary<string, string> LoadFile(string filename)
         {
+            using (StreamReader reader = new StreamReader(filename)) return ReadFields(reader);
+        }
+
+        internal static Dictionary<string, string> ReadFields(TextReader reader)
+        {
             Dictionary<string, string> fields = new Dictionary<string, string>();
-            using (StreamReader reader = new StreamReader(filename))
+            int lineNumber = 0;
+            string line;
+            while ((line = reader.ReadLine()) != null)
             {
-                int lineNumber = 0;
-                while (!reader.EndOfStream)
-                {
-                    string line = reader.ReadLine().Trim();
-                    ++lineNumber;
-
-                    // Ignore empty lines and comments
-                    if (line.Length == 0 || line[0] == COMMENT_CHAR)
-                        continue;
-
-                    int position = line.IndexOf(SEPARATOR_CHAR);
-
-                    if (position == -1)
-                        throw new Exception("Invalid configuration file: no key/value separator line " + lineNumber);
-
-                    string key = line.Substring(0, position).Trim().ToUpper();
-                    string value = line.Substring(position + 1).Trim();
-
-                    if (fields.ContainsKey(key))
-                        throw new Exception("Invalid configuration file: duplicate key '" + key + "' line " + lineNumber);
-
-                    fields.Add(key, value);
-                }
+                line = line.Trim(); ++lineNumber;
+                if (line.Length == 0 || line[0] == COMMENT_CHAR) continue;
+                int position = line.IndexOf(SEPARATOR_CHAR);
+                if (position == -1) throw new Exception("Invalid configuration file: no key/value separator line " + lineNumber);
+                string key = line.Substring(0, position).Trim().ToUpper();
+                string value = line.Substring(position + 1).Trim();
+                if (fields.ContainsKey(key)) throw new Exception("Invalid configuration file: duplicate key '" + key + "' line " + lineNumber);
+                fields.Add(key, value);
             }
             return fields;
         }

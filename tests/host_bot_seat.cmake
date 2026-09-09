@@ -1,7 +1,7 @@
 add_executable(host_bot_seat_tests tests/host_bot_seat_tests.cpp client/gframe/undo/host_bot_seat.cpp client/gframe/undo/bot_controller.cpp client/gframe/undo/protocol.cpp tests/core_test_globals.cpp)
 target_compile_features(host_bot_seat_tests PRIVATE cxx_std_17)
 target_include_directories(host_bot_seat_tests PRIVATE tests client/gframe)
-target_link_libraries(host_bot_seat_tests PRIVATE undo_resources advapi32)
+target_link_libraries(host_bot_seat_tests PRIVATE undo_resources advapi32 shell32)
 target_link_options(host_bot_seat_tests PRIVATE -static -Wl,--gc-sections)
 if(UNDO_BOT_TEST_EXE AND UNDO_BOT_TEST_RUNTIME)
  add_test(NAME host_bot_seat_tests COMMAND host_bot_seat_tests "${UNDO_BOT_TEST_EXE}" "${UNDO_BOT_TEST_RUNTIME}")

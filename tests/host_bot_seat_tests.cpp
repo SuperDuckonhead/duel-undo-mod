@@ -235,6 +235,40 @@ int main(int argc, char **argv) {
       seat.Stop();
     }
     CHECK(measurement::CountDescendants() == base);
+    {
+      auto configured = init;
+      configured.selectionCommand = "Config=missing-on-disk/bot.conf Name='CLI Seat' Hand=0x2";
+      const std::string configText = "# captured\nDeck=Lucky\nName=Config Seat\nHand=1\nChat=false\nDialog=default\n";
+      BotFrozenConfig config;
+      config.source = "missing-on-disk/bot.conf";
+      config.content = Bytes(configText.begin(), configText.end());
+      config.sha256 = Sha256(config.content);
+      configured.selectionConfigs = {config};
+      const std::string appText = "<configuration><appSettings><add key='UsePreErrataEffects' value='true'/></appSettings></configuration>";
+      config.source = "WindBot.exe.config";
+      config.content = Bytes(appText.begin(), appText.end());
+      config.sha256 = Sha256(config.content);
+      configured.appSettings = config;
+      HostBotSeat seat(executable, configured, session, 7, 49);
+      configured.selectionConfigs[0].content[0] ^= 1;
+      auto selected = wait(seat, 1);
+      CHECK(selected.accepted && selected.selection.name == "CLI Seat" &&
+            selected.selection.hand == 2 && !selected.selection.chat &&
+            selected.selection.usePreErrataEffects);
+      auto hand = wait(seat, seat.Dispatch(7, 1, Bytes{3}));
+      CHECK(hand.outputs.at(0).packet[1] == 2);
+      TxKey key{session, 7, 1, 0, {}};
+      key.targetDigest[0] = 11;
+      CHECK(wait(seat, seat.Prepare(key, hand.cursor)).accepted);
+      CHECK(wait(seat, seat.Commit(key)).accepted);
+      CHECK(wait(seat, seat.Resume(key, 8)).accepted);
+      CHECK(wait(seat, seat.Dispatch(8, 2, Bytes{3})).outputs.at(0).packet[1] == 2);
+      seat.Stop();
+      const std::string catalog = "!One\nConfig='catalog config.conf' Deck=Lucky\nfixture\nAI_X\n!Two\nConfig=second.conf\nfixture\nAI_Y\n";
+      auto sources = DiscoverBotConfigSources("Config='main config.conf' Random=AI_X", Bytes(catalog.begin(), catalog.end()));
+      CHECK((sources == std::vector<std::string>{"catalog config.conf", "main config.conf", "second.conf"}));
+    }
+    CHECK(measurement::CountDescendants() == base);
     std::cout << "actual private-process ordered jobs/fence, fixed selection, "
                  "Prepare/Commit/Resume, terminal closure and blocked "
                  "read/connect Stop passed\n";

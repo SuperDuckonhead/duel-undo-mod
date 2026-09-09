@@ -61,6 +61,60 @@ internal static class TransactionTests
         }
         Console.WriteLine("PASS W2 actual named pipe ACL: protected current-user allow, network deny, wrong client PID rejected");
     }
+    static FrozenBotConfig FrozenConfig(string source, string text)
+    {
+        byte[] bytes = Encoding.UTF8.GetBytes(text);
+        using (var sha = System.Security.Cryptography.SHA256.Create())
+            return new FrozenBotConfig { Source = source, Content = bytes, Sha256 = sha.ComputeHash(bytes) };
+    }
+    static void ConfigSelectionTests(FrozenCard[] cards)
+    {
+        byte[] engine = new byte[32], resources = new byte[32]; engine[0] = 1; resources[0] = 2;
+        string runtime = Environment.GetEnvironmentVariable("WIND_BOT_RUNTIME") ?? @"F:\MyCardLibrary\ygopro\WindBot";
+        var config = FrozenConfig("missing-on-disk/public-bot.conf", "# frozen config\nDeck=Lucky\nName=From Config\nDialog=default\nHand=1\nChat=false\nHost=ignored\nPort=not-a-port\n");
+        var app = FrozenConfig("WindBot.exe.config", "<configuration><appSettings><add key='Name' value='From App'/><add key='Hand' value='3'/><add key='UsePreErrataEffects' value='true'/></appSettings></configuration>");
+        var request = new BotSelection { Command = "Config=missing-on-disk/public-bot.conf Name='CLI Seat' Hand=0x2", Configs = new[] { config }, AppSettings = app,
+            CustomDeckSource = "fixture:configured.ydk", CustomDeck = Encoding.UTF8.GetBytes("#main\n89631139\n") };
+        var bridge = FrozenCardView.Encode(engine, resources, cards);
+        var init = BotInit.CaptureSelected(runtime, request, 19, bridge, engine, resources);
+        Check(init.Selection.Name == "CLI Seat" && init.Selection.Hand == 2 && !init.Selection.Chat && init.Selection.UsePreErrataEffects && init.Executor == "Lucky", "CLI > Config > app settings precedence changed");
+        request.Command = "Config=missing-on-disk/public-bot.conf Hand=2";
+        Check(BotInit.CaptureSelected(runtime, request, 19, bridge, engine, resources).Selection.Name == "From Config", "Config lost precedence over app name");
+        request.Command = "Config=missing-on-disk/public-bot.conf Name='CLI Seat' Hand=0x2";
+        var labels = BotSelection.RequiredConfigSources("Config='main config.conf' Random=AI_X", Encoding.UTF8.GetBytes("!One\nConfig='catalog config.conf' Deck=Lucky\nfixture\nAI_X\n!Two\nConfig=second.conf\nfixture\nAI_Y\n"));
+        Check(labels.SequenceEqual(new[] { "catalog config.conf", "main config.conf", "second.conf" }), "Config discovery selected or dropped catalog sources");
+        config.Content[0] ^= 1; config.Source = "changed"; app.Content[0] ^= 1;
+        using (var child = new ReplaySession(init))
+        {
+            Check(child.InspectClientName() == "CLI Seat", "Configured actual client name changed");
+            var joined = child.Dispatch(new byte[] { 0x12, 0, 0, 0, 0, 0, 0, 5 });
+            Check(joined.Length == 1 && BitConverter.ToInt32(joined[0], 1) == 1, "Configured Chat/deck callback changed");
+            Check(BitConverter.ToInt32(child.Dispatch(new byte[] { 3 }).Single(), 1) == 2, "Configured actual Hand changed");
+            using (var candidate = new ReplaySession(init))
+            {
+                candidate.Replay(child.Snapshot(), (int)child.Cursor);
+                Check(candidate.InspectClientName() == "CLI Seat" && BitConverter.ToInt32(candidate.Dispatch(new byte[] { 3 }).Single(), 1) == 2, "Candidate reread mutable config");
+            }
+        }
+        request.Configs = new FrozenBotConfig[0]; request.AppSettings = null;
+        bool missing = false; try { BotInit.CaptureSelected(runtime, request, 19, bridge, engine, resources); } catch (InvalidOperationException) { missing = true; }
+        Check(missing, "Missing frozen Config fell back to disk");
+        request.Configs = new[] { FrozenConfig("missing-on-disk/public-bot.conf", "Hand=1\n hand =2\n") };
+        bool duplicate = false; try { BotInit.CaptureSelected(runtime, request, 19, bridge, engine, resources); } catch (Exception ex) { duplicate = ex.Message.Contains("duplicate key"); }
+        Check(duplicate, "Config duplicate normalized key accepted");
+        var random = new BotSelection { Command = "Random=CONFIG_FIXED", Catalog = Encoding.UTF8.GetBytes("!Fixed\nConfig=random.conf\nfixture\nCONFIG_FIXED\n"),
+            Configs = new[] { FrozenConfig("random.conf", "Deck=Lucky\nName=Config Random\nHand=3\nChat=false\n") },
+            CustomDeckSource = "fixture:random-config.ydk", CustomDeck = Encoding.UTF8.GetBytes("89631139\n") };
+        var randomInit = BotInit.CaptureSelected(runtime, random, 19, bridge, engine, resources);
+        random.Configs[0].Content[0] ^= 1;
+        using (var control = new UndoControl(randomInit, Session(), 7))
+        {
+            Check(Send(control, 1, new byte[] { 3 }).Single().Packet[1] == 3, "Random-selected Config callback changed");
+            Check(control.Prepare(Key(), control.Cursor) && control.Commit(Key()) && control.Resume(Key(), 8), "Random-selected Config transaction failed");
+            Check(Send(control, 2, new byte[] { 3 }).Single().Packet[1] == 3, "Random Config rerolled/reread on candidate");
+        }
+        Console.WriteLine("PASS N2 fixed Config precedence, actual callback/candidate, duplicate grammar and no disk fallback");
+    }
     static void SelectionAndTerminalTests(FrozenCard[] cards)
     {
         var engine = new byte[32]; engine[0] = 1; var resources = new byte[32]; resources[0] = 2;
@@ -100,7 +154,7 @@ internal static class TransactionTests
         Check(!UndoControl.CanEmitResponse(BotUndoState.Frozen, 7, 7), "Frozen participant emitted");
         PrivateChannelTests();
         var cards = ReadOriginal();
-        SelectionAndTerminalTests(cards);
+        SelectionAndTerminalTests(cards); ConfigSelectionTests(cards);
         // This mimics already-resolved DataManager expansion values; the native
         // fixture separately constructs the bridge from a real merged DataManager.
         var expanded = cards.Single(c => c.Code == 26202165); expanded.Attack = 2468; expanded.Name = "Frozen expansion Sangan"; expanded.RuleCode = 123456; for (int i = 0; i < 15; i++) expanded.Setcodes[i] = (ushort)(i + 1); expanded.Setcodes[15] = 0x1234;

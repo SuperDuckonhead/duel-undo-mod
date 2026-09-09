@@ -32,12 +32,12 @@ namespace WindBot.Undo
             init.ResourceDigest = settings.ResourceHash();
             return init;
         }
-        public BotSelection Selection { get { var o = ReplayOptions.Decode(Options); return new BotSelection { Name = o.Name, Hand = o.Hand, Executor = Executor, DeckFile = o.DeckFile, Dialog = o.Dialog, Chat = o.Chat, UsePreErrataEffects = o.UsePreErrataEffects, CustomDeckSource = o.DeckSource }; } }
+        public BotSelection Selection { get { var o = ReplayOptions.Decode(Options); return new BotSelection { Name = o.Name, Hand = o.Hand, Executor = Executor, DeckFile = o.DeckFile, Dialog = o.Dialog, Chat = o.Chat, UsePreErrataEffects = o.UsePreErrataEffects, CustomDeckSource = o.DeckSource, Configs = o.Configs, AppSettings = o.AppSettings }; } }
         public static BotInit CaptureSelected(string root, BotSelection request, int seed, byte[] cards, byte[] engine, byte[] resources)
         {
             FrozenCardView.Decode(cards, engine, resources);
             var selected = request.Resolve(seed);
-            var settings = new ReplayOptions { RuntimeRoot = Path.GetFullPath(root), DatabasePath = "", DeckFile = selected.DeckFile, Dialog = selected.Dialog, Name = selected.Name, Hand = selected.Hand, Chat = selected.Chat, UsePreErrataEffects = selected.UsePreErrataEffects, CustomDeck = selected.CustomDeck != null, DeckSource = selected.CustomDeckSource };
+            var settings = new ReplayOptions { RuntimeRoot = Path.GetFullPath(root), DatabasePath = "", DeckFile = selected.DeckFile, Dialog = selected.Dialog, Name = selected.Name, Hand = selected.Hand, Chat = selected.Chat, UsePreErrataEffects = selected.UsePreErrataEffects, CustomDeck = selected.CustomDeck != null, DeckSource = selected.CustomDeckSource, Configs = selected.Configs, AppSettings = selected.AppSettings };
             ReplayOptions.Decode(settings.Encode()); // Validate paths before first file access.
             byte[] deck = selected.CustomDeck ?? File.ReadAllBytes(settings.DeckPath);
             using (var sha = SHA256.Create()) settings.DeckHash = sha.ComputeHash(deck);
@@ -65,19 +65,24 @@ namespace WindBot.Undo
         internal string RuntimeRoot, DatabasePath, DeckFile, Dialog;
         internal bool Chat, UsePreErrataEffects, CustomDeck;
         internal string Name = "WindBot-undo", DeckSource = "";
+        internal FrozenBotConfig[] Configs = new FrozenBotConfig[0];
+        internal FrozenBotConfig AppSettings;
         internal int Hand;
         internal byte[] DeckHash = new byte[0];
         internal string DeckPath { get { return Path.Combine(RuntimeRoot, "Decks", DeckFile + ".ydk"); } }
         internal byte[] Encode()
         {
-            return ReplayRandom.Encode(w => { w.Write(2); w.Write(RuntimeRoot); w.Write(DatabasePath); w.Write(DeckFile); w.Write(Dialog); w.Write(Chat); w.Write(UsePreErrataEffects); w.Write(Name); w.Write(Hand); w.Write(CustomDeck); w.Write(DeckSource); WorkerWire.WriteBytes(w, DeckHash); });
+            return ReplayRandom.Encode(w => { w.Write(3); w.Write(RuntimeRoot); w.Write(DatabasePath); w.Write(DeckFile); w.Write(Dialog); w.Write(Chat); w.Write(UsePreErrataEffects); w.Write(Name); w.Write(Hand); w.Write(CustomDeck); w.Write(DeckSource); WorkerWire.WriteBytes(w, DeckHash); w.Write(Configs.Length); foreach (var config in Configs) config.Write(w); w.Write(AppSettings != null); if (AppSettings != null) AppSettings.Write(w); });
         }
         internal static ReplayOptions Decode(byte[] bytes)
         {
             using (var stream = new MemoryStream(bytes)) using (var r = new BinaryReader(stream))
             {
-                if (r.ReadInt32() != 2) throw new InvalidOperationException("Unsupported BotInit options");
+                if (r.ReadInt32() != 3) throw new InvalidOperationException("Unsupported BotInit options");
                 var settings = new ReplayOptions { RuntimeRoot = r.ReadString(), DatabasePath = r.ReadString(), DeckFile = r.ReadString(), Dialog = r.ReadString(), Chat = r.ReadBoolean(), UsePreErrataEffects = r.ReadBoolean(), Name = r.ReadString(), Hand = r.ReadInt32(), CustomDeck = r.ReadBoolean(), DeckSource = r.ReadString(), DeckHash = WorkerWire.ReadBytes(r) };
+                int count = r.ReadInt32(); if (count < 0 || count > 64) throw new InvalidOperationException("Invalid frozen Config source count");
+                settings.Configs = new FrozenBotConfig[count]; for (int i = 0; i < count; ++i) settings.Configs[i] = FrozenBotConfig.Read(r);
+                if (r.ReadBoolean()) settings.AppSettings = FrozenBotConfig.Read(r);
                 if (stream.Position != stream.Length || !Path.IsPathRooted(settings.RuntimeRoot) || (settings.DatabasePath.Length != 0 && !Path.IsPathRooted(settings.DatabasePath)) ||
                     Path.GetFileName(settings.DeckFile) != settings.DeckFile || Path.GetFileName(settings.Dialog) != settings.Dialog)
                     throw new InvalidOperationException("Invalid fixed resource paths");

@@ -200,6 +200,9 @@ namespace WindBot.Undo
                                     var selection = new BotSelection { Executor = executor, DeckFile = deck, Dialog = dialog, Chat = chat, UsePreErrataEffects = pre,
                                         Name = FrozenCardView.ReadText(r), Hand = r.ReadInt32(), Command = FrozenCardView.ReadText(r), Catalog = WorkerWire.ReadBytes(r), CustomDeckSource = FrozenCardView.ReadText(r) };
                                     if (r.ReadBoolean()) selection.CustomDeck = WorkerWire.ReadBytes(r);
+                                    int configCount = r.ReadInt32(); if (configCount < 0 || configCount > 64) throw new InvalidOperationException("Invalid frozen Config source count");
+                                    selection.Configs = new FrozenBotConfig[configCount]; for (int i = 0; i < configCount; ++i) selection.Configs[i] = FrozenBotConfig.Read(r);
+                                    if (r.ReadBoolean()) selection.AppSettings = FrozenBotConfig.Read(r);
                                     control = new UndoControl(BotInit.CaptureSelected(root, selection, seed, cards, engine, resources), sid, epoch);
                                 }
                                 else

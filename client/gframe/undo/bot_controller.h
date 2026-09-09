@@ -4,6 +4,7 @@
 #include <memory>
 #include <functional>
 #include <atomic>
+#include <optional>
 namespace ygo { class DataManager; }
 namespace undo {
 enum class BotState : std::uint8_t { Running, Frozen, Ready, Committed, Failed };
@@ -12,6 +13,14 @@ struct BotSelectionInfo {
  std::int32_t hand{};
  bool chat{true}, usePreErrataEffects{};
 };
+struct BotFrozenConfig {
+ std::string source;
+ Bytes content;
+ Digest sha256{};
+};
+// Discovery parses command/catalog only, never chooses Random or reads a file.
+// Freeze every returned source under its exact menu-relative/source label.
+std::vector<std::string> DiscoverBotConfigSources(const std::string& command, const Bytes& catalog);
 struct BotLaunchData {
  std::string runtimeRoot, executor, deckFile, dialog{"default"};
  std::int32_t seed{};
@@ -22,6 +31,8 @@ struct BotLaunchData {
  std::int32_t hand{};
  Bytes selectionCatalog, customDeck;
  bool hasCustomDeck{};
+ std::vector<BotFrozenConfig> selectionConfigs;
+ std::optional<BotFrozenConfig> appSettings;
 };
 Bytes CaptureBotCardView(const ResourceView&, const ygo::DataManager&, const Digest& engine);
 struct BotOutput {

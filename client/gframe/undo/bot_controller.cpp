@@ -8,6 +8,11 @@
 #include <windows.h>
 #include <sddl.h>
 #include <bcrypt.h>
+#include <shellapi.h>
+#include <sstream>
+#include <set>
+#include <map>
+#include <cwctype>
 
 namespace undo {
 namespace {
@@ -55,6 +60,34 @@ std::wstring userSid() {
  winCheck(GetTokenInformation(token.value,TokenUser,bytes.data(),size,&size)!=0,"GetTokenInformation");
  LPWSTR sid{};winCheck(ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(bytes.data())->User.Sid,&sid)!=0,"ConvertSid");LocalMemory memory{sid};return sid;
 }
+}
+std::vector<std::string> DiscoverBotConfigSources(const std::string& command,const Bytes& catalog) {
+ auto wide=[](const std::string& text) {
+  if(text.empty())return std::wstring{};
+  auto size=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),nullptr,0);
+  if(!size)throw std::invalid_argument("Invalid selection UTF-8");
+  std::wstring result(size,L'\0');MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),result.data(),size);return result;
+ };
+ auto trim=[](std::wstring text) {
+  auto first=text.find_first_not_of(L" \t\r\n\v\f");if(first==std::wstring::npos)return std::wstring{};
+  return text.substr(first,text.find_last_not_of(L" \t\r\n\v\f")-first+1);
+ };
+ struct IgnoreCase {bool operator()(const std::wstring& a,const std::wstring& b)const{return _wcsicmp(a.c_str(),b.c_str())<0;}};
+ std::map<std::wstring,std::wstring,IgnoreCase> sources;
+ auto parse=[&](const std::string& text) {
+  auto input=L"WindBot "+wide(text);std::replace(input.begin(),input.end(),L'\'',L'"');
+  int count{};auto raw=CommandLineToArgvW(input.c_str(),&count);if(!raw)throw std::runtime_error("Cannot parse bot selection");LocalMemory argv{raw};
+  std::set<std::wstring,IgnoreCase> keys;
+  for(int i=1;i<count;++i){std::wstring argument=raw[i];auto equals=argument.find(L'=');if(equals==std::wstring::npos)throw std::invalid_argument("Bot selection has no key/value separator");
+   auto key=trim(argument.substr(0,equals));auto value=trim(argument.substr(equals+1));if(!keys.insert(key).second)throw std::invalid_argument("Bot selection duplicate key");
+   if(_wcsicmp(key.c_str(),L"Config")==0)sources.emplace(value,value);
+  }
+ };
+ parse(command);std::istringstream input(std::string(catalog.begin(),catalog.end()));std::string line;
+ while(std::getline(input,line)){auto first=line.find_first_not_of(" \t\r\n");if(first==std::string::npos||line[first]!='!')continue;
+  std::string choice,description,flags;if(!std::getline(input,choice)||!std::getline(input,description)||!std::getline(input,flags))throw std::invalid_argument("Truncated bot catalog");parse(choice);
+ }
+ std::vector<std::string> result;for(const auto& item:sources)result.push_back(utf8(item.second));return result;
 }
 Bytes CaptureBotCardView(const ResourceView& view,const ygo::DataManager& data,const Digest& engine) {
  if(view.Cards().size()!=data.GetDataTable().size())throw std::runtime_error("Bot resource capture must share the core initialization snapshot");
@@ -124,6 +157,10 @@ BotController::BotController(const std::wstring& executable,const BotLaunchData&
  Bytes request{1};put(request,session);put(request,epoch,8);put(request,init.engine);put(request,init.resources);blob(request,init.cardView);
  text(request,init.runtimeRoot);text(request,init.executor);text(request,init.deckFile);text(request,init.dialog);put(request,static_cast<std::uint32_t>(init.seed),4);put(request,init.chat,1);put(request,init.usePreErrataEffects,1);
  text(request,init.name);put(request,init.hand,4);text(request,init.selectionCommand);blob(request,init.selectionCatalog);text(request,init.customDeckSource);put(request,init.hasCustomDeck,1);if(init.hasCustomDeck)blob(request,init.customDeck);
+ if(init.selectionConfigs.size()>64)throw std::invalid_argument("Too many frozen Config sources");
+ auto config=[&](const BotFrozenConfig& c){if(c.source.empty()||c.source.size()>4096||c.content.size()>1024*1024||Sha256(c.content)!=c.sha256)throw std::invalid_argument("Invalid frozen configuration binding");text(request,c.source);blob(request,c.content);put(request,c.sha256);};
+ put(request,init.selectionConfigs.size(),4);for(const auto& c:init.selectionConfigs)config(c);
+ put(request,init.appSettings.has_value(),1);if(init.appSettings)config(*init.appSettings);
  if(!p.request(std::move(request)))throw std::runtime_error(p.failure);
 }
 BotController::~BotController()=default;
