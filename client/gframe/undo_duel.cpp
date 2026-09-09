@@ -33,6 +33,7 @@ Digest publicTarget(const TxKey& request, std::size_t index, std::uint8_t reques
 struct VisibleBoundary {
     std::array<std::size_t,2> cursor{};
     std::uint64_t prompt{};
+    std::array<Bytes,2> prompts;
 };
 struct RebuildJob {
     std::mutex mutex;
@@ -62,6 +63,7 @@ struct UndoDuel::Impl {
     Send send;
     Coordinator coordinator;
     std::array<DuelPlayer*,2> participants{};
+    std::array<bool,2> departing{};
     std::array<std::unique_ptr<GamePacketStream>,2> incoming;
     std::array<std::uint64_t,2> sequence{};
     std::uint64_t installedEpoch{}, prompt{}, nextPrompt{1}, nextRequest{1};
@@ -118,6 +120,7 @@ struct UndoDuel::Impl {
         return s;
     }
     bool emit(int p,const Envelope& e) {
+        if(departing[p])return true; // Terminal teardown does not require delivery to the departed endpoint.
         if(!participants[p])return false;
         return send?send(participants[p],e):NetServer::SendUndoToPlayer(participants[p],e);
     }
@@ -125,11 +128,12 @@ struct UndoDuel::Impl {
         for(int p=0;p<2;++p)require(emit(p,e),"Undo control transport failed");
     }
     void publish(bool force=false) {
+        if(!core)return; // Capability confirmation must precede every room status.
         const auto now=nowMs();
         if(!force && now-lastStatus<500)return;
         lastStatus=now;
         Envelope e{WireKind::Status,{session,installedEpoch,0,0,{}},EncodeRoomStatus(status())};
-        for(int p=0;p<2;++p)if(participants[p])require(emit(p,e),"Undo status transport failed");
+        for(int p=0;p<2;++p)if(participants[p] && participants[p]->undoPeer.ready)require(emit(p,e),"Undo status transport failed");
     }
     void fail(const std::string& why,bool mayHaveCommitted=false) {
         error=why;
@@ -141,6 +145,7 @@ struct UndoDuel::Impl {
     }
     void raw(DuelPlayer* player,std::uint8_t opcode,const unsigned char* data,std::size_t size) {
         const auto p=participant(player);require(p>=0,"Unknown undo recipient");
+        if(departing[p])return;
         Bytes packet{opcode};packet.insert(packet.end(),data,data+size);
         require(sequence[p]!=std::numeric_limits<std::uint64_t>::max(),"Game packet sequence exhausted");
         for(const auto& e:EncodeGamePacket(session,installedEpoch,prompt,++sequence[p],packet))
@@ -180,9 +185,14 @@ struct UndoDuel::Impl {
         }
         coordinator.Boundary(nowMs(),finished,target,clock);
     }
+    void sendPrepared() {
+        for(int p=0;p<2;++p)
+            for(const auto& fragment:Fragment(prepared->restore[p]))
+                require(emit(p,{WireKind::Prepare,prepared->key,fragment}),"Prepare transport failed");
+    }
     void prepare() {
         const auto key=coordinator.ActiveKey();
-        if(prepared && SameKey(prepared->key,key))return;
+        if(prepared && SameKey(prepared->key,key)){sendPrepared();return;}
         require(!job,"Previous candidate worker has not finished");
         const auto keep=static_cast<std::size_t>(key.targetIndex);
         require(keep<history.Records().size() && keep<boundaries.size(),"Missing target history");
@@ -197,8 +207,10 @@ struct UndoDuel::Impl {
             require(visible.cursor[p]<=journal[p].size(),"Missing recipient journal");
             next->journal[p].assign(journal[p].begin(),journal[p].begin()+visible.cursor[p]);
             const auto recipient=participants[p]->type;
-            const auto targetPrompt=recipient==next->boundary.checkpoint.player?
-                next->boundary.checkpoint.prompt:Bytes{MSG_WAITING};
+            // The core checkpoint is private. Restore exactly the prompt that
+            // SingleDuel::Analyze already filtered for this endpoint.
+            const auto& targetPrompt=visible.prompts[p];
+            require(!targetPrompt.empty(),"Missing recipient-visible prompt");
             auto restore=BuildPlayerRestore(recipient,next->journal[p],targetPrompt);
             RoomRestore descriptor{visible.prompt,next->boundary.checkpoint.player,
                 next->boundary.checkpoint.clock,EncodePlayerRestore(restore)};
@@ -220,9 +232,7 @@ struct UndoDuel::Impl {
             work->core=std::move(candidate);work->error=std::move(failure);work->done=true;
         });
         job=std::move(work);prepared=std::move(next);
-        for(int p=0;p<2;++p)
-            for(const auto& fragment:Fragment(prepared->restore[p]))
-                require(emit(p,{WireKind::Prepare,key,fragment}),"Prepare transport failed");
+        sendPrepared();
     }
     void ready() {
         if(!prepared || !prepared->coreReady)return;
@@ -312,13 +322,20 @@ struct UndoDuel::Impl {
         }
         if(coordinator.State()==TxState::WaitBoundary && !advancing)freezeRequest();
         drain();
-        if(open() && owner.host_info.time_limit && clockPlayer<2 && clock.remainingMs[clockPlayer]==0)
-            owner.Surrender(owner.players[clockPlayer]);
+        resolveExpired();
+    }
+    bool resolveExpired() {
+        if(!open() || !owner.host_info.time_limit || clockPlayer>1 || clock.remainingMs[clockPlayer]!=0)return false;
+        Bytes win{MSG_WIN,static_cast<std::uint8_t>(1-clockPlayer),3};
+        clockPlayer=2;
+        sendGame(0,win);sendGame(1,win);
+        owner.EndDuel();owner.DuelEndProc();publish(true);
+        return true;
     }
     void accept(DuelPlayer* player,Origin origin,const Bytes& response,const TxKey& key) {
         if(!open() || !IsCurrent(key,session,installedEpoch) || key.request!=prompt ||
            player->type!=boundary.checkpoint.player || player->state!=CTOS_RESPONSE)return;
-        observeClock();boundary.checkpoint.clock=clock;
+        observeClock();if(resolveExpired())return;boundary.checkpoint.clock=clock;
         submitted=ResponseRecord{player->type,origin,response,boundary.checkpoint};
         clockPlayer=2;player->state=0xff;
         core->Submit(response);owner.Process();
@@ -348,6 +365,7 @@ void UndoDuel::JoinGame(DuelPlayer* dp,unsigned char* bytes,bool creator) {
             return; // Invalid join may have destroyed dp; do not retain or touch it.
         }
     }
+    r.departing[free]=false; // A newly admitted endpoint owns a fresh delivery lifetime.
     r.participants[free]=dp;
     SingleDuel::JoinGame(dp,bytes,creator);
     // A failed join may disconnect and destroy dp. Resolve only through the
@@ -398,6 +416,10 @@ void UndoDuel::Process() {
         const auto previousPrompt=r.prompt;
         r.prompt=r.nextPrompt++;r.advancing=true;
         auto next=r.core->Advance([&](const Bytes& frame) {
+            if(!frame.empty() && frame[0]==MSG_NEW_TURN) {
+                r.clock.remainingMs.fill(std::int64_t(host_info.time_limit)*1000);
+                r.clockObserved=nowMs();
+            }
             auto copy=frame;SingleDuel::Analyze(copy.data(),static_cast<unsigned int>(copy.size()));
         });
         r.advancing=false;
@@ -434,7 +456,7 @@ void UndoDuel::ReceiveUndo(DuelPlayer* dp,const Envelope& e) {
     if(e.kind!=WireKind::Response && e.kind!=WireKind::Game && e.kind!=WireKind::Request &&
        !SameKey(e.key,r.coordinator.ActiveKey()))return;
     try {
-        r.observeClock();r.coordinator.Tick(nowMs());
+        r.observeClock();r.coordinator.Tick(nowMs());if(r.resolveExpired())return;
         switch(e.kind) {
         case WireKind::Response: {
             auto response=DecodeResponse(e);r.accept(dp,response.origin,response.response,response.key);break;
@@ -486,8 +508,14 @@ bool UndoDuel::RoutePacket(DuelPlayer* dp,std::uint8_t opcode,const unsigned cha
     auto& r=*impl_;
     if(!r.core)return false;
     const auto p=r.participant(dp);if(p<0)return true;
-    if(opcode==STOC_GAME_MSG && size && body[0]!=MSG_RETRY && body[0]!=MSG_WIN)
+    if(opcode==STOC_GAME_MSG && size && body[0]!=MSG_RETRY && body[0]!=MSG_WIN) {
+        if(r.boundaries.size()==r.history.Records().size()+1 && r.boundaries.back().prompt==r.prompt) {
+            const auto expected=dp->type==r.boundary.checkpoint.player?
+                r.boundary.checkpoint.prompt.front():MSG_WAITING;
+            if(body[0]==expected)r.boundaries.back().prompts[p].assign(body,body+size);
+        }
         r.journal[p].emplace_back(body,body+size);
+    }
     r.raw(dp,opcode,body,size);return true;
 }
 void UndoDuel::WaitforResponse(int player){impl_->boundaryReady(player);}
@@ -510,12 +538,24 @@ void UndoDuel::Surrender(DuelPlayer* dp) {
     r.sendGame(0,win);r.sendGame(1,win);EndDuel();DuelEndProc();r.publish(true);
 }
 void UndoDuel::LeaveGame(DuelPlayer* dp) {
-    auto& r=*impl_;
+    auto& r=*impl_;const auto seat=r.participant(dp);
+    if(seat>=0)r.departing[seat]=true;
+    // This is terminal room teardown, never a unilateral undo rollback. In
+    // particular an escaped Commit cannot resume the remaining peer.
     if(r.core && !r.finished) {
-        r.fail("A participant disconnected",r.prepared && r.prepared->committed);
-        r.drain();
+        r.failed=true;r.error="A participant disconnected";r.clockPlayer=2;
+        if(r.job)r.job->cancel=true;
+        r.coordinator.Fail(r.coordinator.ActiveKey(),true);
+        try {r.publish(true);} catch(...) {}
     }
-    SingleDuel::LeaveGame(dp);
+    try {
+        SingleDuel::LeaveGame(dp);
+    } catch(...) {
+        // A second endpoint can close while termination is being delivered.
+        // No exception is allowed to leave a libevent teardown callback.
+        NetServer::DisconnectPlayer(dp);
+        NetServer::StopServer();
+    }
 }
 void UndoDuel::OnPlayerDisconnected(DuelPlayer* dp) {
     auto& r=*impl_;

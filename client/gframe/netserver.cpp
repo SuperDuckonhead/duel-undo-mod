@@ -278,10 +278,15 @@ void NetServer::ServerEchoEvent(bufferevent* bev, short events, void* ctx) {
 		DuelMode* dm = dp->game;
 		auto* prev_disconnect = disconnecting_bev;
 		disconnecting_bev = bev;
-		if(dm)
-			dm->LeaveGame(dp);
-		else
-			DisconnectPlayer(dp);
+        try {
+            if(dm) dm->LeaveGame(dp);
+            else DisconnectPlayer(dp);
+        } catch(...) {
+            // Keep C++ failures inside the callback boundary and stop the room.
+            const auto found=users.find(bev);
+            if(found!=users.end())DisconnectPlayer(&found->second);
+            StopServer();
+        }
 		disconnecting_bev = prev_disconnect;
 	}
 }
