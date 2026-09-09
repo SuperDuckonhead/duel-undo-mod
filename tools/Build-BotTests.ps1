@@ -6,7 +6,8 @@ $refs = Join-Path $repoRoot '.cache/net48-ref/build'
 $botOutput = Join-Path $repoRoot "out/bot/$Configuration"
 $testOutput = Join-Path $repoRoot 'out/bot-tests'
 $targets = Join-Path $repoRoot 'tools/Bot.Build.targets'
-& $dotnet msbuild (Join-Path $repoRoot 'bot/WindBot.csproj') /t:Rebuild "/p:Configuration=$Configuration" /p:Platform=AnyCPU /p:UndoBuild=true "/p:TargetFrameworkRootPath=$refs" "/p:OutputPath=$botOutput" "/p:CustomAfterMicrosoftCommonTargets=$targets" /v:minimal
+# Separate clean/reference/resource caches from normal builds of the same project.
+& $dotnet msbuild (Join-Path $repoRoot 'bot/WindBot.csproj') /t:Rebuild "/p:Configuration=$Configuration" /p:Platform=AnyCPU /p:UndoBuild=true /p:BaseIntermediateOutputPath=obj/undo/ "/p:IntermediateOutputPath=obj/undo/$Configuration/" "/p:TargetFrameworkRootPath=$refs" "/p:OutputPath=$botOutput" "/p:CustomAfterMicrosoftCommonTargets=$targets" /v:minimal
 if ($LASTEXITCODE -ne 0) { throw 'Adapted WindBot build failed' }
 & $dotnet msbuild (Join-Path $repoRoot 'bot-tests/UndoTests.csproj') /t:Rebuild "/p:Configuration=$Configuration" "/p:TargetFrameworkRootPath=$refs" "/p:BotOutputPath=$botOutput" "/p:OutputPath=$testOutput" /v:minimal
 if ($LASTEXITCODE -ne 0) { throw 'Bot tests build failed' }

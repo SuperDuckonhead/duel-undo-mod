@@ -58,6 +58,9 @@ $arguments = @(
     '/t:Rebuild',
     "/p:Configuration=$Configuration",
     '/p:Platform=Any CPU',
+    # Relative paths remain per-project inside the solution (WindBot and BotWrapper).
+    '/p:BaseIntermediateOutputPath=obj/normal/',
+    "/p:IntermediateOutputPath=obj/normal/$Configuration/",
     "/p:TargetFrameworkRootPath=$frameworkRoot",
     "/p:OutputPath=$outputPath",
     "/p:CustomAfterMicrosoftCommonTargets=$afterTargets",
