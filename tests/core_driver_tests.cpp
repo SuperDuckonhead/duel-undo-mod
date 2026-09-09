@@ -60,7 +60,10 @@ Debug.Message('parameters:'..UNDO_SCENARIO_PARAMETERS)
   auto candidateStart=candidate->Advance();waiting(candidateStart);CHECK(same(liveStart,candidateStart));
   CHECK(same(liveStart,live->Current()));CHECK(logs==live->Logs());CHECK(transcript==live->Transcript());
   live->Submit({99,0,0,0});auto retry=live->Advance();waiting(retry);CHECK(retry.rejectedResponse);CHECK(same(liveStart,retry));CHECK(live->Transcript()==transcript);
-  candidate->Submit({0,0,0,0});auto failed=candidate->Advance();CHECK(failed.kind==BoundaryKind::Failed);std::cerr << "candidate failure: " << failed.failure << "\n";CHECK(failed.failure=="Pinned resource missing: script/c900000003.lua");
+  candidate->Submit({0,0,0,0});auto failed=candidate->Advance();CHECK(failed.kind==BoundaryKind::Failed);
+  std::cerr << "candidate failure: " << failed.failure << "\n";
+  const auto missingScript=std::filesystem::absolute(std::filesystem::u8path(root)/"script/c900000003.lua").lexically_normal().u8string();
+  CHECK(failed.failure.find("Resource absent from frozen view (no disk lookup): "+missingScript+";")==0);
   candidate.reset();CHECK(same(liveStart,live->Current()));CHECK(live->Logs()==logs);
   live->Submit({1,0,0,0});auto second=live->Advance();waiting(second);CHECK(second.checkpoint.player==1);CHECK(!second.rejectedResponse);
   CHECK(live->Logs().back()=="frozen-late");
