@@ -11,3 +11,6 @@ The script refuses an existing destination. It links installed read-only resourc
 Observed on 2026-09-10: the original installed ygopro.exe was launched with this directory as its working directory. After four seconds it was alive with title "YGOPro FPS: 60" and working set 157880320 bytes. The test-owned process was then terminated. The original system.conf SHA-256 was unchanged. This is an initialization/render-loop smoke, not visual verification, editor-save testing, a completed duel, or graceful-exit coverage.
 
 The newly built client will use the same resource staging for comparison. Its compatibility result is still pending. Desktop automation failed at kernel initialization, before any app interaction.
+
+The rebuilt LLVM-MinGW client also stayed alive after four seconds on the same stage, with title "YGOPro FPS: 58" and working set159690752 bytes. Its libc++.dll and libunwind.dll were loaded from its out/client/Release directory. This confirms startup/render-loop behavior with the linked original resources, while the interaction matrix remains pending.
+
