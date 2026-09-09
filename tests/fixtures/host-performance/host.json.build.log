@@ -1,0 +1,91 @@
+[  0%] Building CXX object CMakeFiles/undo_resources.dir/client/gframe/undo/resource_view.cpp.obj
+[  4%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/lapi.c.obj
+[  4%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/lauxlib.c.obj
+[  4%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/lbaselib.c.obj
+[  4%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/lcode.c.obj
+[  9%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/lcorolib.c.obj
+[  9%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/lctype.c.obj
+[  9%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/ldblib.c.obj
+[ 13%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/ldebug.c.obj
+[ 13%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/ldo.c.obj
+[ 13%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/ldump.c.obj
+[ 13%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/lfunc.c.obj
+[ 13%] Building CXX object CMakeFiles/undo_resources.dir/client/gframe/data_manager.cpp.obj
+[ 18%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/lgc.c.obj
+[ 18%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/linit.c.obj
+[ 18%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/liolib.c.obj
+[ 22%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/llex.c.obj
+[ 22%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/lmathlib.c.obj
+[ 22%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/lmem.c.obj
+[ 22%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/loadlib.c.obj
+[ 27%] Building CXX object CMakeFiles/undo_resources.dir/client/gframe/file_system.cpp.obj
+[ 31%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/lobject.c.obj
+[ 31%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/lopcodes.c.obj
+[ 31%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/loslib.c.obj
+[ 36%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/lparser.c.obj
+[ 36%] Linking CXX static library libundo_resources.a
+[ 36%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/lstate.c.obj
+[ 36%] Built target undo_resources
+[ 36%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/lstring.c.obj
+[ 36%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/lstrlib.c.obj
+[ 40%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/ltable.c.obj
+[ 40%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/ltablib.c.obj
+[ 40%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/ltm.c.obj
+[ 40%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/lundump.c.obj
+[ 45%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/lutf8lib.c.obj
+[ 45%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/lvm.c.obj
+[ 45%] Building CXX object CMakeFiles/undo_lua.dir/client/lua/src/lzio.c.obj
+[ 50%] Linking CXX static library libundo_lua.a
+[ 50%] Built target undo_lua
+[ 54%] Building CXX object CMakeFiles/undo_ocgcore.dir/client/ocgcore/card.cpp.obj
+[ 54%] Building CXX object CMakeFiles/undo_ocgcore.dir/client/ocgcore/duel.cpp.obj
+[ 54%] Building CXX object CMakeFiles/undo_ocgcore.dir/client/ocgcore/effect.cpp.obj
+[ 59%] Building CXX object CMakeFiles/undo_ocgcore.dir/client/ocgcore/field.cpp.obj
+[ 59%] Building CXX object CMakeFiles/undo_ocgcore.dir/client/ocgcore/group.cpp.obj
+[ 59%] Building CXX object CMakeFiles/undo_ocgcore.dir/client/ocgcore/interpreter.cpp.obj
+[ 59%] Building CXX object CMakeFiles/undo_ocgcore.dir/client/ocgcore/libcard.cpp.obj
+[ 63%] Building CXX object CMakeFiles/undo_ocgcore.dir/client/ocgcore/libdebug.cpp.obj
+[ 63%] Building CXX object CMakeFiles/undo_ocgcore.dir/client/ocgcore/libduel.cpp.obj
+[ 63%] Building CXX object CMakeFiles/undo_ocgcore.dir/client/ocgcore/libeffect.cpp.obj
+F:\MyCardLibrary\ygopro\dev\duel-undo-mod\client\ocgcore\libeffect.cpp:51:11: warning: enumeration values 'MEMBER_CODE', 'MEMBER_DESCRIPTION', and 'MEMBER_ID' not handled in switch [-Wswitch]
+   51 |                 switch (type) {
+      |                         ^~~~
+1 warning generated.
+[ 68%] Building CXX object CMakeFiles/undo_ocgcore.dir/client/ocgcore/libgroup.cpp.obj
+[ 68%] Building CXX object CMakeFiles/undo_ocgcore.dir/client/ocgcore/ocgapi.cpp.obj
+[ 68%] Building CXX object CMakeFiles/undo_ocgcore.dir/client/ocgcore/operations.cpp.obj
+[ 68%] Building CXX object CMakeFiles/undo_ocgcore.dir/client/ocgcore/playerop.cpp.obj
+[ 72%] Building CXX object CMakeFiles/undo_ocgcore.dir/client/ocgcore/processor.cpp.obj
+[ 72%] Building CXX object CMakeFiles/undo_ocgcore.dir/client/ocgcore/scriptlib.cpp.obj
+[ 72%] Linking CXX static library libundo_ocgcore.a
+[ 72%] Built target undo_ocgcore
+[ 72%] Building CXX object CMakeFiles/undo_driver.dir/client/gframe/undo/core_driver.cpp.obj
+[ 72%] Linking CXX static library libundo_driver.a
+[ 72%] Built target undo_driver
+[ 72%] Building CXX object CMakeFiles/undo_rebuilder.dir/client/gframe/undo/rebuilder.cpp.obj
+[ 72%] Linking CXX static library libundo_rebuilder.a
+[ 72%] Built target undo_rebuilder
+[ 72%] Building CXX object CMakeFiles/undo_host_measure_tests.dir/tests/undo_host_measure_tests.cpp.obj
+[ 72%] Building CXX object CMakeFiles/undo_host_measure_tests.dir/client/gframe/undo_duel.cpp.obj
+[ 72%] Building CXX object CMakeFiles/undo_host_measure_tests.dir/client/gframe/single_duel.cpp.obj
+[ 77%] Building CXX object CMakeFiles/undo_host_measure_tests.dir/client/gframe/netserver.cpp.obj
+[ 77%] Building CXX object CMakeFiles/undo_host_measure_tests.dir/client/gframe/tag_duel.cpp.obj
+[ 77%] Building CXX object CMakeFiles/undo_host_measure_tests.dir/client/gframe/deck_manager.cpp.obj
+[ 77%] Building CXX object CMakeFiles/undo_host_measure_tests.dir/client/gframe/replay.cpp.obj
+[ 81%] Building CXX object CMakeFiles/undo_host_measure_tests.dir/client/gframe/undo_replay.cpp.obj
+[ 81%] Building CXX object CMakeFiles/undo_host_measure_tests.dir/client/gframe/undo/duel_history.cpp.obj
+[ 81%] Building CXX object CMakeFiles/undo_host_measure_tests.dir/client/gframe/undo/room_admission.cpp.obj
+[ 86%] Building CXX object CMakeFiles/undo_host_measure_tests.dir/client/gframe/undo/host_bot_seat.cpp.obj
+[ 86%] Building CXX object CMakeFiles/undo_host_measure_tests.dir/client/gframe/undo/bot_controller.cpp.obj
+[ 86%] Building CXX object CMakeFiles/undo_host_measure_tests.dir/client/gframe/undo/protocol.cpp.obj
+[ 86%] Building CXX object CMakeFiles/undo_host_measure_tests.dir/client/gframe/undo/coordinator.cpp.obj
+[ 90%] Building CXX object CMakeFiles/undo_host_measure_tests.dir/client/gframe/undo/room_wire.cpp.obj
+[ 90%] Building CXX object CMakeFiles/undo_host_measure_tests.dir/client/gframe/undo/room_restore.cpp.obj
+[ 90%] Building CXX object CMakeFiles/undo_host_measure_tests.dir/client/gframe/undo/player_restore.cpp.obj
+[ 95%] Building CXX object CMakeFiles/undo_host_measure_tests.dir/client/gframe/undo/player_visible_filter.cpp.obj
+[ 95%] Building CXX object CMakeFiles/undo_host_measure_tests.dir/client/gframe/client_field_model.cpp.obj
+[ 95%] Building CXX object CMakeFiles/undo_host_measure_tests.dir/client/gframe/client_card_model.cpp.obj
+[ 95%] Building CXX object CMakeFiles/undo_host_measure_tests.dir/client/gframe/materials.cpp.obj
+[100%] Building CXX object CMakeFiles/undo_host_measure_tests.dir/tests/core_test_globals.cpp.obj
+[100%] Linking CXX executable undo_host_measure_tests.exe
+[100%] Built target undo_host_measure_tests
