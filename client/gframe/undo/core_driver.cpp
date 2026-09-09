@@ -107,7 +107,11 @@ unsigned char* CoreDriver::Script(const char* path,int* len) {
  catch(const std::exception& e) {if(active->callbackFailure_.empty())active->callbackFailure_=e.what(); *len=0; return nullptr;}
 }
 uint32_t CoreDriver::Card(uint32_t code,card_data* data) {
- try {*data=active->resources_->Card(code);} catch(const std::exception& e) { data->clear(); if(active->callbackFailure_.empty())active->callbackFailure_=e.what(); } return 0;
+ // The baseline also probes virtual EFFECT_ADD_CODE/set names with no DB row.
+ // Absence is frozen by the captured map; never consult mutable disk resources.
+ const auto& cards=active->resources_->Cards();const auto found=cards.find(code);
+ if(found==cards.end())data->clear();else *data=found->second;
+ return 0;
 }
 uint32_t CoreDriver::Log(intptr_t handle,uint32_t type) {
  auto found=handles.find(handle); auto* owner=found==handles.end()?active:found->second;
@@ -120,6 +124,8 @@ std::unique_ptr<CoreDriver> CoreDriver::Create(const InitialState& initial,std::
  if(!resources || initial.resourceDigest!=resources->Fingerprint())throw std::runtime_error("Initial resource digest mismatch");
  if(initial.seed.size()!=SEED_COUNT)throw std::runtime_error("Initial seed must contain SEED_COUNT words");
  if(initial.duelOptions&DUEL_TAG_MODE)throw std::runtime_error("TAG is not supported by undo sessions");
+ // Initial deck/card entries must exist; optional engine probes use callback absence semantics.
+ for(const auto& c:initial.cards)resources->Card(c.code);
  auto driver=std::unique_ptr<CoreDriver>(new CoreDriver(initial,std::move(resources))); Binding binding(driver.get());
  driver->handle_=create_duel_undo(driver->initial_.seed.data()); handles.emplace(driver->handle_,driver.get()); driver->CheckFailure();
  for(int p=0;p<2;++p) {auto info=initial.players[p];set_player_info(driver->handle_,p,info.lp,info.startCount,info.drawCount);}

@@ -41,3 +41,5 @@ include(tests/undo_tcp.cmake)
 include(tests/undo_host_privacy.cmake)
 include(tests/ai_list_preflight.cmake)
 include(tests/core_wait.cmake)
+
+include(tests/core_lookup.cmake)
