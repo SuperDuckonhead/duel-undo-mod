@@ -757,7 +757,7 @@ class Projector {
             break;
         case MSG_BECOME_TARGET: {
             auto n = r.u8();
-            need(f.current_chain.chain_card, "target outside chain");
+            // Duel.HintSelection also emits valid targets outside a chain.
             for (unsigned i = 0; i < n; ++i)
                 f.current_chain.target.insert(ref(r));
             break;

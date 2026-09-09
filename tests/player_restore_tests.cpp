@@ -334,9 +334,32 @@ static void reviewedMessageRegressions() {
     CHECK(failures == 0);
 }
 
+static void nonChainSelectionHint() {
+    ygo::ClientField live;
+    PlayerViewState state;
+    ClientRestore restore(live,state,0,key().session,key().epoch);
+    auto frames=history();
+    frames.push_back(move(0x2222,1,LOCATION_DECK,0,LOCATION_SZONE,0,POS_FACEUP_ATTACK));
+    // Exact captured Qliphort restore frame 225. Duel.HintSelection emits this
+    // without creating a chain; the fourth location byte is a position here.
+    const Bytes actualHint{0x53,0x01,0x01,0x08,0x00,0x05};
+    frames.push_back(actualHint);
+    const auto packet=BuildPlayerRestore(0,frames,prompt());
+    CHECK(restore.Prepare(key(),packet,prompt()));
+    const auto* candidate=restore.PreparedField();
+    CHECK(!candidate->current_chain.chain_card && candidate->chains.empty());
+    CHECK(candidate->current_chain.target.count(candidate->szone[1][0])==1);
+    CHECK(live.szone[1][0]==nullptr);
+    restore.Abort(key());
+    frames.back()[4]=1; // A real location with no card must still fail closed.
+    CHECK(!restore.Prepare(key(),BuildPlayerRestore(0,frames,prompt()),prompt()));
+    frames.back()=actualHint;frames.back().pop_back();
+    CHECK(!restore.Prepare(key(),BuildPlayerRestore(0,frames,prompt()),prompt()));
+}
 int main() {
     reviewedMessageRegressions();
     actualPrivacy();
+    nonChainSelectionHint();
     Bytes cached{MSG_UPDATE_DATA, 0, LOCATION_HAND, 8, 0, 0, 0, 0, 0, 0, 0};
     CHECK(FilterVisibleQuery(cached).owner == cached);
     ygo::ClientField live;
