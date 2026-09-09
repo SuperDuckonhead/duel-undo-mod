@@ -1,3 +1,5 @@
+> Historical baseline build record. Current undo-client build, runtime isolation and packaging instructions are in [BUILD.md](../BUILD.md).
+
 # Portable client build
 
 The pinned client can be built on this machine with the repository-local Premake 5.0.0-beta8 and LLVM-MinGW 20260908 toolchain:

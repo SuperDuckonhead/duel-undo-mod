@@ -1,0 +1,289 @@
+client/freetype/src/bdf/README
+                  FreeType font driver for BDF fonts
+
+                       Francesco Zappa Nardelli
+                  <francesco.zappa.nardelli@ens.fr>
+
+
+Introduction
+************
+
+BDF (Bitmap Distribution Format) is a bitmap font format defined by Adobe,
+which is intended to be easily understood by both humans and computers.
+This code implements a BDF driver for the FreeType library, following the
+Adobe Specification V 2.2.  The specification of the BDF font format is
+available from Adobe's web site:
+
+  https://adobe-type-tools.github.io/font-tech-notes/pdfs/5005.BDF_Spec.pdf
+
+Many good bitmap fonts in bdf format come with XFree86 (www.XFree86.org).
+They do not define vertical metrics, because the X Consortium BDF
+specification has removed them.
+
+
+Encodings
+*********
+
+[This section is out of date, retained for historical reasons.  BDF
+ properties can be retrieved with `FT_Get_BDF_Property`, character set ID
+ values with `FT_Get_BDF_Charset_ID`.]
+
+The variety of encodings that accompanies bdf fonts appears to encompass the
+small set defined in freetype.h.  On the other hand, two properties that
+specify encoding and registry are usually defined in bdf fonts.
+
+I decided to make these two properties directly accessible, leaving to the
+client application the work of interpreting them.  For instance:
+
+
+  #include FT_INTERNAL_BDF_TYPES_H
+
+  FT_Face          face;
+  BDF_Public_Face  bdfface;
+
+
+  FT_New_Face( library, ..., &face );
+
+  bdfface = (BDF_Public_Face)face;
+
+  if ( ( bdfface->charset_registry == "ISO10646" ) &&
+       ( bdfface->charset_encoding == "1" )        )
+    [..]
+
+
+Thus the driver always exports `ft_encoding_none' as face->charmap.encoding.
+FT_Get_Char_Index's behavior is unmodified, that is, it converts the ULong
+value given as argument into the corresponding glyph number.
+
+If the two properties are not available, Adobe Standard Encoding should be
+assumed.
+
+
+Anti-Aliased Bitmaps
+********************
+
+The driver supports an extension to the BDF format as used in Mark Leisher's
+xmbdfed bitmap font editor.  Microsoft's SBIT tool expects bitmap fonts in
+that format for adding anti-aliased them to TrueType fonts.  It introduces a
+fourth field to the `SIZE' keyword which gives the bpp value (bits per
+pixel) of the glyph data in the font.  Possible values are 1 (the default),
+2 (four gray levels), 4 (16 gray levels), and 8 (256 gray levels).  The
+driver returns either a bitmap with 1 bit per pixel or a pixmap with 8bits
+per pixel (using 4, 16, and 256 gray levels, respectively).
+
+
+Known problems
+**************
+
+- A font is entirely loaded into memory.  Obviously, this is not the Right
+  Thing(TM).  If you have big fonts I suggest you convert them into PCF
+  format (using the bdftopcf utility): the PCF font drive of FreeType can
+  perform incremental glyph loading.
+
+When I have some time, I will implement on-demand glyph parsing.
+
+- Except for encodings properties, client applications have no visibility of
+  the PCF_Face object.  This means that applications cannot directly access
+  font tables and must trust FreeType.
+
+- Currently, glyph names are ignored.
+
+  I plan to give full visibility of the BDF_Face object in an upcoming
+  revision of the driver, thus implementing also glyph names.
+
+- As I have never seen a BDF font that defines vertical metrics, vertical
+  metrics are (parsed and) discarded.  If you own a BDF font that defines
+  vertical metrics, please let me know (I will implement them in 5-10
+  minutes).
+
+
+License
+*******
+
+Copyright (C) 2001-2002 by Francesco Zappa Nardelli
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+*** Portions of the driver (that is, bdflib.c and bdf.h):
+
+Copyright 2000 Computing Research Labs, New Mexico State University
+Copyright 2001-2002, 2011 Francesco Zappa Nardelli
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+THE COMPUTING RESEARCH LAB OR NEW MEXICO STATE UNIVERSITY BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT
+OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR
+THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+
+Credits
+*******
+
+This driver is based on excellent Mark Leisher's bdf library.  If you
+find something good in this driver you should probably thank him, not
+me.
+
+
+client/freetype/src/pcf/README
+                  FreeType font driver for PCF fonts
+
+                       Francesco Zappa Nardelli
+                  <francesco.zappa.nardelli@ens.fr>
+
+
+Introduction
+************
+
+PCF (Portable Compiled Format) is a binary bitmap font format, largely used
+in X world. This code implements a PCF driver for the FreeType library.
+Glyph images are loaded into memory only on demand, thus leading to a small
+memory footprint.
+
+Information on the PCF font format can only be worked out from
+`pcfread.c', and `pcfwrite.c', to be found, for instance, in the XFree86
+(www.xfree86.org) source tree (xc/lib/font/bitmap/).
+
+Many good bitmap fonts in bdf format come with XFree86: they can be
+compiled into the pcf format using the `bdftopcf' utility.
+
+
+Supported hardware
+******************
+
+The driver has been tested on linux/x86 and sunos5.5/sparc.  In both
+cases the compiler was gcc.  When back in Paris, I will test it also
+on linux/alpha.
+
+
+Encodings
+*********
+
+Use `FT_Get_BDF_Charset_ID' to access the encoding and registry.
+
+The driver always exports `ft_encoding_none' as face->charmap.encoding.
+FT_Get_Char_Index() behavior is unmodified, that is, it converts the ULong
+value given as argument into the corresponding glyph number.
+
+
+Known problems
+**************
+
+- dealing explicitly with encodings breaks the uniformity of FreeType 2
+  API.
+
+- except for encodings properties, client applications have no
+  visibility of the PCF_Face object.  This means that applications
+  cannot directly access font tables and are obliged to trust
+  FreeType.
+
+- currently, glyph names and ink_metrics are ignored.
+
+I plan to give full visibility of the PCF_Face object in the next
+release of the driver, thus implementing also glyph names and
+ink_metrics.
+
+- height is defined as (ascent - descent).  Is this correct?
+
+- if unable to read size information from the font, PCF_Init_Face
+  sets available_size->width and available_size->height to 12.
+
+- too many english grammar errors in the readme file :-(
+
+
+License
+*******
+
+Copyright (C) 2000 by Francesco Zappa Nardelli
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+
+Credits
+*******
+
+Keith Packard wrote the pcf driver found in XFree86.  His work is at
+the same time the specification and the sample implementation of the
+PCF format.  Undoubtedly, this driver is inspired from his work.
+
+
+client/freetype/src/base/fthash.c
+/****************************************************************************
+ *
+ * fthash.c
+ *
+ *   Hashing functions (body).
+ *
+ */
+
+client/freetype/src/autofit/ft-hb-ft.c
+/*
+ * Copyright © 2009, 2023  Red Hat, Inc.
+ * Copyright © 2015  Google, Inc.
+ *
+ * Permission is hereby granted, without written agreement and without
+ * license or royalty fees, to use, copy, modify, and distribute this
+ * software and its documentation for any purpose, provided that the
+ * above copyright notice and the following two paragraphs appear in
+ * all copies of this software.
+ *
+ * IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE TO ANY PARTY FOR
+ * DIRECT, INDIRECT, SPECIAL, INCIDENTAL, OR CONSEQUENTIAL DAMAGES
+ * ARISING OUT OF THE USE OF THIS SOFTWARE AND ITS DOCUMENTATION, EVEN
+ * IF THE COPYRIGHT HOLDER HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH
+ * DAMAGE.
+ *
+ * THE COPYRIGHT HOLDER SPECIFICALLY DISCLAIMS ANY WARRANTIES, INCLUDING,
+ * BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE.  THE SOFTWARE PROVIDED HEREUNDER IS
+ * ON AN "AS IS" BASIS, AND THE COPYRIGHT HOLDER HAS NO OBLIGATION TO
+ * PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
+ *
+ * Red Hat Author(s): Behdad Esfahbod, Matthias Clasen
+ * Google Author(s): Behdad Esfahbod
+ */
