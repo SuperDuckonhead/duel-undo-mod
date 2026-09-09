@@ -45,6 +45,13 @@ struct RebuildJob {
     std::unique_ptr<CoreDriver> core;
     std::string error;
 };
+struct DeferredHumanResponse {
+    TxKey transaction, input;
+    std::uint64_t endpoint{};
+    std::uint8_t participant{};
+    Origin origin{Origin::Manual};
+    Bytes response;
+};
 struct PreparedHost {
     TxKey key;
     std::unique_ptr<CoreDriver> core; // candidate, then retained original after install
@@ -76,6 +83,7 @@ struct UndoDuel::Impl {
     std::array<std::vector<Bytes>,2> journal;
     std::vector<VisibleBoundary> boundaries;
     std::optional<ResponseRecord> submitted;
+    std::optional<DeferredHumanResponse> deferredHuman;
     std::unique_ptr<PreparedHost> prepared;
     std::shared_ptr<RebuildJob> job;
     ClockState clock;
@@ -163,6 +171,7 @@ struct UndoDuel::Impl {
         if(coordinator.State()!=TxState::Running)
             coordinator.Fail(coordinator.ActiveKey(),mayHaveCommitted);
         else failed=true;
+        if(failed || coordinator.State()==TxState::PausedFailed)deferredHuman.reset();
         clockPlayer=2;
     }
     void raw(DuelPlayer* player,std::uint8_t opcode,const unsigned char* data,std::size_t size) {
@@ -385,6 +394,7 @@ struct UndoDuel::Impl {
         for(std::uint8_t p=0;p<2;++p)if(prepared->ready[p])coordinator.Ready(key,p);
     }
     void commit() {
+        deferredHuman.reset(); // The original-token input never crosses a successful install.
         require(prepared && prepared->coreReady,"Commit without prepared host");
         if(prepared->committed)return;
         if(bot && !prepared->botCommitQueued) {
@@ -415,6 +425,7 @@ struct UndoDuel::Impl {
     void drain() {
         if(draining)return;
         draining=true;
+        std::optional<TxKey> completedAbort;
         try {
             for(;;) {
                 auto messages=coordinator.TakeOutgoing();if(messages.empty())break;
@@ -440,18 +451,22 @@ struct UndoDuel::Impl {
                             require(bot->Abort(e.key)!=0,"Private AI Abort unavailable");
                             if(prepared)prepared->botAbortQueued=true;
                         }
-                        if(final && transaction && SameKey(e.key,coordinator.ActiveKey())) {
+                        const bool completes=final && transaction && SameKey(e.key,coordinator.ActiveKey());
+                        if(completes) {
                             prepared.reset();resumeClock();transaction=false;botAdmission=bool(bot);
                         }
-                        broadcast(e);break;
+                        broadcast(e);
+                        if(completes)completedAbort=e.key;
+                        break;
                     }
                     default:break;
                     }
                 }
             }
-            if(coordinator.State()==TxState::PausedFailed)clockPlayer=2;
+            if(coordinator.State()==TxState::PausedFailed){clockPlayer=2;deferredHuman.reset();}
             publish(true);
             draining=false;
+            if(completedAbort)resumeDeferredHuman(*completedAbort);
         } catch(...) {
             draining=false;fail("Undo transaction delivery failed",prepared && prepared->committed);
         }
@@ -486,6 +501,37 @@ struct UndoDuel::Impl {
         sendGame(0,win);sendGame(1,win);
         terminalAuthorized=true;owner.EndDuel();owner.DuelEndProc();publish(true);
         return true;
+    }
+    void acceptHuman(DuelPlayer* player,const NetworkResponse& response) {
+        const auto state=coordinator.State();
+        const bool precommit=state==TxState::WaitBoundary || state==TxState::Consent ||
+            state==TxState::Preparing || state==TxState::Aborting;
+        const auto seat=participant(player);
+        if(transaction && precommit && !failed && !finished && core && !advancing &&
+           !botStatus.humanPromptHeld && !(prepared && prepared->committed) &&
+           seat>=0 && !departing[seat] && player!=botPlayer.get() &&
+           boundary.kind==BoundaryKind::AwaitResponse && player->type==boundary.checkpoint.player &&
+           (player->state==CTOS_RESPONSE || player->state==CTOS_TIME_CONFIRM) &&
+           IsCurrent(response.key,session,installedEpoch) && response.key.request==prompt &&
+           (response.origin==Origin::Manual || response.origin==Origin::Automatic)) {
+            // At most one in-flight human decision belongs to this original prompt.
+            // First arrival wins; duplicates/conflicts cannot overwrite its payload.
+            if(!deferredHuman)deferredHuman=DeferredHumanResponse{coordinator.ActiveKey(),response.key,
+                player->endpointId,static_cast<std::uint8_t>(seat),response.origin,response.response};
+            return;
+        }
+        accept(player,response.origin,response.response,response.key);
+    }
+    void resumeDeferredHuman(const TxKey& aborted) {
+        if(!deferredHuman)return;
+        auto response=std::move(*deferredHuman);deferredHuman.reset();
+        if(!SameKey(response.transaction,aborted) || !open() || response.participant>1)return;
+        auto* player=participants[response.participant];
+        if(!player || departing[response.participant] || player->game!=&owner ||
+           player->endpointId!=response.endpoint || player==botPlayer.get())return;
+        // Final Abort was delivered to every participant. Reuse normal token,
+        // current-player, state and clock checks; core validation still owns legality.
+        accept(player,response.origin,response.response,response.input);
     }
     void accept(DuelPlayer* player,Origin origin,const Bytes& response,const TxKey& key) {
         if(!open() || !IsCurrent(key,session,installedEpoch) || key.request!=prompt ||
@@ -667,7 +713,7 @@ void UndoDuel::ReceiveUndo(DuelPlayer* dp,const Envelope& e) {
         r.observeClock();r.coordinator.Tick(nowMs());if(r.resolveExpired())return;
         switch(e.kind) {
         case WireKind::Response: {
-            auto response=DecodeResponse(e);r.accept(dp,response.origin,response.response,response.key);break;
+            auto response=DecodeResponse(e);r.acceptHuman(dp,response);break;
         }
         case WireKind::Consent:
             require(e.payload.size()==1 && e.payload[0]<=1,"Invalid consent");
@@ -728,7 +774,7 @@ void UndoDuel::TimeConfirm(DuelPlayer* dp) {
 }
 void UndoDuel::TimerTick(){impl_->poll();}
 void UndoDuel::EndDuel() {
-    auto& r=*impl_;
+    auto& r=*impl_;r.deferredHuman.reset();
     if(r.advancing){r.terminalPending=true;return;}
     r.finished=true;r.clockPlayer=2;
     if(r.terminalAuthorized && !r.replaySent && !r.failed && !r.transaction &&
@@ -747,7 +793,7 @@ void UndoDuel::Surrender(DuelPlayer* dp) {
     r.sendGame(0,win);r.sendGame(1,win);r.terminalAuthorized=true;EndDuel();DuelEndProc();r.publish(true);
 }
 void UndoDuel::LeaveGame(DuelPlayer* dp) {
-    auto& r=*impl_;const auto seat=r.participant(dp);
+    auto& r=*impl_;r.deferredHuman.reset();const auto seat=r.participant(dp);
     if(seat>=0)r.departing[seat]=true;
     // This is terminal room teardown, never a unilateral undo rollback. In
     // particular an escaped Commit cannot resume the remaining peer.
@@ -767,7 +813,7 @@ void UndoDuel::LeaveGame(DuelPlayer* dp) {
     }
 }
 void UndoDuel::OnPlayerDisconnected(DuelPlayer* dp) {
-    auto& r=*impl_;
+    auto& r=*impl_;r.deferredHuman.reset();
     for(auto& participant:r.participants)if(participant==dp)participant=nullptr;
     SingleDuel::OnPlayerDisconnected(dp);
 }
