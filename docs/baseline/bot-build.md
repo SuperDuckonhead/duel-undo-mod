@@ -19,7 +19,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/Build-Bot.ps1 `
     -OutputDirectory out/baseline-bot
 ```
 
-`Build-Bot.ps1` resolves its default SDK and reference-assembly paths relative to the repository root. Overrides may be absolute or repository-relative. The output path must resolve below this repository's `out` directory. Paths are passed as an argument array to MSBuild, including paths containing spaces.
+`Build-Bot.ps1` resolves its default SDK and reference-assembly paths relative to the repository root. Overrides may be absolute or repository-relative. The output path must resolve below this repository's `out` directory. Paths are passed as an argument array to MSBuild, including paths containing spaces. Clean build directories may be reused. If the destination already contains top-level `Decks`, `Dialogs`, `bots.json`, `bot.conf`, or `cards.cdb`, the builder stops before MSBuild and leaves those caller-owned files unchanged; move them elsewhere or choose a clean output directory.
 
 The script invokes the imported solution as Release or Debug, Any CPU, targeting .NET Framework 4.8. `tools/Bot.Build.targets` removes copy items for runtime-owned files intentionally excluded from source import (`bots.json`, `Decks`, `Dialogs`, and `BotWrapper/bot.conf`). It does not alter WindBot source or behavior.
 

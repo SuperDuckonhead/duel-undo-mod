@@ -71,5 +71,22 @@ Test-Case 'release build handles spaces and writes both executables under out' {
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $absoluteOutput 'Dialogs'))) 'excluded runtime Dialogs were emitted'
 }
 
+Test-Case 'reused output containing runtime assets is rejected without deleting them' {
+    $relativeOutput = 'out/tests/bot build'
+    $absoluteOutput = Join-Path $repoRoot $relativeOutput
+    foreach ($directory in @('Decks', 'Dialogs')) {
+        [IO.Directory]::CreateDirectory((Join-Path $absoluteOutput $directory)) | Out-Null
+    }
+    foreach ($fileName in @('Decks/stale.ydk', 'Dialogs/stale.json', 'bots.json', 'bot.conf', 'cards.cdb')) {
+        [IO.File]::WriteAllText((Join-Path $absoluteOutput $fileName), 'runtime-owned')
+    }
+
+    $result = Invoke-ScriptProcess @('-Configuration', 'Release', '-OutputDirectory', $relativeOutput)
+    Assert-True ($result.ExitCode -ne 0) 'contaminated reused output was accepted'
+    Assert-True ($result.Output -match 'runtime-owned assets') "unexpected failure: $($result.Output)"
+    foreach ($fileName in @('Decks/stale.ydk', 'Dialogs/stale.json', 'bots.json', 'bot.conf', 'cards.cdb')) {
+        Assert-True (Test-Path -LiteralPath (Join-Path $absoluteOutput $fileName)) "builder deleted caller-owned file: $fileName"
+    }
+}
 Write-Host "Result: $script:passed passed, $script:failed failed"
 if ($script:failed -gt 0) { exit 1 }

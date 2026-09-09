@@ -44,6 +44,13 @@ foreach ($requiredPath in @($solution, $afterTargets)) {
     }
 }
 
+$runtimeOwnedNames = @('Decks', 'Dialogs', 'bots.json', 'bot.conf', 'cards.cdb')
+$contaminants = @($runtimeOwnedNames | Where-Object {
+    Test-Path -LiteralPath (Join-Path $outputPath $_)
+})
+if ($contaminants.Count -gt 0) {
+    throw "Output directory contains runtime-owned assets and was left unchanged: $($contaminants -join ', ')"
+}
 [IO.Directory]::CreateDirectory($outputPath) | Out-Null
 $arguments = @(
     'msbuild',
