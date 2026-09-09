@@ -33,7 +33,7 @@ public:
 	void OnPlayerDisconnected(DuelPlayer* dp) override;
 	
 	void DuelEndProc();
-	void WaitforResponse(int playerid);
+	virtual void WaitforResponse(int playerid);
 	void RefreshMzone(int player, int flag = 0x881fff, int use_cache = 1);
 	void RefreshSzone(int player, int flag = 0x681fff, int use_cache = 1);
 	void RefreshHand(int player, int flag = 0x681fff, int use_cache = 1);
@@ -43,9 +43,11 @@ public:
 
 	static uint32_t MessageHandler(intptr_t fduel, uint32_t type);
 private:
-	int WriteUpdateData(int player, int location, unsigned int flag, unsigned char*& qbuf, int use_cache);
+	undo::Bytes WriteUpdateData(int player, int location, unsigned int flag, int use_cache);
 	
 protected:
+    virtual undo::Bytes QueryFieldBytes(int player, int location, unsigned int flags, int use_cache);
+    virtual undo::Bytes QueryCardBytes(int player, int location, int sequence, unsigned int flags);
 	DuelPlayer* players[2]{};
 	DuelPlayer* pplayer[2]{};
 	bool ready[2]{};

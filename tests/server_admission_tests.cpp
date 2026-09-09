@@ -8,6 +8,7 @@
 #include <thread>
 #include <iostream>
 namespace ygo {
+bool ClientField::OnEvent(const irr::SEvent&) {throw std::runtime_error("Unexpected GUI event in admission test");}
 // The lobby must never invoke an engine/UI diagnostic sink.
 void Game::AddDebugMsg(const char*) { throw std::runtime_error("Unexpected GUI diagnostic in lobby test"); }
 void DeckBuilder::RefreshPackListScroll() { throw std::runtime_error("Unexpected editor pack refresh in lobby test"); }

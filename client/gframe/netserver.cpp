@@ -1,6 +1,7 @@
 #include "config.h"
 #include "netserver.h"
 #include "single_duel.h"
+#include "undo_duel.h"
 #include "tag_duel.h"
 #include "deck_manager.h"
 #include "mysocket.h"
@@ -29,6 +30,7 @@ namespace{
 	bool broadcast_enabled{};
 	unsigned char net_server_read[SIZE_NETWORK_BUFFER]{};
     std::unique_ptr<undo::RoomAdmission> room_admission;
+    std::shared_ptr<const undo::RoomConfig> room_config;
     std::atomic<bool> server_running{false};
     event* undo_poll{};
     uint64_t next_endpoint{};
@@ -89,7 +91,7 @@ bool NetServer::SendUndoToPlayer(DuelPlayer* dp,const undo::Envelope& envelope) 
 bool NetServer::IsRunning() { return server_running.load(); }
 const undo::RoomAdmission* NetServer::Admission() { return room_admission.get(); }
 
-bool NetServer::StartServer(unsigned short port, unsigned int ip, unsigned short* out_actual_port, bool enable_broadcast, const undo::Hello* undo_capability) {
+bool NetServer::StartServer(unsigned short port, unsigned int ip, unsigned short* out_actual_port, bool enable_broadcast, const undo::Hello* undo_capability, std::shared_ptr<const undo::RoomConfig> undo_config) {
 	if(net_evbase)
 		return false;
 	net_evbase = event_base_new();
@@ -123,6 +125,13 @@ bool NetServer::StartServer(unsigned short port, unsigned int ip, unsigned short
 	broadcast_enabled = enable_broadcast;
 	evconnlistener_set_error_cb(listener, ServerAcceptError);
 	    try {
+        if(undo_config) {
+            if(!undo_capability || !undo_config->resources ||
+               !undo::Compatibility(*undo_capability,undo_config->capability).empty() ||
+               undo_config->resources->Fingerprint()!=undo_capability->resources || undo_config->bot)
+                throw std::invalid_argument("Invalid or unsupported undo room configuration");
+            room_config=std::move(undo_config);
+        }
         if(undo_capability) {
             // getsockname establishes the real binding; a claimed mode cannot grant it.
             const bool loopback=ntohl(bound_addr.sin_addr.s_addr)==0x7f000001;
@@ -138,7 +147,7 @@ bool NetServer::StartServer(unsigned short port, unsigned int ip, unsigned short
     } catch(...) {
         server_running=false;
         if(undo_poll) event_free(undo_poll);
-        undo_poll=nullptr;room_admission.reset();
+        undo_poll=nullptr;room_admission.reset();room_config.reset();
         evconnlistener_free(listener);listener=nullptr;
         event_base_free(net_evbase);net_evbase=nullptr;
         return false;
@@ -299,7 +308,7 @@ void NetServer::ServerThread() {
 		delete duel_mode;
 	duel_mode = nullptr;
 	if(undo_poll) event_free(undo_poll);
-    undo_poll=nullptr;room_admission.reset();
+    undo_poll=nullptr;room_admission.reset();room_config.reset();
 	event_base_free(net_evbase);
 	net_evbase = nullptr;
     server_running=false;
@@ -452,7 +461,10 @@ void NetServer::HandleCTOSPacket(DuelPlayer* dp, unsigned char* data, size_t len
 			else
 				pkt->info.lflist = 0;
 		}
-		if (pkt->info.mode == MODE_SINGLE) {
+		if(room_config) {
+            duel_mode = new UndoDuel(pkt->info.mode == MODE_MATCH, room_config, room_admission->Session());
+        }
+        else if (pkt->info.mode == MODE_SINGLE) {
 			duel_mode = new SingleDuel(false);
 		}
 		else if (pkt->info.mode == MODE_MATCH) {

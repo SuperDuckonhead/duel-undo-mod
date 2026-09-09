@@ -8,10 +8,18 @@ bool SamePosition(const Checkpoint& a,const Checkpoint& b) {
 std::unique_ptr<CoreDriver> Rebuild(const InitialState& initial,
  std::shared_ptr<const ResourceView> resources,const std::vector<ResponseRecord>& records,
  std::size_t keep,const Checkpoint& target) {
+ return RebuildCancellable(initial,std::move(resources),records,keep,target,nullptr);
+}
+std::unique_ptr<CoreDriver> RebuildCancellable(const InitialState& initial,
+ std::shared_ptr<const ResourceView> resources,const std::vector<ResponseRecord>& records,
+ std::size_t keep,const Checkpoint& target,const std::atomic<bool>* cancel) {
+ auto checkCancelled=[&] { if(cancel && cancel->load())throw std::runtime_error("Candidate rebuild cancelled"); };
+ checkCancelled();
  if(keep>records.size())throw std::out_of_range("Rebuild prefix out of range");
  auto candidate=CoreDriver::Create(initial,std::move(resources));
  auto boundary=candidate->Advance();
  for(std::size_t i=0;i<keep;++i) {
+  checkCancelled();
   if(records[i].player!=records[i].before.player || records[i].player>1 ||
      static_cast<unsigned>(records[i].origin)>static_cast<unsigned>(Origin::Bot))
    throw std::runtime_error("Rebuild response metadata invalid at response "+std::to_string(i));
@@ -23,6 +31,7 @@ std::unique_ptr<CoreDriver> Rebuild(const InitialState& initial,
   if(boundary.rejectedResponse)
    throw std::runtime_error("Rebuild response rejected at response "+std::to_string(i));
  }
+ checkCancelled();
  if(boundary.kind!=BoundaryKind::AwaitResponse || !SamePosition(boundary.checkpoint,target))
   throw std::runtime_error("Rebuild target diverged after "+std::to_string(keep)+" responses: "+boundary.failure);
  return candidate;

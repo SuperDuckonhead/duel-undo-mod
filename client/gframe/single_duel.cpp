@@ -1,5 +1,6 @@
 #include <array>
 #include <utility>
+#include <stdexcept>
 #include "config.h"
 #include "single_duel.h"
 #include "netserver.h"
@@ -1491,19 +1492,33 @@ void SingleDuel::TimeConfirm(DuelPlayer* dp) {
 	if(time_elapsed < 10)
 		time_elapsed = 0;
 }
-int SingleDuel::WriteUpdateData(int player, int location, unsigned int flag, unsigned char*& qbuf, int use_cache) {
-	flag |= (QUERY_CODE | QUERY_POSITION);
-	BufferIO::Write<uint8_t>(qbuf, MSG_UPDATE_DATA);
-	BufferIO::Write<uint8_t>(qbuf, player);
-	BufferIO::Write<uint8_t>(qbuf, location);
-	int len = query_field_card(pduel, player, location, flag, qbuf, use_cache);
-	return len;
+undo::Bytes SingleDuel::QueryFieldBytes(int player, int location, unsigned int flags, int use_cache) {
+    undo::Bytes bytes(16 * 1024 * 1024);
+    auto length = query_field_card(pduel, player, location, flags, bytes.data(), use_cache);
+    if(length < 0 || static_cast<size_t>(length) > bytes.size())
+        throw std::runtime_error("Invalid host field query length");
+    bytes.resize(length);
+    return bytes;
+}
+undo::Bytes SingleDuel::QueryCardBytes(int player, int location, int sequence, unsigned int flags) {
+    undo::Bytes bytes(16 * 1024 * 1024);
+    auto length = query_card(pduel, player, location, sequence, flags, bytes.data(), 0);
+    if(length < 0 || static_cast<size_t>(length) > bytes.size())
+        throw std::runtime_error("Invalid host card query length");
+    bytes.resize(length);
+    return bytes;
+}
+undo::Bytes SingleDuel::WriteUpdateData(int player, int location, unsigned int flag, int use_cache) {
+    auto payload = QueryFieldBytes(player, location, flag | QUERY_CODE | QUERY_POSITION, use_cache);
+    if(payload.size() > MAX_DATA_SIZE - 3)
+        throw std::runtime_error("Host field query exceeds packet limit");
+    undo::Bytes bytes{MSG_UPDATE_DATA, static_cast<uint8_t>(player), static_cast<uint8_t>(location)};
+    bytes.insert(bytes.end(), payload.begin(), payload.end());
+    return bytes;
 }
 void SingleDuel::RefreshMzone(int player, int flag, int use_cache) {
-	std::array<unsigned char, SIZE_QUERY_BUFFER> query_buffer;
-	auto qbuf = query_buffer.data();
-	const int len = WriteUpdateData(player, LOCATION_MZONE, flag, qbuf, use_cache);
-	auto views = ::undo::FilterVisibleQuery(::undo::Bytes(query_buffer.data(), query_buffer.data() + len + 3));
+    auto query_buffer = WriteUpdateData(player, LOCATION_MZONE, flag, use_cache);
+	auto views = ::undo::FilterVisibleQuery(query_buffer);
 	NetServer::SendBufferToPlayer(players[player], STOC_GAME_MSG, views.owner.data(), views.owner.size());
 	NetServer::SendBufferToPlayer(players[1 - player], STOC_GAME_MSG, views.opponent.data(), views.opponent.size());
 	for(auto observer : observers)
@@ -1511,10 +1526,8 @@ void SingleDuel::RefreshMzone(int player, int flag, int use_cache) {
 }
 
 void SingleDuel::RefreshSzone(int player, int flag, int use_cache) {
-	std::array<unsigned char, SIZE_QUERY_BUFFER> query_buffer;
-	auto qbuf = query_buffer.data();
-	const int len = WriteUpdateData(player, LOCATION_SZONE, flag, qbuf, use_cache);
-	auto views = ::undo::FilterVisibleQuery(::undo::Bytes(query_buffer.data(), query_buffer.data() + len + 3));
+    auto query_buffer = WriteUpdateData(player, LOCATION_SZONE, flag, use_cache);
+	auto views = ::undo::FilterVisibleQuery(query_buffer);
 	NetServer::SendBufferToPlayer(players[player], STOC_GAME_MSG, views.owner.data(), views.owner.size());
 	NetServer::SendBufferToPlayer(players[1 - player], STOC_GAME_MSG, views.opponent.data(), views.opponent.size());
 	for(auto observer : observers)
@@ -1522,10 +1535,8 @@ void SingleDuel::RefreshSzone(int player, int flag, int use_cache) {
 }
 
 void SingleDuel::RefreshHand(int player, int flag, int use_cache) {
-	std::array<unsigned char, SIZE_QUERY_BUFFER> query_buffer;
-	auto qbuf = query_buffer.data();
-	const int len = WriteUpdateData(player, LOCATION_HAND, flag, qbuf, use_cache);
-	auto views = ::undo::FilterVisibleQuery(::undo::Bytes(query_buffer.data(), query_buffer.data() + len + 3));
+    auto query_buffer = WriteUpdateData(player, LOCATION_HAND, flag, use_cache);
+	auto views = ::undo::FilterVisibleQuery(query_buffer);
 	NetServer::SendBufferToPlayer(players[player], STOC_GAME_MSG, views.owner.data(), views.owner.size());
 	NetServer::SendBufferToPlayer(players[1 - player], STOC_GAME_MSG, views.opponent.data(), views.opponent.size());
 	for(auto observer : observers)
@@ -1533,29 +1544,27 @@ void SingleDuel::RefreshHand(int player, int flag, int use_cache) {
 }
 
 void SingleDuel::RefreshGrave(int player, int flag, int use_cache) {
-	std::array<unsigned char, SIZE_QUERY_BUFFER> query_buffer;
-	auto qbuf = query_buffer.data();
-	auto len = WriteUpdateData(player, LOCATION_GRAVE, flag, qbuf, use_cache);
-	NetServer::SendBufferToPlayer(players[0], STOC_GAME_MSG, query_buffer.data(), len + 3);
+    auto query_buffer = WriteUpdateData(player, LOCATION_GRAVE, flag, use_cache);
+	NetServer::SendBufferToPlayer(players[0], STOC_GAME_MSG, query_buffer.data(), query_buffer.size());
 	NetServer::ReSendToPlayer(players[1]);
 	for(auto pit = observers.begin(); pit != observers.end(); ++pit)
 		NetServer::ReSendToPlayer(*pit);
 }
 void SingleDuel::RefreshExtra(int player, int flag, int use_cache) {
-	std::array<unsigned char, SIZE_QUERY_BUFFER> query_buffer;
-	auto qbuf = query_buffer.data();
-	auto len = WriteUpdateData(player, LOCATION_EXTRA, flag, qbuf, use_cache);
-	NetServer::SendBufferToPlayer(players[player], STOC_GAME_MSG, query_buffer.data(), len + 3);
+    auto query_buffer = WriteUpdateData(player, LOCATION_EXTRA, flag, use_cache);
+	NetServer::SendBufferToPlayer(players[player], STOC_GAME_MSG, query_buffer.data(), query_buffer.size());
 }
 void SingleDuel::RefreshSingle(int player, int location, int sequence, int flag) {
 	flag |= (QUERY_CODE | QUERY_POSITION);
-	unsigned char query_buffer[0x1000];
-	auto qbuf = query_buffer;
-	BufferIO::Write<uint8_t>(qbuf, MSG_UPDATE_CARD);
-	BufferIO::Write<uint8_t>(qbuf, player);
-	BufferIO::Write<uint8_t>(qbuf, location);
-	BufferIO::Write<uint8_t>(qbuf, sequence);
-	int len = query_card(pduel, player, location, sequence, flag, qbuf, 0);
+    auto payload = QueryCardBytes(player, location, sequence, flag);
+    if(payload.size() > MAX_DATA_SIZE - 4)
+        throw std::runtime_error("Host card query exceeds packet limit");
+    undo::Bytes bytes{MSG_UPDATE_CARD, static_cast<uint8_t>(player),
+                      static_cast<uint8_t>(location), static_cast<uint8_t>(sequence)};
+    bytes.insert(bytes.end(), payload.begin(), payload.end());
+    auto query_buffer = bytes.data();
+    auto qbuf = query_buffer + 4;
+    int len = static_cast<int>(payload.size());
 	if (len <= LEN_HEADER) {
 		NetServer::SendBufferToPlayer(players[player], STOC_GAME_MSG, query_buffer, len + 4);
 		return;

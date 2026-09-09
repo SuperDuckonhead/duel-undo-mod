@@ -3,6 +3,7 @@
 
 #include "config.h"
 #include "network.h"
+#include "undo/room_config.h"
 
 namespace ygo {
 
@@ -19,7 +20,7 @@ private:
 	}
 
 public:
-	static bool StartServer(unsigned short port, unsigned int ip = 0, unsigned short* out_actual_port = nullptr, bool enable_broadcast = true, const undo::Hello* undo_capability = nullptr);
+	static bool StartServer(unsigned short port, unsigned int ip = 0, unsigned short* out_actual_port = nullptr, bool enable_broadcast = true, const undo::Hello* undo_capability = nullptr, std::shared_ptr<const undo::RoomConfig> undo_config = {});
     static bool IsRunning();
     static const undo::RoomAdmission* Admission(); // server thread only
     static bool SendUndoToPlayer(DuelPlayer*, const undo::Envelope&);

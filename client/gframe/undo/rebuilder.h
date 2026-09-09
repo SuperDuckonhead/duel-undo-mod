@@ -1,5 +1,6 @@
 #pragma once
 #include "core_driver.h"
+#include <atomic>
 namespace undo {
 // Host-only comparison. Clock and AI cursor are restored by the transaction owner.
 bool SamePosition(const Checkpoint&, const Checkpoint&);
@@ -8,4 +9,7 @@ bool SamePosition(const Checkpoint&, const Checkpoint&);
 std::unique_ptr<CoreDriver> Rebuild(const InitialState&,
     std::shared_ptr<const ResourceView>, const std::vector<ResponseRecord>&,
     std::size_t keep, const Checkpoint& target);
+std::unique_ptr<CoreDriver> RebuildCancellable(const InitialState&,
+    std::shared_ptr<const ResourceView>, const std::vector<ResponseRecord>&,
+    std::size_t keep, const Checkpoint& target, const std::atomic<bool>* cancel);
 }
