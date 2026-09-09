@@ -1,15 +1,12 @@
 # Undo network protocol and server admission
 
-Status: pure codec and pure host coordinator only. N1/N2 and acceptance 6.1 remain open.
-No Hello is exchanged by NetServer/DuelClient, no live packet is filtered, no GUI
-is restored and no core ownership is switched by these files.
+Status: codecs, coordinator and optional real NetServer admission are implemented. N1/N2 and acceptance 6.1 remain open. Client/menu and live duel transaction integration are still pending.
 
 ## Outer reservation
 
 On 2026-09-10 the entire fixed client/gframe/network.h was inspected, including
 all CTOS and STOC definitions. Neither direction assigns 0x7e (126).
-Reserve 0x7e for the future CTOS_UNDO/STOC_UNDO envelope in this fork.
-network.h is intentionally unchanged until adapters are implemented. Internal
+network.h assigns 0x7e to CTOS_UNDO/STOC_UNDO in this fork. Internal
 WireKind values do not reserve existing outer protocol IDs. The maximum encoded
 envelope is 49,231 bytes and fits the baseline MAX_DATA_SIZE (65,534).
 
@@ -51,8 +48,7 @@ u8 (1 consent LAN, 2 loopback free). Images/audio are intentionally absent.
 Missing Hello, unsupported version/mode, or differing engine/rules/logical
 resources fails compatibility with the mismatching item. Resource fingerprint
 construction remains the pinned-resource adapter's responsibility. A legacy
-peer cannot satisfy this capability check; the actual join/start rejection is
-not installed yet. Loopback binding and checking the accepted socket's peer
+peer cannot satisfy this capability check; optional NetServer admission rejects create/join without an offer and ready/start without a confirmed challenge. Loopback binding and checking the accepted socket's peer
 address are mandatory before selecting free mode; a room flag or a claimed
 nickname/address is insufficient.
 
