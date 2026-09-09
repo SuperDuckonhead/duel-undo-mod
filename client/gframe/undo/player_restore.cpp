@@ -842,19 +842,25 @@ class Projector {
         case MSG_CONFIRM_EXTRATOP:
         case MSG_CONFIRM_CARDS: {
             auto p = player(r);
+            if (msg == MSG_CONFIRM_CARDS)
+                need(r.u8() < 2, "confirm panel flag");
             auto n = r.u8();
             for (unsigned i = 0; i < n; ++i) {
                 auto code = r.u32();
                 auto cp = player(r);
                 auto l = r.u8();
                 auto seq = r.u8();
+                ygo::ClientCard *c;
                 if (msg == MSG_CONFIRM_CARDS)
-                    card(cp, l, seq)->code = code;
+                    c = card(cp, l, seq);
                 else {
                     auto &z = msg == MSG_CONFIRM_DECKTOP ? f.deck[p] : f.extra[p];
-                    need(i < z.size(), "confirm count");
-                    z[z.size() - 1 - i]->code = code;
+                    const auto faceup = msg == MSG_CONFIRM_EXTRATOP ? f.extra_p_count[p] : 0;
+                    need(faceup <= z.size() && i < z.size() - faceup, "confirm count");
+                    c = z[z.size() - 1 - faceup - i];
                 }
+                if (code)
+                    c->code = code;
             }
             break;
         }
@@ -956,6 +962,10 @@ class Projector {
                         if (l == LOCATION_DECK)
                             c->code = code;
                         mark(c);
+                        const auto left = s.duelRule >= 4 ? 0 : 6;
+                        if (l == LOCATION_SZONE && c->sequence == left && (c->type & TYPE_PENDULUM) &&
+                            !c->equipTarget)
+                            f.pzone_act[p] = true;
                     }
                     if (flag == COMMAND_ATTACK)
                         need(r.u8() < 2, "direct attack flag");
@@ -1017,8 +1027,16 @@ class Projector {
                 } else {
                     c->is_selectable = true;
                     c->cmdFlag |= (flag & EDESC_RESET) ? COMMAND_RESET : COMMAND_ACTIVATE;
-                    if (c->location == LOCATION_DECK)
+                    const auto p = c->controler;
+                    if (c->location == LOCATION_DECK) {
                         c->code = code;
+                        f.deck_act[p] = true;
+                    } else if (c->location == LOCATION_GRAVE)
+                        f.grave_act[p] = true;
+                    else if (c->location == LOCATION_REMOVED)
+                        f.remove_act[p] = true;
+                    else if (c->location == LOCATION_EXTRA)
+                        f.extra_act[p] = true;
                 }
             }
             break;
@@ -1174,9 +1192,9 @@ class Projector {
             r.u32();
             break;
         case MSG_SELECT_EFFECTYN: {
-            r.u32();
+            auto code = r.u32();
             auto c = ref(r);
-            (void)c;
+            c->code = code;
             r.u32();
             break;
         }
@@ -1228,12 +1246,14 @@ class Projector {
             need((r.u8() & 15) != 0, "empty position choice");
             break;
         case MSG_SELECT_PLACE:
-        case MSG_SELECT_DISFIELD:
-            f.select_min = r.u8();
+        case MSG_SELECT_DISFIELD: {
+            const auto count = r.u8();
+            f.select_min = count ? count : 1;
+            f.select_cancelable = count == 0;
+            // The core encodes each mask relative to the selecting player.
             f.selectable_field = ~r.u32();
-            if (recipient)
-                f.selectable_field = (f.selectable_field << 16) | (f.selectable_field >> 16);
             break;
+        }
         default:
             throw std::runtime_error("unsupported target prompt " + std::to_string(msg));
         }

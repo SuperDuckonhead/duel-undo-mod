@@ -1,4 +1,5 @@
 #include "card_data.h"
+#include "game.h"
 #include "client_card.h"
 #include "materials.h"
 #include "network.h"
@@ -155,7 +156,186 @@ static void actualPrivacy() {
     restore.Abort(key());
     end_duel(core);
 }
+static void reviewedMessageRegressions() {
+    unsigned failures = 0;
+    auto run = [&](const char* name, auto test) {
+        try { test(); std::cout << name << " passed\n"; }
+        catch(const std::exception& error) { ++failures; std::cerr << name << ": " << error.what() << '\n'; }
+    };
+    run("I1 confirm skip_panel", [] {
+        for(unsigned skip : {0U, 1U}) {
+            ygo::ClientField live;
+            PlayerViewState state;
+            ClientRestore restore(live, state, 0, key().session, 9);
+            const std::vector<Bytes> initial{start(), move(0, 0, LOCATION_DECK, 1, LOCATION_HAND, 0, POS_FACEDOWN_DEFENSE)};
+            Bytes confirm{MSG_CONFIRM_CARDS, 0, static_cast<uint8_t>(skip), 1};
+            u32(confirm, 0x61524312);
+            confirm.insert(confirm.end(), {0, LOCATION_HAND, 0});
+            auto frames = initial;
+            frames.push_back(confirm);
+            CHECK(restore.Prepare(key(), BuildPlayerRestore(0, frames, {MSG_WAITING}), {MSG_WAITING}));
+            CHECK(restore.PreparedField()->hand[0][0]->code == 0x61524312);
+            CHECK(live.hand[0].empty());
+            restore.Abort(key());
+            auto hidden = confirm;
+            std::fill(hidden.begin() + 4, hidden.begin() + 8, 0);
+            frames.push_back(hidden);
+            CHECK(restore.Prepare(key(), BuildPlayerRestore(0, frames, {MSG_WAITING}), {MSG_WAITING}));
+            CHECK(restore.PreparedField()->hand[0][0]->code == 0x61524312);
+            restore.Abort(key());
+            for(size_t n = 1; n < confirm.size(); ++n) {
+                frames = initial;
+                frames.emplace_back(confirm.begin(), confirm.begin() + n);
+                CHECK(!restore.Prepare(key(), BuildPlayerRestore(0, frames, {MSG_WAITING}), {MSG_WAITING}));
+                CHECK(live.hand[0].empty());
+            }
+        }
+    });
+    run("I2 recipient-relative place mask", [] {
+        for(unsigned recipient : {0U, 1U})
+            for(unsigned message : {MSG_SELECT_PLACE, MSG_SELECT_DISFIELD})
+                for(uint32_t allowed : {1U, 0x10000U})
+                    for(unsigned count : {1U}) {
+                        ygo::ClientField live;
+                        PlayerViewState state;
+                        ClientRestore restore(live, state, recipient, key().session, 9);
+                        Bytes target{static_cast<uint8_t>(message), static_cast<uint8_t>(recipient), static_cast<uint8_t>(count)};
+                        u32(target, ~allowed);
+                        CHECK(restore.Prepare(key(), BuildPlayerRestore(recipient, {start(recipient)}, target), target));
+                        CHECK(restore.PreparedField()->selectable_field == allowed);
+                        CHECK(restore.PreparedField()->select_min == 1);
+                        CHECK(restore.PreparedField()->select_cancelable == (count == 0));
+                    }
+    });
+    run("I2 count-zero cancellation", [] {
+        for(unsigned recipient : {0U, 1U})
+            for(unsigned message : {MSG_SELECT_PLACE, MSG_SELECT_DISFIELD})
+                for(uint32_t allowed : {1U, 0x10000U})
+                    for(unsigned count : {0U}) {
+                        ygo::ClientField live;
+                        PlayerViewState state;
+                        ClientRestore restore(live, state, recipient, key().session, 9);
+                        Bytes target{static_cast<uint8_t>(message), static_cast<uint8_t>(recipient), static_cast<uint8_t>(count)};
+                        u32(target, ~allowed);
+                        CHECK(restore.Prepare(key(), BuildPlayerRestore(recipient, {start(recipient)}, target), target));
+                        CHECK(restore.PreparedField()->selectable_field == allowed);
+                        CHECK(restore.PreparedField()->select_min == 1);
+                        CHECK(restore.PreparedField()->select_cancelable == (count == 0));
+                    }
+    });
+    run("I3 extra face-down top offset", [] {
+        ygo::ClientField live;
+        PlayerViewState state;
+        ClientRestore restore(live, state, 0, key().session, 9);
+        auto initial = std::vector<Bytes>{start(), move(0, 0, LOCATION_DECK, 1, LOCATION_EXTRA, 1, POS_FACEDOWN_DEFENSE),
+                                        move(0x72536415, 0, LOCATION_DECK, 0, LOCATION_EXTRA, 2, POS_FACEUP_ATTACK)};
+        Bytes type{MSG_UPDATE_CARD, 0, LOCATION_EXTRA, 2};
+        u32(type, 12); u32(type, QUERY_TYPE); u32(type, TYPE_MONSTER | TYPE_PENDULUM);
+        initial.push_back(type);
+        Bytes confirm{MSG_CONFIRM_EXTRATOP, 0, 1};
+        u32(confirm, 0x61524312);
+        confirm.insert(confirm.end(), {0, LOCATION_EXTRA, 1});
+        auto frames = initial;
+        frames.push_back(confirm);
+        CHECK(restore.Prepare(key(), BuildPlayerRestore(0, frames, {MSG_WAITING}), {MSG_WAITING}));
+        CHECK(restore.PreparedField()->extra_p_count[0] == 1);
+        CHECK(restore.PreparedField()->extra[0][2]->type & TYPE_PENDULUM);
+        CHECK(restore.PreparedField()->extra[0][2]->position == POS_FACEUP_ATTACK);
+        CHECK(restore.PreparedField()->extra[0][1]->code == 0x61524312);
+        CHECK(restore.PreparedField()->extra[0][2]->code == 0x72536415);
+        restore.Abort(key());
+        auto hidden = confirm;
+        std::fill(hidden.begin() + 3, hidden.begin() + 7, 0);
+        frames.push_back(hidden);
+        CHECK(restore.Prepare(key(), BuildPlayerRestore(0, frames, {MSG_WAITING}), {MSG_WAITING}));
+        CHECK(restore.PreparedField()->extra[0][1]->code == 0x61524312);
+        CHECK(restore.PreparedField()->extra[0][2]->code == 0x72536415);
+        restore.Abort(key());
+        Bytes excess{MSG_CONFIRM_EXTRATOP, 0, 3};
+        for(unsigned i = 0; i < 3; ++i) {
+            u32(excess, 1);
+            excess.insert(excess.end(), {0, LOCATION_EXTRA, static_cast<uint8_t>(i)});
+        }
+        frames = initial;
+        frames.push_back(excess);
+        CHECK(!restore.Prepare(key(), BuildPlayerRestore(0, frames, {MSG_WAITING}), {MSG_WAITING}));
+        for(size_t n = 1; n < confirm.size(); ++n) {
+            frames = initial;
+            frames.emplace_back(confirm.begin(), confirm.begin() + n);
+            CHECK(!restore.Prepare(key(), BuildPlayerRestore(0, frames, {MSG_WAITING}), {MSG_WAITING}));
+        }
+    });
+    run("I4 effect prompt disclosure", [] {
+        for(unsigned recipient : {0U, 1U})
+            for(unsigned location : {LOCATION_DECK, LOCATION_MZONE}) {
+                ygo::ClientField live;
+                PlayerViewState state;
+                ClientRestore restore(live, state, recipient, key().session, 9);
+                auto frames = std::vector<Bytes>{start(recipient)};
+                if(location == LOCATION_MZONE)
+                    frames.push_back(move(0, recipient, LOCATION_DECK, 1, LOCATION_MZONE, 0, POS_FACEDOWN_DEFENSE));
+                Bytes effect{MSG_SELECT_EFFECTYN, static_cast<uint8_t>(recipient)};
+                u32(effect, 0x61524312);
+                effect.insert(effect.end(), {static_cast<uint8_t>(recipient), static_cast<uint8_t>(location), 0, 0});
+                u32(effect, 123);
+                CHECK(restore.Prepare(key(), BuildPlayerRestore(recipient, frames, effect), effect));
+                CHECK((location == LOCATION_DECK ? restore.PreparedField()->deck[0][0] : restore.PreparedField()->mzone[0][0])->code == 0x61524312);
+                CHECK(restore.PreparedField()->highlighting_card == nullptr);
+                restore.Abort(key());
+                frames.push_back(effect);
+                CHECK(restore.Prepare(key(), BuildPlayerRestore(recipient, frames, {MSG_WAITING}), {MSG_WAITING}));
+                CHECK((location == LOCATION_DECK ? restore.PreparedField()->deck[0][0] : restore.PreparedField()->mzone[0][0])->code == 0x61524312);
+                CHECK(restore.PreparedField()->highlighting_card == nullptr);
+            }
+    });
+    run("M1 chain zone activation", [] {
+        for(unsigned recipient : {0U, 1U})
+            for(unsigned location : {LOCATION_DECK, LOCATION_GRAVE, LOCATION_REMOVED, LOCATION_EXTRA}) {
+                ygo::ClientField live;
+                PlayerViewState state;
+                ClientRestore restore(live, state, recipient, key().session, 9);
+                auto frames = std::vector<Bytes>{start(recipient)};
+                if(location == LOCATION_GRAVE || location == LOCATION_REMOVED)
+                    frames.push_back(move(0x61524312, recipient, LOCATION_DECK, 1, location, 0, POS_FACEUP_ATTACK));
+                Bytes chain{MSG_SELECT_CHAIN, static_cast<uint8_t>(recipient), 1, 1};
+                u32(chain, 0); u32(chain, 0);
+                chain.insert(chain.end(), {0, 0});
+                u32(chain, 0x61524312);
+                chain.insert(chain.end(), {static_cast<uint8_t>(recipient), static_cast<uint8_t>(location), 0, 0});
+                u32(chain, 123);
+                CHECK(restore.Prepare(key(), BuildPlayerRestore(recipient, frames, chain), chain));
+                auto field = restore.PreparedField();
+                CHECK(field->deck_act[0] == (location == LOCATION_DECK));
+                CHECK(field->grave_act[0] == (location == LOCATION_GRAVE));
+                CHECK(field->remove_act[0] == (location == LOCATION_REMOVED));
+                CHECK(field->extra_act[0] == (location == LOCATION_EXTRA));
+                CHECK(field->activatable_cards.at(0)->cmdFlag & COMMAND_ACTIVATE);
+            }
+    });
+    run("M1 pendulum idle activation", [] {
+        for(unsigned rule : {3U, 4U, 5U}) {
+            ygo::ClientField live;
+            PlayerViewState state;
+            ClientRestore restore(live, state, 0, key().session, 9);
+            const auto left = static_cast<uint8_t>(rule >= 4 ? 0 : 6);
+            auto begin = start(); begin[2] = rule;
+            auto frames = std::vector<Bytes>{begin, move(0x61524312, 0, LOCATION_DECK, 1, LOCATION_SZONE, left, POS_FACEUP_ATTACK)};
+            Bytes query{MSG_UPDATE_CARD, 0, LOCATION_SZONE, left};
+            u32(query, 12); u32(query, QUERY_TYPE); u32(query, TYPE_MONSTER | TYPE_PENDULUM);
+            frames.push_back(query);
+            Bytes idle{MSG_SELECT_IDLECMD, 0, 0, 1};
+            u32(idle, 0x61524312);
+            idle.insert(idle.end(), {0, LOCATION_SZONE, left, 0, 0, 0, 0, 1, 1, 0});
+            CHECK(restore.Prepare(key(), BuildPlayerRestore(0, frames, idle), idle));
+            CHECK(restore.PreparedField()->pzone_act[0]);
+            CHECK(restore.PreparedField()->szone[0][left]->cmdFlag & COMMAND_SPSUMMON);
+        }
+    });
+    CHECK(failures == 0);
+}
+
 int main() {
+    reviewedMessageRegressions();
     actualPrivacy();
     Bytes cached{MSG_UPDATE_DATA, 0, LOCATION_HAND, 8, 0, 0, 0, 0, 0, 0, 0};
     CHECK(FilterVisibleQuery(cached).owner == cached);
