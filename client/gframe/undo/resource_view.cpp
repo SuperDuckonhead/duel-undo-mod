@@ -103,7 +103,7 @@ std::shared_ptr<const ResourceView> ResourceView::Capture(const std::string& roo
  for(const char* folder:{"script","expansions/script","single"}) {
   auto path=base/folder; if(!fs::exists(path))continue;
   for(auto& entry:fs::recursive_directory_iterator(path)) if(entry.is_regular_file()) {
-   auto n=logical(fs::relative(entry.path(),base).generic_u8string());
+   auto n=logical(entry.path().lexically_relative(base).generic_u8string());
    if(n.rfind("expansions/script/",0)==0)n.erase(0,11);
    // Include every file, not just .lua: scripts can load arbitrary logical names.
    names.insert(n);

@@ -120,10 +120,12 @@ bool Replay::SaveReplay(const wchar_t* base_name) {
 	FILE* rfp = mywfopen(path, "wb");
 	if(!rfp)
 		return false;
-	std::fwrite(&pheader, sizeof pheader, 1, rfp);
-	std::fwrite(comp_data, comp_size, 1, rfp);
-	std::fclose(rfp);
-	return true;
+	const bool headerWritten=std::fwrite(&pheader,sizeof pheader,1,rfp)==1;
+    const auto* savedBytes=(pheader.base.flag&REPLAY_UNDO_CORE)?replay_data:comp_data;
+    const auto savedSize=(pheader.base.flag&REPLAY_UNDO_CORE)?replay_size:comp_size;
+    const bool wrote=std::fwrite(savedBytes,1,savedSize,rfp)==savedSize;
+    const bool closed=std::fclose(rfp)==0;
+    return headerWritten&&wrote&&closed;
 }
 bool Replay::OpenReplay(const wchar_t* name) {
 	FILE* rfp = mywfopen(name, "rb");
@@ -179,7 +181,9 @@ bool Replay::OpenReplay(const wchar_t* name) {
 		}
 	} else {
 		replay_size = std::fread(replay_data, 1, MAX_REPLAY_SIZE, rfp);
+        const bool extraBytes=std::fgetc(rfp)!=EOF;
 		std::fclose(rfp);
+        if((pheader.base.flag&REPLAY_UNDO_CORE) && (extraBytes || replay_size!=pheader.base.datasize)) return false;
 		comp_size = 0;
 	}
 	is_replaying = true;
@@ -214,6 +218,11 @@ bool Replay::RenameReplay(const wchar_t* oldname, const wchar_t* newname) {
 	return FileSystem::Rename(old_path, new_path);
 }
 bool Replay::ReadNextResponse(unsigned char resp[]) {
+    if(pheader.base.flag&REPLAY_UNDO_CORE) {
+        if(undo_response_index_>=undo_responses_.size())return false;
+        const auto& data=undo_responses_[undo_response_index_++].response;
+        std::memset(resp,0,256);std::copy(data.begin(),data.end(),resp);return true;
+    }
 	uint8_t len{};
 	if (!ReadData(&len, sizeof len))
 		return false;
@@ -248,10 +257,12 @@ int32_t Replay::ReadInt32() {
 	return Read<int32_t>();
 }
 void Replay::Rewind() {
+    undo_response_index_=0;
 	data_position = 0;
 	can_read = true;
 }
 void Replay::Reset() {
+    undo_initial_={};undo_responses_.clear();undo_response_index_=0;
 	is_recording = false;
 	is_replaying = false;
 	can_read = false;
@@ -289,6 +300,7 @@ bool Replay::ReadInfo() {
 	}
 	if (!ReadData(&params, sizeof params))
 		return false;
+    if(pheader.base.flag&REPLAY_UNDO_CORE)return ReadUndoInfo();
 	bool is_tag1 = pheader.base.flag & REPLAY_TAG;
 	bool is_tag2 = params.duel_flag & DUEL_TAG_MODE;
 	if (is_tag1 != is_tag2)

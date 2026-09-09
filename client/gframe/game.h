@@ -1,4 +1,4 @@
-﻿#ifndef GAME_H
+#ifndef GAME_H
 #define GAME_H
 
 #include "config.h"
@@ -7,6 +7,7 @@
 #include "deck_con.h"
 #include "menu_handler.h"
 #include "undo/config_store.h"
+#include "undo/single_undo.h"
 #include <memory>
 #include <ctime>
 #include <unordered_map>
@@ -160,6 +161,7 @@ struct BotInfo {
 };
 
 struct FadingUnit {
+ undo::InputSubmission response;
 	bool signalAction{};
 	bool isFadein{};
 	int fadingFrame{};
@@ -199,6 +201,7 @@ public:
 	void DrawCard(ClientCard* pcard);
 	void DrawMisc();
 	void DrawStatus(ClientCard* pcard, int x1, int y1, int x2, int y2);
+	void UpdateDuelUndoStatus();
 	void DrawGUI(); // called from MainLoop with gMutex held
 	void DrawSpec();
 	void DrawBackImage(irr::video::ITexture* texture);
@@ -604,6 +607,8 @@ public:
 	irr::gui::IGUIComboBox* cbDBDecks{};
 	irr::gui::IGUIButton* btnManageDeck{};
 	irr::gui::IGUIButton* btnUndoDeck{};
+ irr::gui::IGUIButton* btnUndoDuel{};
+ irr::gui::IGUIStaticText* stUndoDuel{};
 	irr::gui::IGUIButton* btnClearDeck{};
 	irr::gui::IGUIButton* btnSortDeck{};
 	irr::gui::IGUIButton* btnShuffleDeck{};
@@ -876,6 +881,8 @@ extern Game* mainGame;
 #define COMBOBOX_SORTTYPE			324
 #define EDITBOX_INPUTS				325
 #define BUTTON_UNDO_DECK              326
+#define BUTTON_DUEL_UNDO              327
+#define TEXT_DUEL_UNDO_STATUS         328
 #define WINDOW_DECK_MANAGE			330
 #define BUTTON_NEW_CATEGORY			331
 #define BUTTON_RENAME_CATEGORY		332

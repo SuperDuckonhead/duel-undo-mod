@@ -1,5 +1,6 @@
 #ifndef DUELCLIENT_H
 #define DUELCLIENT_H
+#include "undo/single_undo.h"
 
 #include <vector>
 #include "bufferio.h"
@@ -17,6 +18,7 @@ namespace ygo {
 #define CLIENT_CLOSE_REASON_STOP	1
 #define CLIENT_CLOSE_REASON_EXIT	2
 
+struct DuelPromptContext {int selectHint{},unselectHint{},lastHint{};std::array<wchar_t,256> event{};};
 class DuelClient {
 private:
 	static bufferevent* client_bev;
@@ -37,6 +39,11 @@ public:
 	static void SetResponseI(int32_t respI);
 	static void SetResponseB(void* respB, size_t len);
 	static void SendResponse();
+ static void SendResponse(const undo::InputSubmission&);
+ static undo::InputSubmission CaptureResponse();
+ static void ClearPendingResponse();
+ static DuelPromptContext CapturePromptContext();
+ static void RestorePromptContext(const DuelPromptContext&) noexcept;
 	static void SendUpdateDeck(const Deck& deck);
 	static void SendPacketToServer(unsigned char proto) {
 		auto p = duel_client_write;

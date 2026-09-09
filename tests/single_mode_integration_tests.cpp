@@ -1,0 +1,255 @@
+#include "client_card.h"
+#include "duelclient.h"
+#include "game.h"
+#include "replay_mode.h"
+#include "single_mode.h"
+#include "test_support.h"
+#include <algorithm>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <thread>
+using namespace ygo;
+static Game game;
+static void pump() {
+  game.device->run();
+  {
+    std::lock_guard<std::mutex> lock(game.gMutex);
+    game.DrawGUI();
+  }
+  if (game.closeSignal.TryWait())
+    game.CloseDuelWindow();
+  std::this_thread::sleep_for(std::chrono::milliseconds(2));
+}
+template <class F> static void until(F test) {
+  for (int i = 0; i < 15000; ++i) {
+    pump();
+    if (test())
+      return;
+  }
+  auto s = SingleMode::ActiveSession();
+  std::cerr << "timeout msg=" << unsigned(game.dInfo.curMsg)
+            << " session=" << bool(s) << " paused=" << SingleMode::InputPaused()
+            << " error=" << SingleMode::LastUndoError() << "\n";
+  if (s)
+    std::cerr << "history=" << s->History().size()
+              << " seq=" << s->Token().prompt << " epoch=" << s->Token().epoch
+              << " kind=" << int(s->Current().kind)
+              << " failure=" << s->Current().failure << "\n";
+  throw std::runtime_error("Game integration timeout");
+}
+static void button(irr::gui::IGUIButton *control) {
+  irr::SEvent e{};
+  e.EventType = irr::EET_GUI_EVENT;
+  e.GUIEvent.Caller = control;
+  e.GUIEvent.EventType = irr::gui::EGET_BUTTON_CLICKED;
+  game.dField.OnEvent(e);
+}
+static uint32_t u32(const undo::Bytes &b, size_t at) {
+  return uint32_t(b.at(at)) | uint32_t(b.at(at + 1)) << 8 |
+         uint32_t(b.at(at + 2)) << 16 | uint32_t(b.at(at + 3)) << 24;
+}
+static int activation(const undo::Bytes &p, uint32_t code) {
+  CHECK(p.at(0) == MSG_SELECT_IDLECMD);
+  size_t at = 2;
+  for (int i = 0; i < 5; ++i) {
+    auto n = p.at(at++);
+    at += 7 * n;
+  }
+  auto n = p.at(at++);
+  for (int i = 0; i < n; ++i, at += 11)
+    if (u32(p, at) == code)
+      return (i << 16) | 5;
+  throw std::runtime_error("Card activation absent");
+}
+static void submit(int value) {
+  DuelClient::SetResponseI(value);
+  DuelClient::SendResponse();
+}
+static bool idle(const std::shared_ptr<undo::SingleUndo> &s,
+                 uint64_t after = 0) {
+  return s->Token().prompt > after && !s->HasPendingResponse() &&
+         game.dInfo.curMsg == MSG_SELECT_IDLECMD &&
+         !SingleMode::InputPaused() && game.btnEP->isVisible();
+}
+int main() {
+  try {
+    auto started=std::chrono::steady_clock::now();std::ofstream evidence("c4-evidence.txt");
+    mainGame = &game;
+    CHECK(game.Initialize(std::filesystem::current_path()));
+    game.frameSignal.SetNoWait(true);
+    game.actionSignal.SetNoWait(true);
+    game.chkSTAutoPos->setChecked(true);
+    game.chkAutoSaveReplay->setChecked(false);
+    for (unsigned policy = 0; policy < 4; ++policy) {
+      game.chkNoCheckDeck->setChecked(policy & 1);
+      game.chkNoShuffleDeck->setChecked(policy & 2);
+      game.wMainMenu->setVisible(false);
+      game.open_file = true;
+      BufferIO::CopyWideString(L"c4-single.lua", game.open_file_name);
+      std::thread worker(SingleMode::SinglePlayThread);
+      try {
+        until([] { return bool(SingleMode::ActiveSession()); });
+        auto s = SingleMode::ActiveSession();
+        until([&] { return idle(s); });
+        std::cerr << "initial idle\n";
+        CHECK(!SingleMode::CanUndo(0));
+        CHECK(game.dField.hand[0].size() == 2);
+        auto initial = s->Current().checkpoint;
+        auto first = s->Token();
+        const auto& init=s->Live().Initial();
+        evidence<<"policy="<<policy<<" scenario="<<init.scenarioName<<" seed=";
+        for(auto word:init.seed)evidence<<word<<',';
+        evidence<<" resources=";for(auto byte:init.resourceDigest)evidence<<std::hex<<std::setw(2)<<std::setfill('0')<<unsigned(byte);evidence<<std::dec;
+        evidence<<" scripts="<<s->Live().Resources()->ScriptCount()<<" cards="<<s->Live().Resources()->Cards().size()<<" target=";
+        for(auto byte:initial.transcriptDigest)evidence<<std::hex<<std::setw(2)<<unsigned(byte);evidence<<std::dec<<'\n';
+        CHECK(!s->Live().Initial().noCheckDeck);
+        CHECK(!s->Live().Initial().noShuffleDeck);
+        undo::Bytes maximum(256, 0x5a);
+        DuelClient::SetResponseB(maximum.data(), maximum.size());
+        CHECK(DuelClient::CaptureResponse().response == maximum);
+        maximum.push_back(1);
+        DuelClient::SetResponseB(maximum.data(), maximum.size());
+        CHECK(DuelClient::CaptureResponse().response.empty());
+        DuelClient::SendResponse();
+        CHECK(!s->HasPendingResponse());
+        submit(99);
+        until([&] { return idle(s); });
+        CHECK(s->History().empty());
+        std::cerr << "retry done\n";
+        int a = activation(initial.prompt, 70368879);
+        submit(a);
+        until([&] { return idle(s, first.prompt); });
+        std::cerr << "A resolved\n";
+        CHECK(s->History().size() >= 1);
+        CHECK(s->History().front().origin == undo::Origin::Manual);
+        for (size_t i = 1; i < s->History().size(); ++i)
+          CHECK(s->History()[i].origin == undo::Origin::Automatic);
+        CHECK(game.dInfo.lp[1] == 9000);
+        CHECK(game.dField.grave[0].size() == 1);
+        auto beforeFailure = s->Current();
+        auto beforeClock = s->Clock();
+        auto beforeCount = s->History().size();
+        auto originalPrepare =
+            s->SetPrepare([](const undo::CoreDriver &, const undo::Checkpoint &,
+                             uint64_t) -> std::unique_ptr<undo::PreparedUndo> {
+              throw std::runtime_error("Game injected prepare failure");
+            });
+        button(game.btnUndoDuel);
+        until([&] { return s->State() == undo::LocalUndoState::Failed; });
+        CHECK(undo::SamePosition(s->Current().checkpoint,
+                                 beforeFailure.checkpoint));
+        CHECK(s->History().size() == beforeCount);
+        CHECK(s->Clock().remainingMs == beforeClock.remainingMs);
+        CHECK(game.dInfo.lp[1] == 9000);
+        CHECK(game.dField.grave[0].size() == 1);
+        CHECK(game.btnEP->isVisible());
+        s->SetPrepare(std::move(originalPrepare));
+        DuelClient::SetResponseI(activation(s->Current().checkpoint.prompt,37812118));
+        game.HideElement(game.wQuery,true);
+        auto stale = game.fadingList.back().response;
+        CHECK(stale.origin==undo::Origin::Manual);CHECK(stale.token==s->Token());
+        auto epoch = s->Token().epoch;
+        button(game.btnUndoDuel);
+        until([&] { return s->Token().epoch == epoch + 1 && idle(s); });
+        std::cerr << "restore done\n";
+        CHECK(s->History().empty());
+        CHECK(std::none_of(game.fadingList.begin(),game.fadingList.end(),[](const FadingUnit& f){return f.signalAction;}));
+        CHECK(undo::SamePosition(s->Current().checkpoint, initial));
+        CHECK(game.dInfo.lp[1] == 8000);
+        CHECK(game.dField.hand[0].size() == 2);
+        CHECK(game.dField.grave[0].empty());
+        DuelClient::SendResponse(stale);
+        CHECK(!s->HasPendingResponse());
+        CHECK(game.btnEP->isVisible());
+        // Repeat A and undo once more before selecting the different real-card
+        // branch.
+        auto seq = s->Token().prompt;
+        submit(activation(s->Current().checkpoint.prompt, 70368879));
+        until([&] { return idle(s, seq); });
+        epoch = s->Token().epoch;
+        button(game.btnUndoDuel);
+        until([&] { return s->Token().epoch == epoch + 1 && idle(s); });
+        CHECK(s->History().empty());
+        submit(activation(s->Current().checkpoint.prompt, 37812118));
+        until([&] { return game.wReplaySave->isVisible(); });
+        CHECK(game.dInfo.isFinished);
+        CHECK(!s->CanUndo(0));
+        CHECK(!s->History().empty());
+        CHECK(u32(s->History().front().response, 0) ==
+              uint32_t(activation(initial.prompt, 37812118)));
+        evidence<<"retained=";for(const auto& rec:s->History()){evidence<<"["<<int(rec.origin)<<":";for(auto b:rec.response)evidence<<std::hex<<std::setw(2)<<unsigned(b);evidence<<std::dec<<"]";}evidence<<'\n';evidence.flush();
+        game.ebRSName->setText(L"c4-single-current-branch");
+        game.actionParam = 1;
+        game.replaySignal.Set();
+        until([] { return !SingleMode::ActiveSession(); });
+        until([] { return !game.dInfo.isSingleMode; });
+        worker.join();
+        CHECK(std::filesystem::exists("replay/c4-single-current-branch.yrp"));
+        game.wSinglePlay->setVisible(false);
+        game.wReplay->setVisible(false);
+        game.dField.Clear();
+        CHECK(
+            ReplayMode::cur_replay.OpenReplay(L"c4-single-current-branch.yrp"));
+        CHECK(ReplayMode::StartReplay(0));
+        until([] { return game.wReplay->isVisible(); });
+        CHECK(game.dInfo.isFinished);
+        CHECK(!game.dInfo.isReplay);
+        CHECK(game.dInfo.curMsg == MSG_WIN);
+        CHECK(game.dInfo.lp[1] == 8000);
+        CHECK(game.dField.grave[0].size() == 1);
+        CHECK(game.dField.grave[0][0]->code == 37812118);
+        CHECK(std::any_of(game.dField.hand[0].begin(),
+                          game.dField.hand[0].end(),
+                          [](ClientCard *c) { return c->code == 70368879; }));
+        std::cout << "actual Game SingleMode + ReplayMode: retry, "
+                     "manual/automatic input, A undo A undo B end save, epoch "
+                     "rejection, LP/card restoration passed\n";
+      } catch (...) {
+        SingleMode::StopPlay(true);
+        game.actionParam = 0;
+        game.replaySignal.Set();
+        game.closeDoneSignal.Set();
+        if (worker.joinable())
+          worker.join();
+        throw;
+      }
+      std::cout << "host options=" << policy
+                << " remain isolated from SingleMode scenario; actual replay "
+                   "passed\n";
+    }
+    // Replay back-step recreates the initial visible board immediately, even
+    // before its queued Debug reload message is processed again.
+    CHECK(ReplayMode::cur_replay.OpenReplay(L"c4-single-current-branch.yrp"));
+    game.dInfo.isReplay = true;
+    game.dInfo.isSingleMode = true;
+    game.dInfo.isFirst = true;
+    ReplayMode::Restart(true);
+    const auto restartedHandCount=game.dField.hand[0].size();
+    const bool restartedGraveEmpty=game.dField.grave[0].empty();
+    const auto restartedLP=game.dInfo.lp[1];
+    const bool restartedIdentity=std::any_of(game.dField.hand[0].begin(),game.dField.hand[0].end(),[](ClientCard* c){return c->code==70368879;});
+    game.dField.ReplaySwap();
+    ReplayMode::Restart(true);
+    const auto swappedRestartHandCount=game.dField.hand[1].size();
+    const bool swappedRestartIdentity=std::any_of(game.dField.hand[1].begin(),game.dField.hand[1].end(),[](ClientCard* c){return c->code==70368879;});
+    ReplayMode::StopReplay(true);
+    ReplayMode::EndDuel();
+    CHECK(restartedHandCount == 2);
+    CHECK(restartedGraveEmpty);
+    CHECK(restartedLP == 8000);
+    CHECK(restartedIdentity);
+    CHECK(swappedRestartHandCount == 2);
+    CHECK(swappedRestartIdentity);
+    std::cout<<"Replay Restart restores initial model before processing queued frames\n";
+    std::cout<<"Game integration elapsed_ms="<<std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-started).count()<<"\n";
+    game.device->closeDevice();
+    game.device->drop();
+    return 0;
+  } catch (const std::exception &e) {
+    std::cerr << e.what() << '\n';
+    return 1;
+  }
+}

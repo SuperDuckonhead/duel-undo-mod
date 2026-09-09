@@ -5,6 +5,7 @@
 #include <vector>
 #include <string>
 #include "deck.h"
+#include "undo/core_driver.h"
 #include "../ocgcore/common.h"
 
 namespace ygo {
@@ -15,6 +16,8 @@ namespace ygo {
 #define REPLAY_DECODED		0x4
 #define REPLAY_SINGLE_MODE	0x8
 #define REPLAY_UNIFORM		0x10
+
+#define REPLAY_UNDO_CORE 0x20
 
 #define REPLAY_ID_YRP1	0x31707279
 #define REPLAY_ID_YRP2	0x32707279
@@ -56,6 +59,10 @@ public:
 
 	// record
 	void BeginRecord();
+    void RecordUndoSingle(const undo::InitialState&, const std::vector<undo::ResponseRecord>&, const wchar_t* hostName, const wchar_t* clientName);
+    const undo::InitialState& UndoInitial() const;
+    std::unique_ptr<undo::CoreDriver> CreateUndoDriver(std::shared_ptr<const undo::ResourceView>) const;
+    bool ReadUndoResponse(const undo::Checkpoint&, undo::Bytes&);
 	void WriteHeader(ExtendedReplayHeader& header);
 	void WriteData(const void* data, size_t length, bool flush = true);
 	template<typename T>
@@ -113,6 +120,11 @@ public:
 
 private:
 	bool ReadInfo();
+    bool ReadUndoInfo();
+    struct UndoResponse { std::uint8_t player{}; undo::Origin origin{}; undo::Bytes response; undo::Digest promptDigest{}, transcriptDigest{}; };
+    undo::InitialState undo_initial_;
+    std::vector<UndoResponse> undo_responses_;
+    std::size_t undo_response_index_{};
 
 	unsigned char* replay_data;
 	size_t replay_size{};

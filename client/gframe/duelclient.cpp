@@ -18,6 +18,13 @@
 #include <event2/buffer.h>
 
 namespace ygo {
+namespace {
+std::mutex responseMutex;
+undo::InputSubmission pendingSubmission;
+thread_local undo::Origin responseOrigin=undo::Origin::Manual;
+struct AutomaticResponseScope {undo::Origin prior=responseOrigin;AutomaticResponseScope(){responseOrigin=undo::Origin::Automatic;}~AutomaticResponseScope(){responseOrigin=prior;}};
+}
+
 
 namespace {
 	unsigned connect_state{ CONNECT_STATE_NONE };
@@ -1012,6 +1019,7 @@ void DuelClient::HandleSTOCPacketLan(unsigned char* data, size_t len) {
 }
 // Analyze STOC_GAME_MSG packet
 bool DuelClient::ClientAnalyze(unsigned char* msg, size_t len) {
+ AutomaticResponseScope automaticOrigin;
 	unsigned char* pbuf = msg;
 	wchar_t textBuffer[256]{};
 	mainGame->dInfo.curMsg = BufferIO::Read<uint8_t>(pbuf);
@@ -4060,16 +4068,29 @@ void DuelClient::SwapField() {
 	is_swapping = true;
 }
 void DuelClient::SetResponseI(int32_t respI) {
+ auto token=SingleMode::CurrentToken();
+ std::lock_guard<std::mutex> lock(responseMutex);
 	std::memcpy(response_buf, &respI, sizeof respI);
 	response_len = sizeof respI;
+ pendingSubmission={undo::Bytes(response_buf,response_buf+response_len),responseOrigin,token};
 }
 void DuelClient::SetResponseB(void* respB, size_t len) {
-	if (len > UINT8_MAX)
-		len = UINT8_MAX;
+ auto token=SingleMode::CurrentToken();
+ std::lock_guard<std::mutex> lock(responseMutex);
+	if (len > SIZE_RETURN_VALUE || (!respB && len)) { pendingSubmission={};response_len=0;return; }
 	std::memcpy(response_buf, respB, len);
 	response_len = len;
+ pendingSubmission={undo::Bytes(response_buf,response_buf+response_len),responseOrigin,token};
 }
-void DuelClient::SendResponse() {
+DuelPromptContext DuelClient::CapturePromptContext(){DuelPromptContext c;c.selectHint=select_hint;c.unselectHint=select_unselect_hint;c.lastHint=last_select_hint;std::copy(std::begin(event_string),std::end(event_string),c.event.begin());return c;}
+void DuelClient::RestorePromptContext(const DuelPromptContext& c) noexcept{select_hint=c.selectHint;select_unselect_hint=c.unselectHint;last_select_hint=c.lastHint;std::copy(c.event.begin(),c.event.end(),std::begin(event_string));last_successful_msg_length=0;is_swapping=false;}
+undo::InputSubmission DuelClient::CaptureResponse(){std::lock_guard<std::mutex> lock(responseMutex);return pendingSubmission;}
+void DuelClient::ClearPendingResponse(){std::lock_guard<std::mutex> lock(responseMutex);pendingSubmission={};response_len=0;}
+void DuelClient::SendResponse(){SendResponse(CaptureResponse());}
+void DuelClient::SendResponse(const undo::InputSubmission& submission) {
+ if(submission.response.empty() || submission.response.size()>SIZE_RETURN_VALUE)return;
+ // Reject stale callbacks before touching the installed prompt widgets.
+ if(mainGame->dInfo.isSingleMode && !SingleMode::SetResponse(submission))return;
 	switch(mainGame->dInfo.curMsg) {
 	case MSG_SELECT_BATTLECMD: {
 		mainGame->dField.ClearCommandFlag();
@@ -4098,11 +4119,10 @@ void DuelClient::SendResponse() {
 	}
 	}
 	if(mainGame->dInfo.isSingleMode) {
-		SingleMode::SetResponse(response_buf, response_len);
 		mainGame->singleSignal.Set();
 	} else {
 		mainGame->dInfo.time_player = 2;
-		SendBufferToServer(CTOS_RESPONSE, response_buf, response_len);
+		SendBufferToServer(CTOS_RESPONSE, const_cast<unsigned char*>(submission.response.data()), submission.response.size());
 	}
 }
 void DuelClient::SendUpdateDeck(const Deck& deck) {

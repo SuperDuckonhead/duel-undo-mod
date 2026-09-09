@@ -4,20 +4,27 @@
 #include <cstdint>
 #include <vector>
 #include "replay.h"
+#include "undo/single_undo.h"
+#include <atomic>
 
 namespace ygo {
 
 class SingleMode {
 private:
-	static intptr_t pduel;
-	static bool is_closing;
-	static bool is_continuing;
+	static std::atomic<bool> is_closing;
+	static std::atomic<bool> is_continuing;
 	static void ReloadLocation(int player, int location, int flag, std::vector<unsigned char>& queryBuffer);
 
 public:
 	static bool StartPlay();
 	static void StopPlay(bool is_exiting = false);
-	static void SetResponse(unsigned char* resp, unsigned int len);
+	static bool SetResponse(const undo::InputSubmission&);
+ static undo::InputToken CurrentToken();
+ static bool RequestUndo(uint8_t player);
+ static bool CanUndo(uint8_t player);
+ static bool InputPaused();
+ static std::string LastUndoError();
+ static std::shared_ptr<undo::SingleUndo> ActiveSession();
 	static void SinglePlayThread();
 	static bool SinglePlayAnalyze(unsigned char* msg, unsigned int len);
 	
@@ -30,11 +37,9 @@ public:
 	static void SinglePlayRefreshSingle(int player, int location, int sequence, int flag = 0xf81fff);
 	static void SinglePlayReload();
 
-	static uint32_t MessageHandler(intptr_t fduel, uint32_t type);
 
 protected:
 	static Replay last_replay;
-	static size_t last_replay_response_size;
 };
 
 }

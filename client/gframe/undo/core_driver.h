@@ -1,5 +1,6 @@
 #pragma once
 #include "resource_view.h"
+#include <functional>
 namespace undo {
 struct InitialCard {
  uint32_t code{}; uint8_t owner{},controller{},location{},sequence{},position{};
@@ -27,7 +28,14 @@ public:
  ~CoreDriver();
  CoreDriver(const CoreDriver&)=delete;
  CoreDriver& operator=(const CoreDriver&)=delete;
- Boundary Advance();
+ // Live-only output is emitted message by message outside the core API binding.
+ // Awaiting-response prompts are withheld until the session records acceptance.
+ // Rebuild leaves this callback empty and has no external output capability.
+ using LiveOutput=std::function<void(const Bytes&)>;
+ Boundary Advance(const LiveOutput& output={});
+ Bytes QueryInfo() const;
+ Bytes QueryField(uint8_t player,uint8_t location,uint32_t flags) const;
+ Bytes QueryCard(uint8_t player,uint8_t location,uint8_t sequence,uint32_t flags) const;
  Boundary Current() const;
  void Submit(const Bytes&);
  const InitialState& Initial() const { return initial_; }

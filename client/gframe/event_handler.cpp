@@ -15,8 +15,11 @@
 namespace ygo {
 
 bool ClientField::OnEvent(const irr::SEvent& event) {
+ if(event.EventType==irr::EET_GUI_EVENT && event.GUIEvent.EventType==irr::gui::EGET_BUTTON_CLICKED && event.GUIEvent.Caller->getID()==BUTTON_DUEL_UNDO){SingleMode::RequestUndo(0);return true;}
+
 	if(OnCommonEvent(event))
 		return false;
+ if(mainGame->dInfo.isSingleMode && SingleMode::InputPaused())return true;
 	switch(event.EventType) {
 	case irr::EET_GUI_EVENT: {
 		if(mainGame->fadingList.size())

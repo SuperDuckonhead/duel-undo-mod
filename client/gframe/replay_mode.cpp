@@ -7,6 +7,11 @@
 #include "../ocgcore/ocgapi.h"
 
 namespace ygo {
+namespace {
+std::unique_ptr<undo::CoreDriver> undoReplayDriver;
+std::shared_ptr<const undo::ResourceView> undoReplayResources;
+std::string undoReplayError;
+}
 
 intptr_t ReplayMode::pduel = 0;
 Replay ReplayMode::cur_replay;
@@ -51,6 +56,10 @@ void ReplayMode::Pause(bool is_pause, bool is_step) {
 	}
 }
 bool ReplayMode::ReadReplayResponse() {
+    if(undoReplayDriver) {
+        try {undo::Bytes response;if(!cur_replay.ReadUndoResponse(undoReplayDriver->Current().checkpoint,response))return false;undoReplayDriver->Submit(response);return true;}
+        catch(const std::exception& error){undoReplayError=error.what();mainGame->ErrorLog(undoReplayError.c_str());return false;}
+    }
 	unsigned char resp[SIZE_RETURN_VALUE];
 	bool result = cur_replay.ReadNextResponse(resp);
 	if(result)
@@ -58,6 +67,7 @@ bool ReplayMode::ReadReplayResponse() {
 	return result;
 }
 void ReplayMode::ReplayThread() {
+    undoReplayDriver.reset();undoReplayResources.reset();undoReplayError.clear();
 	const auto& rh = cur_replay.pheader.base;
 	mainGame->dInfo.Clear();
 	mainGame->dInfo.isFirst = true;
@@ -80,11 +90,12 @@ void ReplayMode::ReplayThread() {
 	engineBuffer.resize(SIZE_MESSAGE_BUFFER);
 	is_continuing = true;
 	skip_step = 0;
-	if(mainGame->dInfo.isSingleMode) {
+    if(undoReplayDriver){auto initialView=undoReplayDriver->QueryInfo();DuelClient::ClientAnalyze(initialView.data(),initialView.size());ReplayReload();}
+	if(mainGame->dInfo.isSingleMode && !undoReplayDriver) {
 		int len = get_message(pduel, engineBuffer.data());
 		if (len > 0)
 			is_continuing = ReplayAnalyze(engineBuffer.data(), len);
-	} else {
+	} else if(!undoReplayDriver) {
 		ReplayRefreshDeck(0);
 		ReplayRefreshDeck(1);
 		ReplayRefreshExtra(0);
@@ -95,13 +106,24 @@ void ReplayMode::ReplayThread() {
 	if(mainGame->dInfo.isReplaySkiping)
 		mainGame->gMutex.lock();
 	while (is_continuing && !exit_pending) {
-		unsigned int result = process(pduel);
-		int len = result & PROCESSOR_BUFFER_LEN;
-		if (len > 0) {
-			if (len > (int)engineBuffer.size())
-				engineBuffer.resize(len);
-			get_message(pduel, engineBuffer.data());
-			is_continuing = ReplayAnalyze(engineBuffer.data(), len);
+        int len=0;
+        if(undoReplayDriver) {
+            auto boundary=undoReplayDriver->Advance([&](const undo::Bytes& frame){
+                if(!is_continuing || exit_pending || is_restarting)return;
+                auto bytes=frame;is_continuing=ReplayAnalyze(bytes.data(),bytes.size());
+            });
+            if(boundary.kind==undo::BoundaryKind::Failed || boundary.rejectedResponse) {
+                undoReplayError=boundary.failure.empty()?"Replay response rejected":boundary.failure;
+                mainGame->ErrorLog(undoReplayError.c_str());is_continuing=false;
+            } else if(boundary.kind==undo::BoundaryKind::AwaitResponse && is_continuing && !exit_pending && !is_restarting) {
+                engineBuffer=boundary.checkpoint.prompt;len=static_cast<int>(engineBuffer.size());
+            } else if(boundary.kind==undo::BoundaryKind::Finished) is_continuing=false;
+        } else {
+            unsigned int result=process(pduel);len=result&PROCESSOR_BUFFER_LEN;
+            if(len>0){if(len>static_cast<int>(engineBuffer.size()))engineBuffer.resize(len);get_message(pduel,engineBuffer.data());}
+        }
+        if(len>0 || is_restarting) {
+            if(len>0 && !is_restarting)is_continuing=ReplayAnalyze(engineBuffer.data(),len);
 			if(is_restarting) {
 				mainGame->gMutex.lock();
 				is_restarting = false;
@@ -113,7 +135,7 @@ void ReplayMode::ReplayThread() {
 				if(mainGame->dInfo.isSingleMode) {
 					is_continuing = true;
 					skip_step = 0;
-					int len = get_message(pduel, engineBuffer.data());
+					int len = undoReplayDriver?0:get_message(pduel, engineBuffer.data());
 					if (len > 0) {
 						is_continuing = ReplayAnalyze(engineBuffer.data(), len);
 					}
@@ -166,7 +188,20 @@ bool ReplayMode::StartDuel() {
 		BufferIO::CopyWideString(cur_replay.players[0].c_str(), mainGame->dInfo.hostname);
 		BufferIO::CopyWideString(cur_replay.players[1].c_str(), mainGame->dInfo.clientname);
 	}
-	if(rh.id == REPLAY_ID_YRP1) {
+	    if(rh.flag&REPLAY_UNDO_CORE) {
+        try {
+            if(!undoReplayResources)undoReplayResources=undo::ResourceView::Capture(mainGame->runtime_root.u8string(),dataManager,mainGame->gameConf.prefer_expansion_script);
+            undoReplayDriver=cur_replay.CreateUndoDriver(undoReplayResources);
+            const auto& initial=cur_replay.UndoInitial();
+            mainGame->dInfo.duel_rule=initial.duelOptions>>16;
+            for(unsigned p=0;p<2;++p){mainGame->dInfo.lp[p]=initial.players[p].lp;myswprintf(mainGame->dInfo.strLP[p],L"%d",mainGame->dInfo.lp[p]);}
+            mainGame->dInfo.start_lp=initial.players[0].lp;mainGame->dInfo.turn=0;
+            return true;
+        } catch(const std::exception& error) {
+            undoReplayError=error.what();mainGame->ErrorLog(undoReplayError.c_str());return false;
+        }
+    }
+if(rh.id == REPLAY_ID_YRP1) {
 		std::mt19937 rnd(rh.seed);
 		pduel = create_duel(rnd());
 	} else {
@@ -221,11 +256,12 @@ bool ReplayMode::StartDuel() {
 	return true;
 }
 void ReplayMode::EndDuel() {
-	end_duel(pduel);
+    undoReplayDriver.reset();undoReplayResources.reset();
+	if(pduel){end_duel(pduel);pduel=0;}
 	if(!is_closing) {
 		mainGame->actionSignal.Reset();
 		mainGame->gMutex.lock();
-		mainGame->stMessage->setText(dataManager.GetSysString(1501));
+		mainGame->stMessage->setText(undoReplayError.empty()?dataManager.GetSysString(1501):L"录像恢复失败：资源或响应与记录不一致。详情见新版日志。");
 		mainGame->HideElement(mainGame->wCardSelect);
 		mainGame->PopupElement(mainGame->wMessage);
 		mainGame->gMutex.unlock();
@@ -250,7 +286,8 @@ void ReplayMode::EndDuel() {
 	}
 }
 void ReplayMode::Restart(bool refresh) {
-	end_duel(pduel);
+    undoReplayDriver.reset();
+	if(pduel){end_duel(pduel);pduel=0;}
 	mainGame->dInfo.isStarted = false;
 	mainGame->dInfo.isInDuel = false;
 	mainGame->dInfo.isFinished = true;
@@ -261,17 +298,24 @@ void ReplayMode::Restart(bool refresh) {
 	mainGame->dInfo.tag_player[1] = false;
 	if(!StartDuel()) {
 		EndDuel();
+		return;
 	}
-	if(refresh) {
-		mainGame->dField.RefreshAllCards();
-		mainGame->dInfo.isStarted = true;
-		mainGame->dInfo.isFinished = false;
-	}
+
 	if (mainGame->dInfo.isReplaySwapped){
 		std::swap(mainGame->dInfo.lp[0], mainGame->dInfo.lp[1]);
 		std::swap(mainGame->dInfo.strLP[0], mainGame->dInfo.strLP[1]);
 		std::swap(mainGame->dInfo.hostname, mainGame->dInfo.clientname);
 		std::swap(mainGame->dInfo.hostname_tag, mainGame->dInfo.clientname_tag);
+	}
+    if(undoReplayDriver) {
+        auto initialView=undoReplayDriver->QueryInfo();
+        DuelClient::ClientAnalyze(initialView.data(),initialView.size());
+        ReplayReload();
+    }
+	if(refresh) {
+		mainGame->dField.RefreshAllCards();
+		mainGame->dInfo.isStarted = true;
+		mainGame->dInfo.isFinished = false;
 	}
 	skip_turn = 0;
 }
@@ -860,7 +904,8 @@ bool ReplayMode::ReplayAnalyze(unsigned char* msg, unsigned int len) {
 	return true;
 }
 inline void ReplayMode::ReloadLocation(int player, int location, int flag, std::vector<unsigned char>& queryBuffer) {
-	query_field_card(pduel, player, location, flag, queryBuffer.data(), 0);
+	if(undoReplayDriver)queryBuffer=undoReplayDriver->QueryField(player,location,flag);
+    else query_field_card(pduel, player, location, flag, queryBuffer.data(), 0);
 	mainGame->dField.UpdateFieldCard(mainGame->LocalPlayer(player), location, queryBuffer.data());
 }
 void ReplayMode::ReplayRefresh(int flag) {
@@ -891,9 +936,8 @@ inline void ReplayMode::ReplayRefreshExtra(int player, int flag) {
 	ReplayRefreshLocation(player, LOCATION_EXTRA, flag);
 }
 void ReplayMode::ReplayRefreshSingle(int player, int location, int sequence, int flag) {
-	unsigned char queryBuffer[0x1000];
-	/*int len = */query_card(pduel, player, location, sequence, flag, queryBuffer, 0);
-	mainGame->dField.UpdateCard(mainGame->LocalPlayer(player), location, sequence, queryBuffer);
+	if(undoReplayDriver){auto query=undoReplayDriver->QueryCard(player,location,sequence,flag);mainGame->dField.UpdateCard(mainGame->LocalPlayer(player),location,sequence,query.data());}
+    else {unsigned char queryBuffer[0x1000];query_card(pduel,player,location,sequence,flag,queryBuffer,0);mainGame->dField.UpdateCard(mainGame->LocalPlayer(player),location,sequence,queryBuffer);}
 }
 void ReplayMode::ReplayReload() {
 	std::vector<unsigned char> queryBuffer;

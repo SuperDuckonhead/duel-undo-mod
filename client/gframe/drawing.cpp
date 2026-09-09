@@ -10,6 +10,7 @@
 #include "deck_manager.h"
 #include "sound_manager.h"
 #include "duelclient.h"
+#include "single_mode.h"
 
 namespace ygo {
 
@@ -937,6 +938,7 @@ void Game::DrawStatus(ClientCard* pcard, int x1, int y1, int x2, int y2) {
 	}
 }
 void Game::DrawGUI() {
+ UpdateDuelUndoStatus();
 	while(btnImagePending.size()) {
 		auto mit = btnImagePending.cbegin();
 		auto button = mit->first;
@@ -950,6 +952,7 @@ void Game::DrawGUI() {
 	for(auto fit = fadingList.begin(); fit != fadingList.end();) {
 		auto fthis = fit++;
 		FadingUnit& fu = *fthis;
+  if(fu.signalAction && mainGame->dInfo.isSingleMode && SingleMode::InputPaused())continue;
 		if(fu.fadingFrame) {
 			fu.guiFading->setVisible(true);
 			if(fu.isFadein) {
@@ -987,7 +990,7 @@ void Game::DrawGUI() {
 						fu.guiFading->setRelativePosition(irr::core::recti(fu.fadingUL, fu.fadingLR));
 				}
 				if(fu.signalAction && !fu.fadingFrame) {
-					DuelClient::SendResponse();
+					DuelClient::SendResponse(fu.response);
 					fu.signalAction = false;
 				}
 			}
@@ -1270,6 +1273,7 @@ void Game::HideElement(irr::gui::IGUIElement * win, bool set_action) {
 	fu.fadingFrame = 10;
 	fu.autoFadeoutFrame = 0;
 	fu.signalAction = set_action;
+ if(set_action)fu.response=DuelClient::CaptureResponse();
 	SetImageButtonDrawing(win, false);
 	if(win == wCardSelect) {
 		stCardListTip->setVisible(false);

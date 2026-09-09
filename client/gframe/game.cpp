@@ -1,4 +1,4 @@
-﻿#include "config.h"
+#include "config.h"
 #include "game.h"
 #include "undo/strings_zh.h"
 #include "undo/runtime_paths.h"
@@ -989,6 +989,9 @@ bool Game::Initialize(const std::filesystem::path& root) {
 	//leave/surrender/exit
 	btnLeaveGame = env->addButton(irr::core::rect<irr::s32>(205, 5, 295, 80), 0, BUTTON_LEAVE_GAME, L"");
 	btnLeaveGame->setVisible(false);
+ btnUndoDuel=env->addButton(irr::core::rect<irr::s32>(205,45,295,70),0,BUTTON_DUEL_UNDO,L"撤回选择");
+ stUndoDuel=env->addStaticText(L"没有可撤回的选择",irr::core::rect<irr::s32>(205,75,295,115),false,true,0,TEXT_DUEL_UNDO_STATUS);
+ btnUndoDuel->setVisible(false);stUndoDuel->setVisible(false);
 	//tip
 	stTip = env->addStaticText(L"", irr::core::rect<irr::s32>(0, 0, 150, 150), false, true, 0, -1, true);
 	stTip->setBackgroundColor(0xc0ffffff);
@@ -2204,6 +2207,7 @@ void Game::OnResize() {
 	ResizeCmdMenu();
 
 	btnLeaveGame->setRelativePosition(Resize(205, 5, 295, 80));
+ btnUndoDuel->setRelativePosition(Resize(205,45,295,70));stUndoDuel->setRelativePosition(Resize(205,75,295,115));
 	wReplayControl->setRelativePosition(Resize(205, 143, 295, 273));
 	btnReplayStart->setRelativePosition(Resize(5, 5, 85, 25));
 	btnReplayPause->setRelativePosition(Resize(5, 5, 85, 25));
@@ -2526,4 +2530,23 @@ bool Game::SpawnAsync(const std::wstring& exePath, const std::vector<std::wstrin
 #endif
 }
 
+}
+
+namespace ygo {
+void Game::UpdateDuelUndoStatus(){
+ if(!btnUndoDuel || !stUndoDuel)return;
+ bool visible=dInfo.isSingleMode && !dInfo.isReplay && dInfo.isStarted;
+ btnUndoDuel->setVisible(visible);stUndoDuel->setVisible(visible);
+ btnLeaveGame->setRelativePosition(Resize(205,5,295,visible?40:80));
+ btnChainIgnore->setRelativePosition(Resize(205,visible?120:100,295,visible?145:135));
+ btnChainAlways->setRelativePosition(Resize(205,visible?150:140,295,175));
+ btnChainWhenAvail->setRelativePosition(Resize(205,180,295,visible?205:215));
+ if(!visible)return;
+ btnUndoDuel->setEnabled(!dInfo.isFinished && SingleMode::CanUndo(0));
+ if(dInfo.isFinished)stUndoDuel->setText(L"本局已结束");
+ else if(SingleMode::InputPaused())stUndoDuel->setText(L"正在恢复");
+ else if(!SingleMode::LastUndoError().empty())stUndoDuel->setText(L"恢复失败，原局可继续");
+ else if(!SingleMode::CanUndo(0))stUndoDuel->setText(L"没有可撤回的选择");
+ else stUndoDuel->setText(L"撤回上次有效选择");
+}
 }

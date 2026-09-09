@@ -3,8 +3,21 @@
 #include <IFileSystem.h>
 #include <IFileArchive.h>
 #include <iostream>
+#include <windows.h>
+#include <winioctl.h>
 namespace irr { namespace io { IFileSystem* createFileSystem(); } }
 using namespace undo;
+// Windows junctions permit read-only installed resources without copying them.
+static void junction(const std::filesystem::path& link,const std::filesystem::path& target){
+ if(std::filesystem::exists(link))return;
+ std::filesystem::create_directories(link);
+ auto full=std::filesystem::absolute(target).make_preferred().wstring();auto substitute=L"\\??\\"+full;
+ auto handle=CreateFileW(link.c_str(),GENERIC_WRITE,0,nullptr,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT|FILE_FLAG_BACKUP_SEMANTICS,nullptr);CHECK(handle!=INVALID_HANDLE_VALUE);
+ Bytes buffer;fixture::word(buffer,IO_REPARSE_TAG_MOUNT_POINT);fixture::word(buffer,8+(substitute.size()+full.size()+2)*2,2);fixture::word(buffer,0,2);
+ fixture::word(buffer,0,2);fixture::word(buffer,substitute.size()*2,2);fixture::word(buffer,(substitute.size()+1)*2,2);fixture::word(buffer,full.size()*2,2);
+ for(auto c:substitute)fixture::word(buffer,c,2);fixture::word(buffer,0,2);for(auto c:full)fixture::word(buffer,c,2);fixture::word(buffer,0,2);
+ DWORD returned{};auto ok=DeviceIoControl(handle,FSCTL_SET_REPARSE_POINT,buffer.data(),static_cast<DWORD>(buffer.size()),nullptr,0,&returned,nullptr);CloseHandle(handle);CHECK(ok);
+}
 int main() {
  try {
   const std::string root=UNDO_RESOURCE_FIXTURE;
@@ -80,6 +93,13 @@ int main() {
   auto reordered=mixedData.CaptureResources(mixed,false);
   CHECK(reordered->ScriptCount()==1);CHECK(reordered->Read("SCRIPT/C900000002.LUA")==fixture::bytes("case-second"));
   CHECK(mixedData.CaptureResources(mixed,true)->Read("SCRIPT/C900000002.LUA")==fixture::bytes("case-expansion"));
+  const std::string linked=root+"-junction";fixture::database(linked);
+  junction(std::filesystem::u8path(linked+"/script"),std::filesystem::u8path(lower+"/script"));
+  junction(std::filesystem::u8path(linked+"/expansions"),std::filesystem::u8path(lower+"/expansions"));
+  for(bool prefer:{false,true}){
+   auto direct=lowerData.CaptureResources(lower,prefer);auto alias=lowerData.CaptureResources(linked,prefer);
+   CHECK(alias->Fingerprint()==direct->Fingerprint());CHECK(alias->Read("script/c900000002.lua")==direct->Read("script/c900000002.lua"));
+  }
   auto hash=Sha256(fixture::bytes("abc")); const Digest expected={0xba,0x78,0x16,0xbf,0x8f,0x01,0xcf,0xea,0x41,0x41,0x40,0xde,0x5d,0xae,0x22,0x23,0xb0,0x03,0x61,0xa3,0x96,0x17,0x7a,0x9c,0xb4,0x10,0xff,0x61,0xf2,0x00,0x15,0xad};CHECK(hash==expected);
   std::cout << "resource pinning, normalized database, SHA256, archive priority passed\n";
  }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}

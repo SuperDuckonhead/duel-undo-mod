@@ -154,39 +154,62 @@ Bytes CoreDriver::Canonical() {
  for(auto* c:cards) { word(result,c->cardid,8);word(result,c->data.code);word(result,c->get_info_location());word(result,c->owner,1);word(result,c->xyz_materials.size());for(auto* x:c->xyz_materials)word(result,x->cardid,8); }
  CheckFailure(); return result;
 }
-Boundary CoreDriver::Advance() {
- Binding binding(this);
- if(waiting_ && !submitted_)return boundary_;
- if(started_ && (boundary_.kind==BoundaryKind::Finished || boundary_.kind==BoundaryKind::Failed))return boundary_;
- auto old=boundary_; Bytes accepted;
+Boundary CoreDriver::Advance(const LiveOutput& output) {
+ Boundary old;
+ { Binding binding(this);
+  if(waiting_ && !submitted_)return boundary_;
+  if(started_ && (boundary_.kind==BoundaryKind::Finished || boundary_.kind==BoundaryKind::Failed))return boundary_;
+  old=boundary_;waiting_=false;boundary_.rejectedResponse=false;
+ }
+ Bytes accepted;
  try {
-  if(!started_) {start_duel(handle_,initial_.duelOptions);started_=true;}
-  waiting_=false; boundary_.rejectedResponse=false;
+  if(!started_) {
+   // Scenario preload messages belong before start_duel, as in legacy SingleMode.
+   Bytes preload(16*1024*1024);
+   {Binding binding(this);auto n=get_message(handle_,preload.data());preload.resize(n);CheckFailure();}
+   for(auto& m:decode(preload)){if(m.prompt)throw std::runtime_error("Prompt during scenario preload");accepted.insert(accepted.end(),m.bytes.begin(),m.bytes.end());if(output)output(m.bytes);}
+   {Binding binding(this);start_duel(handle_,initial_.duelOptions);started_=true;}
+  }
   for(size_t step=0;step<100000;++step) {
-   auto status=process(handle_); Bytes message((status&PROCESSOR_BUFFER_LEN)+4096); auto n=get_message(handle_,message.data()); message.resize(n); CheckFailure();
-   bool retry=false,prompt=false,finished=false;
-   for(auto& m:decode(message)) {
-    if(m.bytes[0]==MSG_RETRY) {retry=true;continue;}
-    accepted.insert(accepted.end(),m.bytes.begin(),m.bytes.end());
-    if(m.prompt) {boundary_.checkpoint.prompt=m.bytes;boundary_.checkpoint.player=m.player;prompt=true;}
-    if(m.bytes[0]==MSG_WIN)finished=true;
+   std::vector<Message> messages;bool prompt=false,finished=false;uint32_t status{};
+   {
+    Binding binding(this);status=process(handle_);Bytes message((status&PROCESSOR_BUFFER_LEN)+4096);auto n=get_message(handle_,message.data());message.resize(n);CheckFailure();messages=decode(message);
+    bool retry=false;
+    for(auto& m:messages){
+     if(m.bytes[0]==MSG_RETRY){retry=true;continue;}
+     accepted.insert(accepted.end(),m.bytes.begin(),m.bytes.end());
+     if(m.prompt){boundary_.checkpoint.prompt=m.bytes;boundary_.checkpoint.player=m.player;prompt=true;}
+     if(m.bytes[0]==MSG_WIN)finished=true;
+    }
+    if(retry){
+     if(!submitted_)throw std::runtime_error("Core retry without submitted response");
+     if(Canonical()!=old.checkpoint.canonicalState)throw std::runtime_error("Rejected response changed canonical core state");
+     boundary_=old;boundary_.rejectedResponse=true;waiting_=true;submitted_=false;return boundary_;
+    }
+    if(prompt || finished || (status&PROCESSOR_END)){
+     transcript_.insert(transcript_.end(),accepted.begin(),accepted.end());
+     boundary_.kind=finished || (status&PROCESSOR_END)?BoundaryKind::Finished:BoundaryKind::AwaitResponse;
+     if(boundary_.kind==BoundaryKind::Finished)boundary_.checkpoint.prompt.clear();
+     boundary_.checkpoint.canonicalState=Canonical();boundary_.checkpoint.transcriptDigest=Sha256(transcript_);
+     boundary_.failure.clear();waiting_=boundary_.kind==BoundaryKind::AwaitResponse;submitted_=false;
+    }
    }
-   if(retry) {
-    if(!submitted_)throw std::runtime_error("Core retry without submitted response");
-    if(Canonical()!=old.checkpoint.canonicalState)throw std::runtime_error("Rejected response changed canonical core state");
-    boundary_=old;boundary_.rejectedResponse=true;waiting_=true;submitted_=false;return boundary_;
-   }
-   if(prompt || finished || (status&PROCESSOR_END)) {
-    transcript_.insert(transcript_.end(),accepted.begin(),accepted.end());
-    boundary_.kind=finished || (status&PROCESSOR_END) ? BoundaryKind::Finished:BoundaryKind::AwaitResponse;
-    if(boundary_.kind==BoundaryKind::Finished)boundary_.checkpoint.prompt.clear();
-    boundary_.checkpoint.canonicalState=Canonical();boundary_.checkpoint.transcriptDigest=Sha256(transcript_);
-    boundary_.failure.clear();waiting_=boundary_.kind==BoundaryKind::AwaitResponse;submitted_=false;return boundary_;
-   }
+   // No Binding or API mutex remains while a live client animates or waits.
+   if(output)for(const auto& m:messages)if(!m.prompt)output(m.bytes);
+   if(prompt || finished || (status&PROCESSOR_END))return boundary_;
    if(status&PROCESSOR_WAITING)throw std::runtime_error("Core waiting without decoded prompt");
   }
   throw std::runtime_error("Core boundary processing limit exceeded");
- } catch(const std::exception& e) {boundary_.kind=BoundaryKind::Failed;boundary_.failure=e.what();waiting_=false;submitted_=false;return boundary_;}
+ }catch(const std::exception& e){Binding binding(this);boundary_.kind=BoundaryKind::Failed;boundary_.failure=e.what();waiting_=false;submitted_=false;return boundary_;}
+}
+Bytes CoreDriver::QueryInfo() const {
+ Binding binding(const_cast<CoreDriver*>(this));Bytes b(16*1024*1024);auto n=query_field_info(handle_,b.data());b.resize(n);CheckFailure();return b;
+}
+Bytes CoreDriver::QueryField(uint8_t player,uint8_t location,uint32_t flags) const {
+ if(player>1)throw std::invalid_argument("Invalid query player");Binding binding(const_cast<CoreDriver*>(this));Bytes b(16*1024*1024);auto n=query_field_card(handle_,player,location,flags,b.data(),0);b.resize(n);CheckFailure();return b;
+}
+Bytes CoreDriver::QueryCard(uint8_t player,uint8_t location,uint8_t sequence,uint32_t flags) const {
+ if(player>1)throw std::invalid_argument("Invalid query player");Binding binding(const_cast<CoreDriver*>(this));Bytes b(16*1024*1024);auto n=query_card(handle_,player,location,sequence,flags,b.data(),0);b.resize(n);CheckFailure();return b;
 }
 void CoreDriver::Submit(const Bytes& response) {
  Binding binding(this);

@@ -1,0 +1,7 @@
+add_undo_test(undo_replay_tests tests/undo_replay_tests.cpp)
+target_sources(undo_replay_tests PRIVATE client/gframe/replay.cpp client/gframe/undo_replay.cpp client/gframe/undo/duel_history.cpp tests/core_test_globals.cpp)
+target_include_directories(undo_replay_tests PRIVATE client/lzma/src/liblzma/api)
+target_compile_options(undo_replay_tests PRIVATE -ffunction-sections -fdata-sections)
+target_link_libraries(undo_replay_tests PRIVATE undo_rebuilder)
+target_link_options(undo_replay_tests PRIVATE -Wl,--gc-sections)
+target_compile_definitions(undo_replay_tests PRIVATE UNDO_REPLAY_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/out/tests/results/undo-replay")
