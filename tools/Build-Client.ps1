@@ -31,6 +31,7 @@ foreach ($program in @($premake, $make, (Join-Path $llvmBin 'clang++.exe'))) {
 }
 
 & (Join-Path $PSScriptRoot 'Apply-LuaUndoPatch.ps1')
+& (Join-Path $PSScriptRoot 'Apply-IrrlichtUndoPatch.ps1')
 
 $premakeDirectories = @('event', 'freetype', 'irrlicht', 'jpeg', 'lua', 'lzma', 'miniaudio', 'png', 'sqlite3', 'zlib')
 foreach ($name in $premakeDirectories) {

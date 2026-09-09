@@ -128,7 +128,13 @@ void ReplayMode::ReplayThread() {
 				mainGame->gMutex.lock();
 				is_restarting = false;
 				mainGame->dInfo.isReplaySkiping = true;
-				Restart(false);
+                if (!Restart(false)) {
+                    // Restart never performs UI cleanup under this render lock.
+                    mainGame->dInfo.isReplaySkiping = false;
+                    mainGame->gMutex.unlock();
+                    is_continuing = false;
+                    break;
+                }
 				int step = current_step - 1;
 				if(step < 0)
 					step = 0;
@@ -285,7 +291,7 @@ void ReplayMode::EndDuel() {
 			mainGame->device->closeDevice();
 	}
 }
-void ReplayMode::Restart(bool refresh) {
+bool ReplayMode::Restart(bool refresh) {
     undoReplayDriver.reset();
 	if(pduel){end_duel(pduel);pduel=0;}
 	mainGame->dInfo.isStarted = false;
@@ -296,10 +302,8 @@ void ReplayMode::Restart(bool refresh) {
 	cur_replay.Rewind();
 	mainGame->dInfo.tag_player[0] = false;
 	mainGame->dInfo.tag_player[1] = false;
-	if(!StartDuel()) {
-		EndDuel();
-		return;
-	}
+	if(!StartDuel())
+        return false;
 
 	if (mainGame->dInfo.isReplaySwapped){
 		std::swap(mainGame->dInfo.lp[0], mainGame->dInfo.lp[1]);
@@ -318,6 +322,7 @@ void ReplayMode::Restart(bool refresh) {
 		mainGame->dInfo.isFinished = false;
 	}
 	skip_turn = 0;
+    return true;
 }
 void ReplayMode::Undo() {
 	if(skip_step > 0 || current_step == 0)

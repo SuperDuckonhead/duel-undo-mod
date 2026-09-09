@@ -1,8 +1,11 @@
 #include "client_card.h"
 #include "duelclient.h"
 #include "game.h"
+#define private public
 #include "replay_mode.h"
+#undef private
 #include "single_mode.h"
+#include "undo_prompt.h"
 #include "test_support.h"
 #include <algorithm>
 #include <chrono>
@@ -13,6 +16,25 @@
 #include <thread>
 using namespace ygo;
 static Game game;
+// Actual GUI factory failure during hidden widget construction, after the
+// separate N3 field has prepared. No production-only fault switch is needed.
+class FailingWidgetFactory final : public irr::gui::IGUIElementFactory {
+public:
+  std::atomic<int> remaining{-1};
+  std::atomic<int> calls{0};
+  irr::gui::IGUIElement* addGUIElement(const char*, irr::gui::IGUIElement*) override {
+    if (remaining >= 0) {
+      ++calls;
+      if (remaining-- == 0) throw std::bad_alloc();
+    }
+    return nullptr;
+  }
+  irr::gui::IGUIElement* addGUIElement(irr::gui::EGUI_ELEMENT_TYPE, irr::gui::IGUIElement*) override { return nullptr; }
+  irr::s32 getCreatableGUIElementTypeCount() const override { return 0; }
+  irr::gui::EGUI_ELEMENT_TYPE getCreateableGUIElementType(irr::s32) const override { return irr::gui::EGUIET_ELEMENT; }
+  const char* getCreateableGUIElementTypeName(irr::s32) const override { return nullptr; }
+  const char* getCreateableGUIElementTypeName(irr::gui::EGUI_ELEMENT_TYPE) const override { return nullptr; }
+};
 static void pump() {
   game.device->run();
   {
@@ -79,16 +101,103 @@ int main() {
     auto started=std::chrono::steady_clock::now();std::ofstream evidence("c4-evidence.txt");
     mainGame = &game;
     CHECK(game.Initialize(std::filesystem::current_path()));
+    auto* failingWidgets = new FailingWidgetFactory;
+    game.env->registerGUIElementFactory(failingWidgets);
+    failingWidgets->drop();
     game.frameSignal.SetNoWait(true);
     game.actionSignal.SetNoWait(true);
     game.chkSTAutoPos->setChecked(true);
     game.chkAutoSaveReplay->setChecked(false);
+    if (std::getenv("C4_REPLAY_FAILURE_ONLY")) {
+      CHECK(ReplayMode::cur_replay.OpenReplay(L"c4-single-current-branch.yrp"));
+      game.wReplay->setVisible(false);
+      game.actionSignal.SetNoWait(false);
+      ReplayMode::Pause(true, false);
+      CHECK(ReplayMode::StartReplay(0));
+      until([] { return ReplayMode::is_paused && ReplayMode::current_step > 0; });
+      // Only the future recreation is invalidated; the active frozen core is
+      // already running. This exercises StartDuel's real failure result.
+      auto& recreate = const_cast<undo::InitialState&>(ReplayMode::cur_replay.UndoInitial());
+      recreate.resourceDigest[0] ^= 1;
+      std::thread watchdog([] {
+        std::this_thread::sleep_for(std::chrono::seconds(15));
+        std::cerr << "Replay backstep failed responsiveness deadline\n";
+        std::_Exit(3);
+      });
+      watchdog.detach();
+      ReplayMode::Undo();
+      until([] {
+        if (game.wMessage->isVisible()) game.actionSignal.Set();
+        return game.wReplay->isVisible();
+      });
+      CHECK(!game.dInfo.isReplay && game.dInfo.isFinished);
+      CHECK(ReplayMode::pduel == 0);
+      CHECK(game.gMutex.try_lock()); game.gMutex.unlock();
+      std::cout << "Actual paused replay recreation failure remains responsive\n";
+      game.device->closeDevice(); game.device->drop();
+      return 0;
+    }
+    {
+      std::lock_guard<std::mutex> lock(game.gMutex);
+      game.wANCard->setVisible(true);
+      game.ebANCard->setText(L"pristine declaration");
+      game.cbANNumber->clear(); game.cbANNumber->addItem(L"99",99);
+      game.dField.panel=game.wANCard;
+      game.dField.ancard={70368879,37812118};
+      auto* originalCard=game.dField.CreateCard();
+      game.dField.AddCard(originalCard,0,LOCATION_HAND,0);
+      originalCard->is_selectable=true;
+      game.dField.selectable_cards={originalCard};
+      auto* inactiveCard=game.dField.CreateCard();
+      game.dField.DestroyCard(inactiveCard);
+      game.dField.display_cards={inactiveCard}; // legacy inactive cache after Clear
+      game.env->setFocus(game.ebANCard);
+      auto pristine=CaptureUndoPrompt(game);
+      game.ebANCard->setText(L"unsubmitted edit");
+      game.dField.ancard={89631139};
+      auto* originalEdit=game.ebANCard;
+      auto* originalPanel=game.dField.panel;
+      failingWidgets->remaining=1;
+      bool failed=false;
+      try { auto candidate=PrepareUndoPrompt(game,*pristine); }
+      catch(const std::bad_alloc&) { failed=true; }
+      failingWidgets->remaining=-1;
+      CHECK(failed);
+      CHECK(game.ebANCard==originalEdit && game.env->getFocus()==originalEdit);
+      CHECK(game.dField.panel==originalPanel);
+      CHECK(std::wstring(game.ebANCard->getText())==L"unsubmitted edit");
+      auto candidateModel=std::make_unique<ClientField>();
+      auto* candidateCard=candidateModel->CreateCard();
+      candidateModel->AddCard(candidateCard,0,LOCATION_HAND,0);
+      auto candidate=PrepareUndoPrompt(game,*pristine,candidateModel.get());
+      CHECK(game.ebANCard==originalEdit && game.env->getFocus()==originalEdit);
+      game.dField.SwapPreparedModel(*candidateModel);
+      candidate->Install();
+      CHECK(game.ebANCard!=originalEdit && game.env->getFocus()==game.ebANCard);
+      CHECK(game.dField.panel==game.wANCard);
+      CHECK(std::wstring(game.ebANCard->getText())==L"pristine declaration");
+      CHECK(game.ebANCard->getID()==EDITBOX_ANCARD);
+      CHECK(game.cbANNumber->getItemData(0)==99);
+      CHECK((game.dField.ancard==std::vector<int>{70368879,37812118}));
+      CHECK(game.dField.selectable_cards.size()==1);
+      CHECK(game.dField.selectable_cards.front()==candidateCard);
+      CHECK(game.dField.selectable_cards.front()!=originalCard);
+      CHECK(candidateCard->is_selectable);
+      CHECK(game.dField.display_cards.empty());
+      game.wANCard->setVisible(false);
+      game.env->installPreparedFocus(nullptr);
+      std::cout<<"Prepared focused edit and combo value bank installs without live mutation\n";
+    }
+    undo::Bytes scenarioBytes;
     for (unsigned policy = 0; policy < 4; ++policy) {
       game.chkNoCheckDeck->setChecked(policy & 1);
       game.chkNoShuffleDeck->setChecked(policy & 2);
       game.wMainMenu->setVisible(false);
       game.open_file = true;
-      BufferIO::CopyWideString(L"c4-single.lua", game.open_file_name);
+      const std::wstring scenarioForms[] = {
+          (game.runtime_root / "single" / "c4-single.lua").wstring(),
+          L"single\\c4-single.lua", L"./single/c4-single.lua", L"c4-single.lua"};
+      BufferIO::CopyWideString(scenarioForms[policy].c_str(), game.open_file_name);
       std::thread worker(SingleMode::SinglePlayThread);
       try {
         until([] { return bool(SingleMode::ActiveSession()); });
@@ -100,6 +209,11 @@ int main() {
         auto initial = s->Current().checkpoint;
         auto first = s->Token();
         const auto& init=s->Live().Initial();
+        CHECK(init.scenarioName == "single/c4-single.lua");
+        auto frozenScenario = s->Live().Resources()->Read(init.scenarioName);
+        CHECK(!frozenScenario.empty());
+        if (policy == 0) scenarioBytes = frozenScenario;
+        else CHECK(scenarioBytes == frozenScenario);
         evidence<<"policy="<<policy<<" scenario="<<init.scenarioName<<" seed=";
         for(auto word:init.seed)evidence<<word<<',';
         evidence<<" resources=";for(auto byte:init.resourceDigest)evidence<<std::hex<<std::setw(2)<<std::setfill('0')<<unsigned(byte);evidence<<std::dec;
@@ -147,6 +261,25 @@ int main() {
         CHECK(game.dField.grave[0].size() == 1);
         CHECK(game.btnEP->isVisible());
         s->SetPrepare(std::move(originalPrepare));
+        const auto widgetEpoch = s->Token();
+        auto* oldQuery = game.wQuery;
+        auto* oldEndButton = game.btnEP;
+        auto* oldFocus = game.env->getFocus();
+        failingWidgets->remaining = 1;
+        button(game.btnUndoDuel);
+        until([&] { return s->State() == undo::LocalUndoState::Failed || s->Token().epoch != widgetEpoch.epoch; });
+        failingWidgets->remaining = -1;
+        CHECK(s->State() == undo::LocalUndoState::Failed);
+        CHECK(failingWidgets->calls >= 2);
+        CHECK(s->Token() == widgetEpoch);
+        CHECK(game.wQuery == oldQuery && game.btnEP == oldEndButton);
+        CHECK(game.env->getFocus() == oldFocus);
+        CHECK(undo::SamePosition(s->Current().checkpoint, beforeFailure.checkpoint));
+        CHECK(s->History().size() == beforeCount);
+        CHECK(s->Clock().remainingMs == beforeClock.remainingMs);
+        CHECK(game.dInfo.lp[1] == 9000 && game.dField.grave[0].size() == 1);
+        CHECK(game.btnEP->isVisible());
+
         DuelClient::SetResponseI(activation(s->Current().checkpoint.prompt,37812118));
         game.HideElement(game.wQuery,true);
         auto stale = game.fadingList.back().response;

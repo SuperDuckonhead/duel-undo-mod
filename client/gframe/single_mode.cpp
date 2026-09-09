@@ -3,6 +3,7 @@
 #include "duelclient.h"
 #include "game.h"
 #include "undo/player_restore.h"
+#include "undo_prompt.h"
 #include <random>
 #include <thread>
 namespace ygo {
@@ -10,6 +11,8 @@ namespace {
 struct VisibleBoundary {
   size_t cursor{};
   DuelPromptContext context;
+  DuelPromptContext presentedContext;
+  std::shared_ptr<const PromptSnapshot> presentation;
 };
 struct SingleRuntime {
   std::shared_ptr<undo::SingleUndo> session;
@@ -18,8 +21,10 @@ struct SingleRuntime {
   std::vector<undo::Bytes> journal;
   std::vector<VisibleBoundary> boundaries;
   std::atomic<bool> renderingRestore{false};
-  std::optional<undo::TxKey> resumeKey;
+  std::atomic<bool> capturingPrompt{false};
+  std::optional<undo::Boundary> installedBoundary;
 };
+thread_local bool analyzingLivePrompt{};
 std::mutex activeMutex;
 std::shared_ptr<SingleRuntime> activeRuntime;
 bool launchPending{};
@@ -42,12 +47,27 @@ struct PreparedSingle final : undo::PreparedUndo {
   undo::Checkpoint target;
   std::vector<undo::Bytes> journal;
   std::vector<VisibleBoundary> boundaries;
+  std::unique_ptr<PreparedPrompt> presentation;
+  undo::Boundary nextBoundary;
+  bool committed{};
   std::unique_lock<std::mutex> renderLock;
   PreparedSingle(SingleRuntime &r, undo::TxKey k, uint64_t e,
                  const undo::Checkpoint &t, std::vector<undo::Bytes> j,
                  std::vector<VisibleBoundary> b)
       : runtime(r), key(k), epoch(e), target(t), journal(std::move(j)),
-        boundaries(std::move(b)), renderLock(mainGame->gMutex) {}
+        boundaries(std::move(b)), renderLock(mainGame->gMutex) {
+    if (!boundaries.back().presentation)
+      throw std::runtime_error("Missing pristine prompt presentation");
+    nextBoundary.kind = undo::BoundaryKind::AwaitResponse;
+    nextBoundary.checkpoint = target;
+    journal.push_back(target.prompt);
+    presentation = PrepareUndoPrompt(*mainGame, *boundaries.back().presentation,
+                                     runtime.client->PreparedField());
+  }
+  ~PreparedSingle() override {
+    if (!committed) runtime.client->Abort(key);
+    presentation.reset(); // tree removal remains under the render lock
+  }
   void Commit() noexcept override {
     // Prepare has checked the exact key and epoch; installation owns no
     // fallible parsing, allocation, engine processing or history edits.
@@ -56,27 +76,15 @@ struct PreparedSingle final : undo::PreparedUndo {
     runtime.journal.swap(journal);
     runtime.boundaries.swap(boundaries);
     runtime.renderingRestore = true;
-    runtime.resumeKey = key;
+    runtime.installedBoundary = std::move(nextBoundary);
     auto &g = *mainGame;
     for (auto &f : g.fadingList) {
-      f.guiFading->setRelativePosition(f.fadingSize);
       f.guiFading->setVisible(false);
     }
     g.fadingList.clear();
-    irr::gui::IGUIElement *windows[] = {
-        g.wQuery,       g.wOptions,  g.wPosSelect,
-        g.wCardSelect,  g.wANNumber, g.wANCard,
-        g.wANAttribute, g.wANRace,   g.btnCancelOrFinish};
-    for (auto *w : windows)
-      w->setVisible(false);
-    g.btnImagePending.clear();
     g.showcard = 0;
     g.is_attacking = 0;
     g.waitFrame = -1;
-    g.btnBP->setVisible(false);
-    g.btnEP->setVisible(false);
-    g.btnM2->setVisible(false);
-    g.btnShuffle->setVisible(false);
     g.dInfo.lp[0] = runtime.view.lp[0];
     g.dInfo.lp[1] = runtime.view.lp[1];
     g.dInfo.turn = runtime.view.turn;
@@ -89,8 +97,12 @@ struct PreparedSingle final : undo::PreparedUndo {
       g.dInfo.time_left[p] =
           static_cast<unsigned short>(target.clock.remainingMs[p] / 1000);
     }
-    DuelClient::RestorePromptContext(runtime.boundaries.back().context);
+    DuelClient::RestorePromptContext(runtime.boundaries.back().presentedContext);
     DuelClient::ClearPendingResponse();
+    presentation->Install();
+    if (!runtime.client->Resume(key)) std::terminate();
+    committed = true;
+    runtime.renderingRestore = false;
   }
 };
 std::unique_ptr<undo::PreparedUndo>
@@ -145,7 +157,7 @@ bool SingleMode::InputPaused() {
   if (!r)
     return false;
   auto state = r->session->State();
-  return r->renderingRestore || state == undo::LocalUndoState::WaitBoundary ||
+  return r->renderingRestore || (r->capturingPrompt && !analyzingLivePrompt) || state == undo::LocalUndoState::WaitBoundary ||
          state == undo::LocalUndoState::Preparing;
 }
 std::string SingleMode::LastUndoError() {
@@ -216,10 +228,21 @@ void SingleMode::SinglePlayThread() {
     }
     char utf8[1024]{};
     BufferIO::EncodeUTF8(file, utf8);
-    std::string logical = utf8;
-    if (logical.rfind("./single/", 0) == 0)
-      logical = logical.substr(2);
-    else if (logical.rfind("single/", 0) != 0)
+    std::string selectedPath = utf8;
+    std::replace(selectedPath.begin(), selectedPath.end(), '\\', '/');
+    auto path = std::filesystem::u8path(selectedPath).lexically_normal();
+    if (path.is_absolute()) {
+      path = path.lexically_relative(mainGame->runtime_root.lexically_normal());
+      if (path.empty())
+        throw std::runtime_error("Scenario is outside captured runtime");
+    } else if (path.has_root_name() || path.has_root_directory()) {
+      throw std::runtime_error("Scenario has an incomplete absolute path");
+    }
+    for (const auto &part : path)
+      if (part == "..")
+        throw std::runtime_error("Scenario is outside captured runtime");
+    std::string logical = path.generic_u8string();
+    if (logical.rfind("single/", 0) != 0)
       logical = "single/" + logical;
     resources->Read(logical);
     initial.scenarioName = logical;
@@ -285,37 +308,55 @@ void SingleMode::SinglePlayThread() {
         session->AtBoundary(true);
         break;
       }
-      auto count = session->History().size();
-      runtime->boundaries.resize(count + 1);
-      runtime->boundaries[count] = {runtime->journal.size(),
-                                    DuelClient::CapturePromptContext()};
-      if (session->State() == undo::LocalUndoState::WaitBoundary) {
-        session->AtBoundary(false);
-        boundary = session->Current();
+      // A successful transaction already installed its pristine prompt. No
+      // query, history copy, journal append or renderer runs after that switch.
+      if (runtime->installedBoundary) {
+        boundary = std::move(*runtime->installedBoundary);
+        runtime->installedBoundary.reset();
+      } else {
+        auto count = session->History().size();
+        runtime->boundaries.resize(count + 1);
+        runtime->boundaries[count].cursor = runtime->journal.size();
+        runtime->boundaries[count].context = DuelClient::CapturePromptContext();
+        if (session->State() == undo::LocalUndoState::WaitBoundary)
+          session->AtBoundary(false);
+        if (runtime->installedBoundary) {
+          boundary = std::move(*runtime->installedBoundary);
+          runtime->installedBoundary.reset();
+        } else {
+          auto prompt = boundary.checkpoint.prompt;
+          if (prompt[0] == MSG_SELECT_IDLECMD || prompt[0] == MSG_SELECT_BATTLECMD)
+            SinglePlayRefresh();
+          auto &visible = runtime->boundaries[count];
+          visible.cursor = runtime->journal.size();
+          visible.context = DuelClient::CapturePromptContext();
+          // UI admission stays closed until the live prompt's pristine widget
+          // snapshot is complete. Its internal Automatic responses keep their
+          // original thread/token/provenance and may still queue normally.
+          runtime->capturingPrompt = true;
+          analyzingLivePrompt = true;
+          bool automatic;
+          try {
+            automatic = AnalyzeVisible(prompt.data(), prompt.size());
+            std::lock_guard<std::mutex> lock(mainGame->gMutex);
+            visible.presentation = CaptureUndoPrompt(*mainGame);
+            visible.presentedContext = DuelClient::CapturePromptContext();
+          } catch (...) {
+            analyzingLivePrompt = false;
+            runtime->capturingPrompt = false;
+            throw;
+          }
+          analyzingLivePrompt = false;
+          runtime->capturingPrompt = false;
+          if (automatic) DuelClient::SendResponse();
+        }
       }
-      auto prompt = boundary.checkpoint.prompt;
-      if (prompt[0] == MSG_SELECT_IDLECMD || prompt[0] == MSG_SELECT_BATTLECMD)
-        SinglePlayRefresh();
-      // Refresh data itself is part of the boundary before the prompt.
-      count = session->History().size();
-      runtime->boundaries.resize(count + 1);
-      runtime->boundaries[count] = {runtime->journal.size(),
-                                    DuelClient::CapturePromptContext()};
-      bool automatic = AnalyzeVisible(prompt.data(), prompt.size());
-      if (runtime->renderingRestore) {
-        runtime->client->Resume(*runtime->resumeKey);
-        runtime->resumeKey.reset();
-        runtime->renderingRestore = false;
-      }
-      if (automatic)
-        DuelClient::SendResponse();
       bool restored = false;
       while (is_continuing) {
         if (session->State() == undo::LocalUndoState::WaitBoundary) {
           auto old = session->Token().epoch;
           session->AtBoundary(false);
           if (session->Token().epoch != old) {
-            boundary = session->Current();
             restored = true;
             break;
           }

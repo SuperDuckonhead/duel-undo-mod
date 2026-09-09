@@ -1,0 +1,19 @@
+--- a/source/Irrlicht/CGUIEnvironment.cpp
++++ b/source/Irrlicht/CGUIEnvironment.cpp
+@@ -220,6 +220,16 @@
+ 
+ 
+ //! sets the focus to an element
++void CGUIEnvironment::installPreparedFocus(IGUIElement* element) noexcept
++{
++	if (element == this) element = 0;
++	if (element) element->grab();
++	IGUIElement* old = Focus;
++	Focus = element;
++	if (old) old->drop();
++}
++
++
+ bool CGUIEnvironment::setFocus(IGUIElement* element)
+ {
+ 	if (Focus == element)

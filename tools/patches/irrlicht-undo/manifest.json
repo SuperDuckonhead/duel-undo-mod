@@ -1,0 +1,20 @@
+[
+  {
+    "file": "include/IGUIEnvironment.h",
+    "patch": "IGUIEnvironment.h.patch",
+    "before": "42321a9999a7370e6c3b605de4e0fd56883dcfaca413fb61058205c69be39221",
+    "after": "51fff3f9e3972b4468381cb95c62d43251a24f8db8fbe205186444b3a522defc"
+  },
+  {
+    "file": "source/Irrlicht/CGUIEnvironment.h",
+    "patch": "CGUIEnvironment.h.patch",
+    "before": "c099b7d619856c578233d395bb39bd8de5eefda9a8a8d044892aa3931100a058",
+    "after": "8c2d230796e79f0159869ca6c19d14ba3f81d603fb4b0356562712604ed5822f"
+  },
+  {
+    "file": "source/Irrlicht/CGUIEnvironment.cpp",
+    "patch": "CGUIEnvironment.cpp.patch",
+    "before": "0db648ef05ff3d36003efe8794a313be2731f0416e41fb1b836eba83e3202394",
+    "after": "3c40932a02a4480cc5f3c80c6f3097f457193e26111e5b115c179f29fb3891e3"
+  }
+]

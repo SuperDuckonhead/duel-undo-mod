@@ -1,0 +1,10 @@
+--- a/source/Irrlicht/CGUIEnvironment.h
++++ b/source/Irrlicht/CGUIEnvironment.h
+@@ -186,6 +186,7 @@
+ 
+ 	//! sets the focus to an element
+ 	virtual bool setFocus(IGUIElement* element) IRR_OVERRIDE;
++	virtual void installPreparedFocus(IGUIElement* element) noexcept IRR_OVERRIDE;
+ 
+ 	//! removes the focus from an element
+ 	virtual bool removeFocus(IGUIElement* element) IRR_OVERRIDE;

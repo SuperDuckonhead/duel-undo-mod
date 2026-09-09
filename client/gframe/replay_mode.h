@@ -33,7 +33,7 @@ public:
 	static void ReplayThread();
 	static bool StartDuel();
 	static void EndDuel();
-	static void Restart(bool refresh);
+	static bool Restart(bool refresh);
 	static void Undo();
 	static bool ReplayAnalyze(unsigned char* msg, unsigned int len);
 	
