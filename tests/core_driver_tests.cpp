@@ -28,7 +28,10 @@ int main(int argc,char** argv) {
   fixture::sql(root+"/cards.cdb","INSERT INTO datas SELECT 900000002,ot,alias,setcode,33,atk,def,level,race,attribute,category FROM datas WHERE id=900000001; INSERT INTO datas SELECT 900000003,ot,alias,setcode,33,atk,def,level,race,attribute,category FROM datas WHERE id=900000001; INSERT INTO texts(id,name) VALUES(900000002,\'late\'),(900000003,\'missing\');");
   fixture::WriteFixtureFile(root+"/script/constant.lua",fixture::bytes("Debug.Message('first:'..math.random(1,2147483647)); math.randomseed(); Debug.Message('second:'..math.random(1,2147483647))"));
   fixture::WriteFixtureFile(root+"/script/utility.lua",{});fixture::WriteFixtureFile(root+"/script/procedure.lua",{});
-  fixture::WriteFixtureFile(root+"/script/c900000002.lua",fixture::bytes("Debug.Message('frozen-late'); c900000002.initial_effect=function(c) end"));
+  // Recreate only this controlled fixture file with uppercase spelling. The real
+  // engine requests ./script/c900000002.lua when CreateToken first loads it.
+  std::filesystem::remove(std::filesystem::u8path(root+"/script/c900000002.lua"));
+  fixture::WriteFixtureFile(root+"/script/C900000002.LUA",fixture::bytes("Debug.Message('frozen-late'); c900000002.initial_effect=function(c) end"));
   fixture::WriteFixtureFile(root+"/single/isolation.lua",fixture::bytes(R"lua(
 local e=Effect.GlobalEffect()
 e:SetType(0x802)

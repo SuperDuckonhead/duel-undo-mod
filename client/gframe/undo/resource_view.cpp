@@ -15,13 +15,20 @@ namespace irr { namespace io { IFileSystem* createFileSystem(); } }
 namespace undo {
 namespace {
 namespace fs = std::filesystem;
+// Match the fixed Irrlicht stringc::make_lower rule, without depending on the
+// process locale. Card/framework logical names are ASCII; UTF-8 bytes outside
+// ASCII are preserved, as they are by the archive reader.
+std::string caseKey(std::string s) {
+ for(char& c:s) if(c>='A' && c<='Z') c=static_cast<char>(c+('a'-'A'));
+ return s;
+}
 std::string logical(std::string s) {
  std::replace(s.begin(),s.end(),'\\','/');
  while(s.rfind("./",0)==0) s.erase(0,2);
  fs::path p=fs::u8path(s);
  if(p.is_absolute() || s.find(':')!=std::string::npos) throw std::runtime_error("Invalid logical resource path: " + s);
  for(const auto& part:p) if(part=="..") throw std::runtime_error("Invalid logical resource path: " + s);
- return p.lexically_normal().generic_u8string();
+ return caseKey(p.lexically_normal().generic_u8string());
 }
 std::optional<Bytes> loose(const fs::path& p) {
  std::ifstream f(p,std::ios::binary); if(!f) return std::nullopt;
@@ -95,7 +102,7 @@ std::shared_ptr<const ResourceView> ResourceView::Capture(const std::string& roo
  for(const char* folder:{"script","expansions/script","single"}) {
   auto path=base/folder; if(!fs::exists(path))continue;
   for(auto& entry:fs::recursive_directory_iterator(path)) if(entry.is_regular_file()) {
-   auto n=fs::relative(entry.path(),base).generic_u8string();
+   auto n=logical(fs::relative(entry.path(),base).generic_u8string());
    if(n.rfind("expansions/script/",0)==0)n.erase(0,11);
    // Include every file, not just .lua: scripts can load arbitrary logical names.
    names.insert(n);
@@ -103,11 +110,13 @@ std::shared_ptr<const ResourceView> ResourceView::Capture(const std::string& roo
  }
  for(irr::u32 i=0;files && i<files->getFileArchiveCount();++i) {
   auto* archive=files->getFileArchive(i); auto* list=archive->getFileList();
-  result->priority_.push_back(fs::u8path(archive->getArchiveName().c_str()).filename().u8string());
+  result->priority_.push_back(caseKey(fs::u8path(archive->getArchiveName().c_str()).filename().u8string()));
   for(irr::u32 j=0;j<list->getFileCount();++j) if(!list->isDirectory(j)) {
    auto n=logical(list->getFullFileName(j).c_str()); if(n.rfind("script/",0)==0)names.insert(n);
   }
  }
+ // Resolve each equivalence class once in loader order; enumeration order and
+ // colliding source spellings must never select the winner.
  for(auto& n:names) { auto b=Resolve(root,files,prefer,n); if(!b)throw std::runtime_error("Pinned resource missing: "+n); result->contents_.emplace(n,std::move(*b)); }
  for(auto& entry:data.GetDataTable()) { card_data cd{}; data.GetData(entry.first,&cd); result->cards_.emplace(entry.first,cd); }
  Bytes encoded; name(encoded,"ygopro-resources-v1");
