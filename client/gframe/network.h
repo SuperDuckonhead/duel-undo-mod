@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstring>
 #include <type_traits>
+#include "undo/room_admission.h"
 
 struct bufferevent;
 struct event;
@@ -201,6 +202,9 @@ struct DuelPlayer {
 	uint8_t type{};
 	uint8_t state{};
 	bufferevent* bev{};
+    undo::RoomPeer undoPeer;
+    uint64_t endpointId{};
+    int64_t connectedAtMs{};
 };
 
 inline unsigned int GetPosition(unsigned char* qbuf, size_t offset) {
@@ -232,6 +236,12 @@ public:
 	virtual void TimerTick() = 0;
 	virtual void EndDuel() = 0;
 	virtual void OnPlayerDisconnected(DuelPlayer* dp) = 0;
+    virtual bool HasActiveDuel() const { return pduel != 0; }
+    virtual bool SupportsUndo() const { return false; }
+    virtual void ReceiveUndo(DuelPlayer*, const undo::Envelope&) {}
+    virtual void PollUndo() {}
+    // Called per recipient before raw TCP output; returning true consumes it.
+    virtual bool RoutePacket(DuelPlayer*, uint8_t, const unsigned char*, size_t) { return false; }
 
 public:
 	DuelPlayer* host_player{ nullptr };
@@ -254,6 +264,9 @@ public:
 #define NETPLAYER_TYPE_PLAYER5		4
 #define NETPLAYER_TYPE_PLAYER6		5
 #define NETPLAYER_TYPE_OBSERVER		7
+
+#define CTOS_UNDO 0x7e
+#define STOC_UNDO 0x7e
 
 #define CTOS_RESPONSE		0x1		// byte array
 #define CTOS_UPDATE_DECK	0x2		// uint32_t mainc, uint32_t sidec, uint32_t[mainc+sidec]

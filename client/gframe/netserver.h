@@ -12,13 +12,17 @@ private:
 	static size_t last_sent;
 	static bufferevent* disconnecting_bev;
 	static int WriteBufferEvent(bufferevent* bufev, const void* data, size_t size);
+    static void DeliverPrepared(DuelPlayer*, const unsigned char*, size_t);
 
 	static bool CanWriteToPlayer(DuelPlayer* dp) {
 		return dp && dp->bev && dp->bev != disconnecting_bev;
 	}
 
 public:
-	static bool StartServer(unsigned short port, unsigned int ip = 0, unsigned short* out_actual_port = nullptr, bool enable_broadcast = true);
+	static bool StartServer(unsigned short port, unsigned int ip = 0, unsigned short* out_actual_port = nullptr, bool enable_broadcast = true, const undo::Hello* undo_capability = nullptr);
+    static bool IsRunning();
+    static const undo::RoomAdmission* Admission(); // server thread only
+    static bool SendUndoToPlayer(DuelPlayer*, const undo::Envelope&);
 	static bool StartBroadcast();
 	static void StopServer();
 	static void StopBroadcast();
@@ -50,8 +54,7 @@ public:
 		BufferIO::Write<uint16_t>(p, 1);
 		BufferIO::Write<uint8_t>(p, proto);
 		last_sent = 3;
-		if (CanWriteToPlayer(dp))
-			WriteBufferEvent(dp->bev, net_server_write, 3);
+		DeliverPrepared(dp, net_server_write, 3);
 	}
 	template<typename ST>
 	static void SendPacketToPlayer(DuelPlayer* dp, unsigned char proto, const ST& st) {
@@ -61,8 +64,7 @@ public:
 		BufferIO::Write<uint8_t>(p, proto);
 		std::memcpy(p, &st, sizeof(ST));
 		last_sent = sizeof(ST) + 3;
-		if (CanWriteToPlayer(dp))
-			WriteBufferEvent(dp->bev, net_server_write, sizeof(ST) + 3);
+		DeliverPrepared(dp, net_server_write, sizeof(ST) + 3);
 	}
 	static void SendBufferToPlayer(DuelPlayer* dp, unsigned char proto, void* buffer, size_t len) {
 		auto p = net_server_write;
@@ -72,12 +74,10 @@ public:
 		BufferIO::Write<uint8_t>(p, proto);
 		std::memcpy(p, buffer, len);
 		last_sent = len + 3;
-		if (CanWriteToPlayer(dp))
-			WriteBufferEvent(dp->bev, net_server_write, len + 3);
+		DeliverPrepared(dp, net_server_write, len + 3);
 	}
 	static void ReSendToPlayer(DuelPlayer* dp) {
-		if (CanWriteToPlayer(dp))
-			WriteBufferEvent(dp->bev, net_server_write, last_sent);
+		DeliverPrepared(dp, net_server_write, last_sent);
 	}
 };
 

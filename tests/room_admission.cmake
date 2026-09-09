@@ -1,0 +1,5 @@
+add_undo_test(room_admission_tests tests/room_admission_tests.cpp)
+target_sources(room_admission_tests PRIVATE client/gframe/undo/room_admission.cpp client/gframe/undo/protocol.cpp)
+if(WIN32)
+    target_link_libraries(room_admission_tests PRIVATE bcrypt)
+endif()

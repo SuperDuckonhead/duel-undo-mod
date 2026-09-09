@@ -1,4 +1,4 @@
-# Undo network foundation (not wired into the client)
+# Undo network protocol and server admission
 
 Status: pure codec and pure host coordinator only. N1/N2 and acceptance 6.1 remain open.
 No Hello is exchanged by NetServer/DuelClient, no live packet is filtered, no GUI
@@ -21,7 +21,7 @@ layout or native memcpy serialization is used.
 | Offset | Field | Bytes |
 | --- | --- | --- |
 | 0 | version = 1 | 2 |
-| 2 | kind = 1..11 | 1 |
+| 2 | kind = 1..13 | 1 |
 | 3 | session | 16 |
 | 19 | base epoch | 8 |
 | 27 | request | 8 |
@@ -31,7 +31,7 @@ layout or native memcpy serialization is used.
 | 79 | payload | 0..49,152 |
 
 Kinds: Hello 1, Response 2, Request 3, Consent 4, Prepare 5, Ready 6,
-Commit 7, CommitAck 8, Resume 9, Abort 10, AbortAck 11.
+Commit 7, CommitAck 8, Resume 9, Abort 10, AbortAck 11, Game 12, Status 13.
 Unknown kind/version, every truncation, trailing bytes, and oversize lengths
 fail explicitly. Encode applies the same limits. Generic payload bytes are
 opaque here; adapters must validate each message kind's payload schema and
@@ -152,7 +152,7 @@ terminal intents for unrelated transactions.
 
 ## Required live work still open
 
-- NetServer/SingleDuel/DuelClient capability exchange and connection identity.
+- Client/menu capability exchange, fresh per-duel session renewal and actual UndoDuel creation.
 - Legacy/unwrapped CTOS_RESPONSE rejection in extended rooms, game/control
   epoch tagging in all message and animation/AI callback paths.
 - Trusted public target digest construction, C4 no-fail ownership/history
@@ -160,3 +160,9 @@ terminal intents for unrelated transactions.
 - N3 per-player restore serialization, digest verification and model swap.
 - Consent dialog and freeze/unfreeze handling; loopback listener/peer policy.
 - Real two-client and two-device LAN failure/loss/old-peer/privacy acceptance.
+
+## Production admission seam
+
+NetServer StartServer takes an optional Hello. Its configured mode is checked against the actual bound socket; free mode requires exactly 127.0.0.1 and accepted peers in 127/8. The client advertises with zero session, receives the host session/mode challenge (request 0), echoes it exactly, then receives confirmation (request 1). Engine/rules/resources match throughout. Ready/start are closed until confirmation. Unconfirmed connections expire after 30 seconds. An ordinary server with no capability keeps the baseline protocol.
+
+Game packets carry the session/installed epoch, current prompt in request, consecutive per-recipient packet sequence in targetIndex and zero digest. Fragmented raw STOC is limited to 1 MiB; malformed current streams poison assembly until an authenticated reset, while old-session/epoch and completed duplicates are ignored. Response carries Manual/Automatic origin, u16 length and 1..256 bytes; a network peer cannot claim Bot origin. Status is 36 bytes containing state, eligibility, prompt/time players, next request ID, current prompt ID and both millisecond clocks. These codecs do not themselves wire the client or perform a restore.
