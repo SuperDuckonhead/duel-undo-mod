@@ -238,6 +238,7 @@ public:
 	virtual void OnPlayerDisconnected(DuelPlayer* dp) = 0;
     virtual bool HasActiveDuel() const { return pduel != 0; }
     virtual bool SupportsUndo() const { return false; }
+    virtual bool CanJoinHuman() const { return true; }
     virtual void ReceiveUndo(DuelPlayer*, const undo::Envelope&) {}
     virtual void PollUndo() {}
     // Called per recipient before raw TCP output; returning true consumes it.

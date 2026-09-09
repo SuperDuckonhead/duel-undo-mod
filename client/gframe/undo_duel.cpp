@@ -4,6 +4,8 @@
 #include "undo/rebuilder.h"
 #include "undo/player_restore.h"
 #include "undo/room_restore.h"
+#include "undo/host_bot_seat.h"
+#include <deque>
 #include "../ocgcore/mtrandom.h"
 #include <algorithm>
 #include <chrono>
@@ -52,7 +54,7 @@ struct PreparedHost {
     Boundary boundary;
     std::array<Bytes,2> restore;
     std::array<bool,2> ready{};
-    bool coreReady{}, committed{};
+    bool coreReady{}, committed{}, botCommitQueued{}, botAbortQueued{};
 };
 }
 
@@ -81,6 +83,15 @@ struct UndoDuel::Impl {
     std::uint8_t clockPlayer{2}, requester{};
     bool advancing{}, terminalPending{}, finished{}, failed{}, draining{}, transaction{};
     std::string error;
+    std::unique_ptr<DuelPlayer> botPlayer;
+    std::unique_ptr<HostBotSeat> bot;
+    HostBotStatus botStatus;
+    std::deque<BotOutput> botOutputs;
+    struct HeldPacket { DuelPlayer* player; std::uint8_t opcode; Bytes body; };
+    std::vector<HeldPacket> heldHuman;
+    std::uint64_t botLastDispatch{}, botFenceJob{};
+    bool botAdmission{}, botPolling{}, terminalAuthorized{}, replaySent{};
+    std::optional<Envelope> botResume;
 
     Impl(UndoDuel& o,std::shared_ptr<const RoomConfig> c,SessionId s,Send output)
       :owner(o),config(std::move(c)),session(s),send(std::move(output)),
@@ -88,10 +99,18 @@ struct UndoDuel::Impl {
         require(config && config->resources,"Missing frozen undo room resources");
         require(config->resources->Fingerprint()==config->capability.resources,"Room resource fingerprint differs");
         require(session!=SessionId{},"Missing room session");
-        // The private worker is integrated separately; never fall back to a socket bot.
-        require(!config->bot,"Host AI adapter is not installed yet");
+        if(config->bot) {
+            require(!config->botExecutable.empty(),"Missing private bot executable");
+            require(config->bot->resources==config->resources->Fingerprint(),"Bot/core resources differ");
+            botPlayer=std::make_unique<DuelPlayer>();
+            botPlayer->endpointId=std::numeric_limits<std::uint64_t>::max();
+            botPlayer->undoPeer.ready=true;botPlayer->type=0xff;
+            botStatus.generation=1;
+            bot=std::make_unique<HostBotSeat>(config->botExecutable,*config->bot,session,0,botStatus.generation);
+        }
     }
     ~Impl() {
+        if(bot)bot->Stop();
         if(job) {job->cancel=true;if(job->worker.joinable())job->worker.join();}
     }
     int participant(DuelPlayer* p) const {
@@ -99,7 +118,7 @@ struct UndoDuel::Impl {
         return -1;
     }
     bool open() const {
-        return core && !failed && !finished && !advancing && boundary.kind==BoundaryKind::AwaitResponse &&
+        return core && !failed && !finished && !advancing && !transaction && !botStatus.humanPromptHeld && boundary.kind==BoundaryKind::AwaitResponse &&
             coordinator.State()==TxState::Running;
     }
     void observeClock() {
@@ -113,6 +132,8 @@ struct UndoDuel::Impl {
     RoomStatus status() const {
         RoomStatus s;
         s.state=failed?TxState::PausedFailed:coordinator.State();
+        if(!failed && transaction && s.state==TxState::Running)
+            s.state=prepared && prepared->committed?TxState::Committing:TxState::Aborting;
         s.prompt=prompt;s.nextRequest=nextRequest;s.clock=clock;s.timePlayer=clockPlayer;
         s.promptPlayer=core && !finished && boundary.kind==BoundaryKind::AwaitResponse?boundary.checkpoint.player:2;
         if(open() && !job && nextRequest!=std::numeric_limits<std::uint64_t>::max())
@@ -120,6 +141,7 @@ struct UndoDuel::Impl {
         return s;
     }
     bool emit(int p,const Envelope& e) {
+        if(bot && p==1)return true; // Private transaction completion supplies this participant's Ready/Ack.
         if(departing[p])return true; // Terminal teardown does not require delivery to the departed endpoint.
         if(!participants[p])return false;
         return send?send(participants[p],e):NetServer::SendUndoToPlayer(participants[p],e);
@@ -128,7 +150,7 @@ struct UndoDuel::Impl {
         for(int p=0;p<2;++p)require(emit(p,e),"Undo control transport failed");
     }
     void publish(bool force=false) {
-        if(!core)return; // Capability confirmation must precede every room status.
+        if(!core || botStatus.humanPromptHeld || botResume)return; // Never advertise an input boundary before its AI fence/Resume.
         const auto now=nowMs();
         if(!force && now-lastStatus<500)return;
         lastStatus=now;
@@ -136,7 +158,7 @@ struct UndoDuel::Impl {
         for(int p=0;p<2;++p)if(participants[p] && participants[p]->undoPeer.ready)require(emit(p,e),"Undo status transport failed");
     }
     void fail(const std::string& why,bool mayHaveCommitted=false) {
-        error=why;
+        error=why;botAdmission=false;botStatus.failure=why;
         if(job && !mayHaveCommitted)job->cancel=true;
         if(coordinator.State()!=TxState::Running)
             coordinator.Fail(coordinator.ActiveKey(),mayHaveCommitted);
@@ -146,6 +168,10 @@ struct UndoDuel::Impl {
     void raw(DuelPlayer* player,std::uint8_t opcode,const unsigned char* data,std::size_t size) {
         const auto p=participant(player);require(p>=0,"Unknown undo recipient");
         if(departing[p])return;
+        if(bot && player!=botPlayer.get() && botStatus.humanPromptHeld) {
+            require(heldHuman.size()<4096,"Held human packet limit exceeded");
+            heldHuman.push_back({player,opcode,Bytes(data,data+size)});return;
+        }
         Bytes packet{opcode};packet.insert(packet.end(),data,data+size);
         require(sequence[p]!=std::numeric_limits<std::uint64_t>::max(),"Game packet sequence exhausted");
         for(const auto& e:EncodeGamePacket(session,installedEpoch,prompt,++sequence[p],packet))
@@ -154,6 +180,122 @@ struct UndoDuel::Impl {
     void sendGame(int enginePlayer,const Bytes& frame) {
         NetServer::SendBufferToPlayer(owner.players[enginePlayer],STOC_GAME_MSG,
             const_cast<std::uint8_t*>(frame.data()),frame.size());
+    }
+    void queueBot(std::uint8_t opcode,const unsigned char* data,std::size_t size) {
+        if(finished || failed || opcode==STOC_REPLAY)return;
+        require(botStatus.initialized,"Bot packet before initialization");
+        Bytes packet{opcode};packet.insert(packet.end(),data,data+size);
+        const auto id=bot->Dispatch(installedEpoch,prompt,std::move(packet));
+        require(id!=0,"Private AI input admission closed");
+        botLastDispatch=id;++botStatus.pendingInputs;
+    }
+    void fenceBot() {
+        if(bot && !botFenceJob) {
+            botFenceJob=bot->Fence();require(botFenceJob!=0,"Private AI fence unavailable");
+            botStatus.fencePending=true;
+        }
+    }
+    void joinBot() {
+        if(!bot || !botStatus.initialized || botPlayer->game || !participants[0])return;
+        const auto name=BufferIO::DecodeUTF8String(botStatus.selection.name);
+        BufferIO::CopyCharArray(name.c_str(),botPlayer->name);
+        CTOS_JoinGame join{};join.version=PRO_VERSION;BufferIO::CopyCharArray(owner.pass,join.pass);
+        owner.JoinGame(botPlayer.get(),reinterpret_cast<unsigned char*>(&join),false);
+        require(botPlayer->game==&owner && botPlayer->type<2,"Private AI could not occupy reserved seat");
+    }
+    void deliverBot() {
+        if(!botAdmission || failed || finished || transaction || coordinator.State()!=TxState::Running)return;
+        while(!botOutputs.empty() && botAdmission && !transaction && !failed && !finished) {
+            auto output=std::move(botOutputs.front());botOutputs.pop_front();
+            if(!AcceptsBotOutput(output,botStatus.identity,prompt))continue;
+            auto& packet=output.packet;require(!packet.empty(),"Empty private AI output");
+            auto* player=botPlayer.get();auto* data=packet.data()+1;const auto size=packet.size()-1;
+            switch(packet[0]) {
+            case CTOS_UPDATE_DECK:
+                require(!core && size>=8,"Unexpected AI deck update");owner.UpdateDeck(player,data,static_cast<unsigned>(size));break;
+            case CTOS_HS_READY:
+                require(!core && size==0,"Unexpected AI Ready");owner.PlayerReady(player,true);break;
+            case CTOS_HAND_RESULT:
+                require(!core && (size==1 || size==4),"Invalid AI hand result");owner.HandResult(player,data[0]);break;
+            case CTOS_TP_RESULT:
+                require(!core && (size==1 || size==4),"Invalid AI turn choice");owner.TPResult(player,data[0]);break;
+            case CTOS_TIME_CONFIRM:
+                require(size==0,"Invalid AI time confirmation");owner.TimeConfirm(player);break;
+            case CTOS_RESPONSE:
+                require(size>0 && size<=256,"Invalid AI response size");
+                accept(player,Origin::Bot,Bytes(data,data+size),{session,installedEpoch,output.prompt,0,{}});break;
+            case CTOS_CHAT:
+                require(size>0 && size<=LEN_CHAT_MSG*sizeof(std::uint16_t) && size%2==0,"Invalid AI chat");
+                owner.Chat(player,data,static_cast<int>(size));break;
+            case CTOS_SURRENDER:
+                require(size==0,"Invalid AI surrender");owner.Surrender(player);break;
+            default:throw std::runtime_error("Unexpected private AI command");
+            }
+        }
+        botStatus.pendingOutputs=botOutputs.size();
+    }
+    void releaseHuman(std::size_t cursor) {
+        require(botStatus.humanPromptHeld && !transaction,"Invalid AI prompt fence release");
+        boundary.checkpoint.aiLogCursor=cursor;botStatus.fencedCursor=cursor;
+        botStatus.humanPromptHeld=false;
+        auto packets=std::move(heldHuman);heldHuman.clear();
+        for(const auto& packet:packets)raw(packet.player,packet.opcode,packet.body.data(),packet.body.size());
+        clockPlayer=boundary.checkpoint.player;clockObserved=nowMs();publish(true);
+    }
+    void finishResume(const Envelope& e) {
+        broadcast(e);
+        if(transaction && prepared && prepared->committed && SameKey(e.key,prepared->key)) {
+            prepared.reset();resumeClock();transaction=false;botAdmission=bool(bot);
+        }
+    }
+    void pollBot() {
+        if(!bot || botPolling)return;
+        botPolling=true;
+        try {
+            for(auto& result:bot->Poll()) {
+                if(result.generation!=botStatus.generation)continue;
+                botStatus.identity=result.identity;botStatus.cursor=result.cursor;
+                botStatus.candidatePid=result.candidatePid;botStatus.retainedPid=result.retainedPid;
+                botStatus.commitCount=result.commitCount;botStatus.selection=result.selection;
+                if(result.operation==BotOperation::Dispatch && botStatus.pendingInputs)--botStatus.pendingInputs;
+                if(finished)continue;
+                if(!result.accepted) {
+                    fail(result.failure.empty()?"Private AI operation failed":result.failure,
+                        result.operation==BotOperation::Commit || result.operation==BotOperation::Resume || (prepared && prepared->committed));
+                    continue;
+                }
+                switch(result.operation) {
+                case BotOperation::Initialize:
+                    botStatus.initialized=true;botAdmission=true;joinBot();break;
+                case BotOperation::Dispatch:
+                    require(botOutputs.size()+result.outputs.size()<=4096,"Private AI output queue limit exceeded");
+                    for(auto& output:result.outputs)botOutputs.push_back(std::move(output));break;
+                case BotOperation::Fence:
+                    if(result.job==botFenceJob){botFenceJob=0;botStatus.fencePending=false;}
+                    break;
+                case BotOperation::Prepare:
+                    if(prepared && coordinator.State()==TxState::Preparing){prepared->ready[1]=true;ready();}break;
+                case BotOperation::Commit:
+                    if(prepared && prepared->committed && coordinator.State()==TxState::Committing)
+                        coordinator.CommitAck(prepared->key,1,result.identity.epoch);
+                    break;
+                case BotOperation::Abort:
+                    if(coordinator.State()==TxState::Aborting)coordinator.AbortAck(coordinator.ActiveKey(),1);
+                    break;
+                case BotOperation::Resume:
+                    if(botResume){auto e=std::move(*botResume);botResume.reset();finishResume(e);}break;
+                default:break;
+                }
+                deliverBot();
+                if(result.operation==BotOperation::Fence && botStatus.humanPromptHeld && !transaction && !failed) {
+                    if(botStatus.pendingInputs==0 && botOutputs.empty() && botLastDispatch<result.job)releaseHuman(result.cursor);
+                    else fenceBot();
+                }
+            }
+            deliverBot();
+            botStatus.pendingOutputs=botOutputs.size();
+            botPolling=false;
+        } catch(...) {botPolling=false;throw;}
     }
     void boundaryReady(int player) {
         VisibleBoundary visible{{journal[0].size(),journal[1].size()},prompt};
@@ -186,7 +328,7 @@ struct UndoDuel::Impl {
         coordinator.Boundary(nowMs(),finished,target,clock);
     }
     void sendPrepared() {
-        for(int p=0;p<2;++p)
+        for(int p=0;p<2;++p)if(!bot || p!=1)
             for(const auto& fragment:Fragment(prepared->restore[p]))
                 require(emit(p,{WireKind::Prepare,prepared->key,fragment}),"Prepare transport failed");
     }
@@ -211,11 +353,13 @@ struct UndoDuel::Impl {
             // SingleDuel::Analyze already filtered for this endpoint.
             const auto& targetPrompt=visible.prompts[p];
             require(!targetPrompt.empty(),"Missing recipient-visible prompt");
-            auto restore=BuildPlayerRestore(recipient,next->journal[p],targetPrompt);
+            next->journal[p].push_back(targetPrompt);
+            if(bot && p==1)continue;
+            auto prefix=next->journal[p];prefix.pop_back();
+            auto restore=BuildPlayerRestore(recipient,prefix,targetPrompt);
             RoomRestore descriptor{visible.prompt,next->boundary.checkpoint.player,
                 next->boundary.checkpoint.clock,EncodePlayerRestore(restore)};
             next->restore[p]=EncodeRoomRestore(descriptor);
-            next->journal[p].push_back(targetPrompt);
         }
         // All copied history/journal/descriptor allocations precede candidate readiness.
         auto records=history.Records();
@@ -232,6 +376,7 @@ struct UndoDuel::Impl {
             work->core=std::move(candidate);work->error=std::move(failure);work->done=true;
         });
         job=std::move(work);prepared=std::move(next);
+        if(bot)require(bot->Prepare(key,prepared->boundary.checkpoint.aiLogCursor)!=0,"Private AI Prepare unavailable");
         sendPrepared();
     }
     void ready() {
@@ -242,6 +387,9 @@ struct UndoDuel::Impl {
     void commit() {
         require(prepared && prepared->coreReady,"Commit without prepared host");
         if(prepared->committed)return;
+        if(bot && !prepared->botCommitQueued) {
+            require(bot->Commit(prepared->key)!=0,"Private AI Commit unavailable");prepared->botCommitQueued=true;
+        }
         // Everything below is an ownership/value switch. Old branch remains in prepared.
         core.swap(prepared->core);
         std::swap(history,prepared->history);
@@ -253,6 +401,7 @@ struct UndoDuel::Impl {
         sequence={};
         for(auto& stream:incoming)if(stream)stream->Reset(session,installedEpoch);
         prepared->committed=true;
+        if(bot){botOutputs.clear();heldHuman.clear();botStatus.humanPromptHeld=false;}
         clockPlayer=2;
     }
     void resumeClock() {
@@ -280,15 +429,20 @@ struct UndoDuel::Impl {
                     case WireKind::Commit:
                         commit();broadcast(e);break;
                     case WireKind::Resume:
-                        broadcast(e);
-                        if(transaction && prepared && prepared->committed && SameKey(e.key,prepared->key)) {
-                            prepared.reset();resumeClock();transaction=false;
-                        }
+                        if(bot && transaction && prepared && prepared->committed && SameKey(e.key,prepared->key)) {
+                            if(!botResume){require(bot->Resume(e.key,installedEpoch)!=0,"Private AI Resume unavailable");botResume=e;}
+                        } else finishResume(e);
                         break;
                     case WireKind::Abort: {
                         const bool final=coordinator.State()==TxState::Running;
                         e.payload.push_back(final?1:0);
-                        if(final && transaction && SameKey(e.key,coordinator.ActiveKey())){prepared.reset();resumeClock();transaction=false;}
+                        if(bot && !final && (!prepared || !prepared->botAbortQueued)) {
+                            require(bot->Abort(e.key)!=0,"Private AI Abort unavailable");
+                            if(prepared)prepared->botAbortQueued=true;
+                        }
+                        if(final && transaction && SameKey(e.key,coordinator.ActiveKey())) {
+                            prepared.reset();resumeClock();transaction=false;botAdmission=bool(bot);
+                        }
                         broadcast(e);break;
                     }
                     default:break;
@@ -303,6 +457,7 @@ struct UndoDuel::Impl {
         }
     }
     void poll() {
+        pollBot();
         observeClock();
         coordinator.Tick(nowMs());
         if(job && (coordinator.State()==TxState::Aborting || coordinator.State()==TxState::PausedFailed))job->cancel=true;
@@ -329,7 +484,7 @@ struct UndoDuel::Impl {
         Bytes win{MSG_WIN,static_cast<std::uint8_t>(1-clockPlayer),3};
         clockPlayer=2;
         sendGame(0,win);sendGame(1,win);
-        owner.EndDuel();owner.DuelEndProc();publish(true);
+        terminalAuthorized=true;owner.EndDuel();owner.DuelEndProc();publish(true);
         return true;
     }
     void accept(DuelPlayer* player,Origin origin,const Bytes& response,const TxKey& key) {
@@ -346,9 +501,19 @@ UndoDuel::UndoDuel(bool match,std::shared_ptr<const RoomConfig> config,SessionId
     :SingleDuel(match),impl_(std::make_unique<Impl>(*this,std::move(config),session,std::move(send))) {}
 UndoDuel::~UndoDuel()=default;
 bool UndoDuel::HasActiveDuel() const {return impl_->core && !impl_->finished;}
+bool UndoDuel::CanJoinHuman() const {
+    return !impl_->core && (impl_->bot?!impl_->participants[0]:(!impl_->participants[0] || !impl_->participants[1]));
+}
+std::optional<HostBotStatus> UndoDuel::BotStatus() const {
+    if(!impl_->bot)return std::nullopt;
+    auto result=impl_->botStatus;result.engineSeat=impl_->botPlayer->type;
+    result.lobbyReady=result.engineSeat<2 && ready[result.engineSeat];
+    return result;
+}
 void UndoDuel::JoinGame(DuelPlayer* dp,unsigned char* bytes,bool creator) {
     auto& r=*impl_;
     if(!dp || !dp->endpointId)return;
+    if(r.bot && dp!=r.botPlayer.get() && r.participants[0])return;
     int free=-1;
     for(int i=0;i<2;++i) {
         if(r.participants[i]==dp)return;
@@ -368,6 +533,7 @@ void UndoDuel::JoinGame(DuelPlayer* dp,unsigned char* bytes,bool creator) {
     r.departing[free]=false; // A newly admitted endpoint owns a fresh delivery lifetime.
     r.participants[free]=dp;
     SingleDuel::JoinGame(dp,bytes,creator);
+    r.joinBot();
     // A failed join may disconnect and destroy dp. Resolve only through the
     // admission callback before using it again in the real NetServer owner.
 }
@@ -423,8 +589,18 @@ void UndoDuel::Process() {
             auto copy=frame;SingleDuel::Analyze(copy.data(),static_cast<unsigned int>(copy.size()));
         });
         r.advancing=false;
-        if(next.kind==BoundaryKind::Failed){r.fail(next.failure);r.submitted.reset();r.drain();return;}
+        if(next.kind==BoundaryKind::Failed){
+            auto failure=next.failure;
+            if(r.submitted) {
+                failure+=" after player "+std::to_string(r.submitted->player)+" prompt "+std::to_string(r.submitted->before.prompt.at(0))+" response";
+                for(auto b:r.submitted->response)failure+=" "+std::to_string(b);
+            }
+            for(const auto& log:r.core->Logs())failure+="; "+log;
+            r.fail(failure);r.submitted.reset();r.drain();return;
+        }
         if(next.rejectedResponse) {
+            // CoreDriver retains its private checkpoint; the AI cursor belongs to the host fence.
+            next.checkpoint.aiLogCursor=r.boundary.checkpoint.aiLogCursor;
             r.prompt=previousPrompt;r.submitted.reset();r.boundary=std::move(next);
             r.boundary.checkpoint.clock=r.clock;
             players[r.boundary.checkpoint.player]->state=CTOS_RESPONSE;
@@ -435,12 +611,14 @@ void UndoDuel::Process() {
         if(r.submitted)r.history.Accept(std::move(*r.submitted));
         r.submitted.reset();r.boundary=std::move(next);
         if(r.terminalPending || r.boundary.kind==BoundaryKind::Finished) {
-            r.finished=true;r.clockPlayer=2;EndDuel();DuelEndProc();r.publish(true);return;
+            r.finished=true;r.clockPlayer=2;r.terminalAuthorized=true;EndDuel();DuelEndProc();r.publish(true);return;
         }
         r.boundary.checkpoint.clock=r.clock;
+        r.botStatus.humanPromptHeld=r.bot && players[r.boundary.checkpoint.player]!=r.botPlayer.get();
         auto bytes=r.boundary.checkpoint.prompt;
         SingleDuel::Analyze(bytes.data(),static_cast<unsigned int>(bytes.size()));
-        r.clockPlayer=r.boundary.checkpoint.player;r.clockObserved=nowMs();
+        r.clockPlayer=r.botStatus.humanPromptHeld?2:r.boundary.checkpoint.player;r.clockObserved=nowMs();
+        if(r.botStatus.humanPromptHeld)r.fenceBot();
         if(r.coordinator.State()==TxState::WaitBoundary)r.freezeRequest();
         r.drain();
     } catch(const std::exception& e){r.advancing=false;r.fail(e.what());r.drain();}
@@ -450,28 +628,47 @@ void UndoDuel::GetResponse(DuelPlayer*,unsigned char*,unsigned int) {
     // current prompt, origin and actual participant before accepting a response.
 }
 void UndoDuel::ReceiveUndo(DuelPlayer* dp,const Envelope& e) {
-    auto& r=*impl_;const auto p=r.participant(dp);if(p<0 || !dp->undoPeer.ready || r.failed)return;
+    auto& r=*impl_;const auto p=r.participant(dp);if(p<0 || !dp->undoPeer.ready || (r.failed && e.kind!=WireKind::Request))return;
     if(e.key.session!=r.session)return;
     if((e.kind==WireKind::Response || e.kind==WireKind::Game) && e.key.epoch!=r.installedEpoch)return;
     if(e.kind!=WireKind::Response && e.kind!=WireKind::Game && e.kind!=WireKind::Request &&
        !SameKey(e.key,r.coordinator.ActiveKey()))return;
     try {
+        if(e.kind==WireKind::Request) {
+            // Rejections are directed, out-of-band values. Malformed and old
+            // epoch traffic never creates a reply or advances the duel clock.
+            if(!IsCurrent(e.key,r.session,r.installedEpoch) || !e.key.request ||
+               e.key.targetIndex || e.key.targetDigest!=Digest{} || !e.payload.empty())return;
+            const auto busy=[&] {return r.coordinator.State()!=TxState::Running ||
+                r.transaction || r.job || r.botStatus.humanPromptHeld;};
+            const auto reject=[&] {require(r.emit(p,{WireKind::RequestRejected,e.key,
+                {static_cast<std::uint8_t>(busy()?1:2)}}),"Request rejection transport failed");};
+            if(r.failed || r.finished || !r.core || r.botStatus.humanPromptHeld ||
+               ((r.job || r.transaction) && r.coordinator.State()==TxState::Running)) {reject();return;}
+            // Existing transactions/cached requests use coordinator retransmit
+            // semantics, without observing time or disturbing another request.
+            if(r.coordinator.State()!=TxState::Running || e.key.request<r.nextRequest) {
+                if(r.coordinator.Request(e.key,static_cast<std::uint8_t>(p),nowMs()))r.drain();
+                else reject();
+                return;
+            }
+            if(dp->type>1 || !r.history.Target(dp->type)){reject();return;}
+            // A fresh admissible request observes expiry before it freezes input.
+            r.observeClock();r.coordinator.Tick(nowMs());if(r.resolveExpired())return;
+            if(!r.coordinator.Request(e.key,static_cast<std::uint8_t>(p),nowMs())) {reject();return;}
+            if(r.coordinator.State()==TxState::WaitBoundary) {
+                r.transaction=true;r.botAdmission=false;
+                r.requester=static_cast<std::uint8_t>(p);
+                r.nextRequest=e.key.request==std::numeric_limits<std::uint64_t>::max()?e.key.request:e.key.request+1;
+                if(!r.advancing)r.freezeRequest();
+            }
+            r.drain();return;
+        }
         r.observeClock();r.coordinator.Tick(nowMs());if(r.resolveExpired())return;
         switch(e.kind) {
         case WireKind::Response: {
             auto response=DecodeResponse(e);r.accept(dp,response.origin,response.response,response.key);break;
         }
-        case WireKind::Request:
-            if(!e.payload.empty() || r.failed || r.finished || !r.core || (r.job && r.coordinator.State()==TxState::Running))return;
-            if(r.coordinator.Request(e.key,static_cast<std::uint8_t>(p),nowMs())) {
-                if(r.coordinator.State()==TxState::WaitBoundary) {
-                    r.transaction=true;
-                    r.requester=static_cast<std::uint8_t>(p);
-                    r.nextRequest=e.key.request==std::numeric_limits<std::uint64_t>::max()?e.key.request:e.key.request+1;
-                    if(!r.advancing)r.freezeRequest();
-                }
-            }
-            break;
         case WireKind::Consent:
             require(e.payload.size()==1 && e.payload[0]<=1,"Invalid consent");
             r.coordinator.Consent(e.key,static_cast<std::uint8_t>(p),e.payload[0]!=0,nowMs());break;
@@ -506,7 +703,10 @@ void UndoDuel::ReceiveUndo(DuelPlayer* dp,const Envelope& e) {
 void UndoDuel::PollUndo(){impl_->poll();}
 bool UndoDuel::RoutePacket(DuelPlayer* dp,std::uint8_t opcode,const unsigned char* body,std::size_t size) {
     auto& r=*impl_;
-    if(!r.core)return false;
+    if(!r.core) {
+        if(r.bot && dp==r.botPlayer.get()){r.queueBot(opcode,body,size);return true;}
+        return false;
+    }
     const auto p=r.participant(dp);if(p<0)return true;
     if(opcode==STOC_GAME_MSG && size && body[0]!=MSG_RETRY && body[0]!=MSG_WIN) {
         if(r.boundaries.size()==r.history.Records().size()+1 && r.boundaries.back().prompt==r.prompt) {
@@ -516,7 +716,9 @@ bool UndoDuel::RoutePacket(DuelPlayer* dp,std::uint8_t opcode,const unsigned cha
         }
         r.journal[p].emplace_back(body,body+size);
     }
-    r.raw(dp,opcode,body,size);return true;
+    if(r.bot && dp==r.botPlayer.get())r.queueBot(opcode,body,size);
+    else r.raw(dp,opcode,body,size);
+    return true;
 }
 void UndoDuel::WaitforResponse(int player){impl_->boundaryReady(player);}
 void UndoDuel::TimeConfirm(DuelPlayer* dp) {
@@ -529,13 +731,20 @@ void UndoDuel::EndDuel() {
     auto& r=*impl_;
     if(r.advancing){r.terminalPending=true;return;}
     r.finished=true;r.clockPlayer=2;
-    // Network retained-branch replay serialization is integrated with the client
-    // new-format route in the next adapter step. Never emit a legacy/full live replay.
+    if(r.terminalAuthorized && !r.replaySent && !r.failed && !r.transaction &&
+       r.coordinator.State()==TxState::Running && r.core && players[0] && players[1]) {
+        r.replaySent=true;
+        wchar_t first[20]{},second[20]{};
+        BufferIO::CopyCharArray(players[0]->name,first);BufferIO::CopyCharArray(players[1]->name,second);
+        Replay replay;replay.RecordUndoDuel(r.initial,r.history.Records(),first,second);
+        const auto bytes=replay.ExportUndoReplay();
+        for(auto* player:players)if(player!=r.botPlayer.get())r.raw(player,STOC_REPLAY,bytes.data(),bytes.size());
+    }
 }
 void UndoDuel::Surrender(DuelPlayer* dp) {
     auto& r=*impl_;if(!dp || dp->type>1 || !r.open())return;
     Bytes win{MSG_WIN,static_cast<std::uint8_t>(1-dp->type),0};
-    r.sendGame(0,win);r.sendGame(1,win);EndDuel();DuelEndProc();r.publish(true);
+    r.sendGame(0,win);r.sendGame(1,win);r.terminalAuthorized=true;EndDuel();DuelEndProc();r.publish(true);
 }
 void UndoDuel::LeaveGame(DuelPlayer* dp) {
     auto& r=*impl_;const auto seat=r.participant(dp);
@@ -565,16 +774,17 @@ void UndoDuel::OnPlayerDisconnected(DuelPlayer* dp) {
 void UndoDuel::ToObserver(DuelPlayer*) {}
 const InitialState& UndoDuel::Initial() const{return impl_->initial;}
 const DuelHistory& UndoDuel::History() const{return impl_->history;}
-Boundary UndoDuel::CurrentBoundary() const{return impl_->core?impl_->core->Current():impl_->boundary;}
+Boundary UndoDuel::CurrentBoundary() const{return impl_->boundary;}
 RoomStatus UndoDuel::Status() const{return impl_->status();}
 const TxKey& UndoDuel::ActiveKey() const{return impl_->coordinator.ActiveKey();}
 std::uint64_t UndoDuel::InstalledEpoch() const{return impl_->installedEpoch;}
+// Match SingleMode: legacy refresh masks include reserved 0x100000; it has no query payload.
 Bytes UndoDuel::QueryFieldBytes(int player,int location,unsigned int flags,int) {
     require(impl_->core!=nullptr,"Host query without core");
-    return impl_->core->QueryField(static_cast<std::uint8_t>(player),static_cast<std::uint8_t>(location),flags);
+    return impl_->core->QueryField(static_cast<std::uint8_t>(player),static_cast<std::uint8_t>(location),flags & 0xefffffU);
 }
 Bytes UndoDuel::QueryCardBytes(int player,int location,int sequence,unsigned int flags) {
     require(impl_->core!=nullptr,"Host query without core");
-    return impl_->core->QueryCard(static_cast<std::uint8_t>(player),static_cast<std::uint8_t>(location),static_cast<std::uint8_t>(sequence),flags);
+    return impl_->core->QueryCard(static_cast<std::uint8_t>(player),static_cast<std::uint8_t>(location),static_cast<std::uint8_t>(sequence),flags & 0xefffffU);
 }
 } // namespace ygo

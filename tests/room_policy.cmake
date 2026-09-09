@@ -1,0 +1,7 @@
+add_executable(room_policy_tests tests/room_policy_tests.cpp)
+target_compile_features(room_policy_tests PRIVATE cxx_std_17)
+target_include_directories(room_policy_tests PRIVATE tests client/gframe)
+target_link_options(room_policy_tests PRIVATE -static)
+configure_undo_host_target(room_policy_tests)
+add_test(NAME room_policy_tests COMMAND room_policy_tests)
+set_tests_properties(room_policy_tests PROPERTIES TIMEOUT 60)

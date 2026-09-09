@@ -5,6 +5,16 @@
 #include <functional>
 #include <memory>
 namespace ygo {
+struct HostBotStatus {
+    std::uint64_t generation{};
+    undo::BotIdentity identity;
+    std::size_t cursor{}, fencedCursor{}, pendingInputs{}, pendingOutputs{};
+    bool fencePending{}, humanPromptHeld{}, initialized{}, lobbyReady{};
+    std::uint8_t engineSeat{2};
+    std::uint32_t candidatePid{}, retainedPid{}, commitCount{};
+    undo::BotSelectionInfo selection;
+    std::string failure;
+};
 // Authoritative room owner. All methods execute on the NetServer event thread;
 // candidate workers receive immutable copies and have no endpoint/UI callbacks.
 class UndoDuel final : public SingleDuel {
@@ -14,6 +24,8 @@ public:
     ~UndoDuel() override;
     bool SupportsUndo() const override { return true; }
     bool HasActiveDuel() const override;
+    bool CanJoinHuman() const override;
+    std::optional<HostBotStatus> BotStatus() const;
     void JoinGame(DuelPlayer*, unsigned char*, bool) override;
     void TPResult(DuelPlayer*, unsigned char) override;
     void Process() override;

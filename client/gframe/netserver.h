@@ -24,6 +24,7 @@ public:
     static bool IsRunning();
     static const undo::RoomAdmission* Admission(); // server thread only
     static bool SendUndoToPlayer(DuelPlayer*, const undo::Envelope&);
+    static bool SendRoomPolicy(DuelPlayer*, uint32_t code);
 	static bool StartBroadcast();
 	static void StopServer();
 	static void StopBroadcast();

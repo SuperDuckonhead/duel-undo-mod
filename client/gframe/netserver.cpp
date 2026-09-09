@@ -2,10 +2,12 @@
 #include "netserver.h"
 #include "single_duel.h"
 #include "undo_duel.h"
+#include "undo/room_policy.h"
 #include "tag_duel.h"
 #include "deck_manager.h"
 #include "mysocket.h"
 #include <thread>
+#include <array>
 #include <unordered_map>
 #include <atomic>
 #include <chrono>
@@ -34,24 +36,45 @@ namespace{
     std::atomic<bool> server_running{false};
     event* undo_poll{};
     uint64_t next_endpoint{};
+    std::unordered_map<bufferevent*,int64_t> pending_rejections;
     int64_t NowMs() {
         return std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
     }
-    void RejectUndoPeer(DuelPlayer* dp) {
-        STOC_ErrorMsg error;error.msg=ERRMSG_JOINERROR;error.code=0;
-        NetServer::SendPacketToPlayer(dp,STOC_ERROR_MSG,error);
-        if(dp->game) dp->game->LeaveGame(dp); else NetServer::DisconnectPlayer(dp);
+    void FinishUndoReject(bufferevent* bev) {
+        if(users.find(bev)==users.end())return;
+        NetServer::ServerEchoEvent(bev,BEV_EVENT_EOF,nullptr);
+    }
+    void RejectDrained(bufferevent* bev,void*) {
+        if(evbuffer_get_length(bufferevent_get_output(bev))==0)FinishUndoReject(bev);
+    }
+    bool PolicyNotice(DuelPlayer* dp,undo::RoomPolicyReason reason,bool fatal) {
+        return NetServer::SendRoomPolicy(dp,undo::PolicyCode(reason,fatal));
+    }
+    void RejectUndoPeer(DuelPlayer* dp,undo::RoomPolicyReason reason=undo::RoomPolicyReason::Incompatible) {
+        if(!dp || !dp->bev || pending_rejections.count(dp->bev))return;
+        auto* bev=dp->bev;
+        try {
+            pending_rejections.emplace(bev,NowMs()+2000);
+            bufferevent_disable(bev,EV_READ);
+            bufferevent_setcb(bev,nullptr,RejectDrained,NetServer::ServerEchoEvent,nullptr);
+            if(!PolicyNotice(dp,reason,true)){FinishUndoReject(bev);return;}
+            bufferevent_enable(bev,EV_WRITE);
+            if(evbuffer_get_length(bufferevent_get_output(bev))==0)FinishUndoReject(bev);
+        } catch(...) {FinishUndoReject(bev);}
     }
     void UndoPoll(EventSocket,short,void*) {
         const auto now=NowMs();
         std::vector<bufferevent*> expired;
+        for(const auto& pair:pending_rejections)if(now>=pair.second)expired.push_back(pair.first);
+        for(auto* bev:expired)FinishUndoReject(bev);
+        expired.clear();
         for(const auto& pair:users)
-            if(!pair.second.undoPeer.ready && now-pair.second.connectedAtMs>=30000)
+            if(!pending_rejections.count(pair.first) && !pair.second.undoPeer.ready && now-pair.second.connectedAtMs>=30000)
                 expired.push_back(pair.first);
         for(auto* bev:expired) {
             const auto it=users.find(bev);
-            if(it!=users.end()) RejectUndoPeer(&it->second);
+            if(it!=users.end()) RejectUndoPeer(&it->second,undo::RoomPolicyReason::HandshakeTimeout);
         }
         if(duel_mode) {
             try { duel_mode->PollUndo(); }
@@ -86,6 +109,16 @@ bool NetServer::SendUndoToPlayer(DuelPlayer* dp,const undo::Envelope& envelope) 
     packet.reserve(body.size()+3);
     BufferIO::VectorWrite<uint16_t>(packet,static_cast<uint16_t>(body.size()+1));
     packet.push_back(STOC_UNDO);packet.insert(packet.end(),body.begin(),body.end());
+    return WriteBufferEvent(dp->bev,packet.data(),packet.size())==0;
+}
+bool NetServer::SendRoomPolicy(DuelPlayer* dp,uint32_t code) {
+    if(!CanWriteToPlayer(dp))return false;
+    // Out-of-band policy text is not a core/player-view event or AI callback.
+    // It must remain deliverable while a transaction holds ordinary game traffic.
+    STOC_ErrorMsg error{};error.msg=undo::RoomPolicyError;error.code=code;
+    std::array<unsigned char,sizeof(error)+3> packet{};
+    auto* cursor=packet.data();BufferIO::Write<uint16_t>(cursor,1+sizeof(error));
+    BufferIO::Write<uint8_t>(cursor,STOC_ERROR_MSG);std::memcpy(cursor,&error,sizeof(error));
     return WriteBufferEvent(dp->bev,packet.data(),packet.size())==0;
 }
 bool NetServer::IsRunning() { return server_running.load(); }
@@ -128,7 +161,7 @@ bool NetServer::StartServer(unsigned short port, unsigned int ip, unsigned short
         if(undo_config) {
             if(!undo_capability || !undo_config->resources ||
                !undo::Compatibility(*undo_capability,undo_config->capability).empty() ||
-               undo_config->resources->Fingerprint()!=undo_capability->resources || undo_config->bot)
+               undo_config->resources->Fingerprint()!=undo_capability->resources)
                 throw std::invalid_argument("Invalid or unsupported undo room configuration");
             room_config=std::move(undo_config);
         }
@@ -177,8 +210,9 @@ bool NetServer::StartBroadcast() {
 void NetServer::StopServer() {
 	if(!net_evbase)
 		return;
-	if(duel_mode)
-		duel_mode->EndDuel();
+	if(duel_mode) {
+        try {duel_mode->EndDuel();} catch(...) {} // Teardown must still reach the owner-loop exit.
+    }
 	event_base_loopexit(net_evbase, 0);
 }
 void NetServer::StopBroadcast() {
@@ -266,15 +300,18 @@ void NetServer::ServerEchoRead(bufferevent *bev, void *ctx) {
 		if (len < packet_len + 2)
 			break;
 		int read_len = evbuffer_remove(input, net_server_read, packet_len + 2);
-		if (read_len > 2)
-			HandleCTOSPacket(&users[bev], &net_server_read[2], read_len - 2);
-		if(users.find(bev)==users.end()) return; // HandleCTOS may have disconnected and freed its input buffer.
+		if (read_len > 2) {
+            try {HandleCTOSPacket(&users[bev],&net_server_read[2],read_len-2);}
+            catch(...) {FinishUndoReject(bev);return;}
+        }
+		if(users.find(bev)==users.end() || pending_rejections.count(bev)) return; // A rejection closes input admission before its final error is drained.
         len -= packet_len + 2;
 	}
 }
 void NetServer::ServerEchoEvent(bufferevent* bev, short events, void* ctx) {
 	if (events & (BEV_EVENT_EOF | BEV_EVENT_ERROR)) {
-		DuelPlayer* dp = &users[bev];
+		const auto current=users.find(bev);if(current==users.end())return;
+		DuelPlayer* dp = &current->second;
 		DuelMode* dm = dp->game;
 		auto* prev_disconnect = disconnecting_bev;
 		disconnecting_bev = bev;
@@ -297,6 +334,7 @@ void NetServer::ServerThread() {
 		bufferevent_free(bit->first);
 	}
 	users.clear();
+    pending_rejections.clear();
 	evconnlistener_free(listener);
 	listener = nullptr;
 	if(broadcast_ev) {
@@ -321,6 +359,7 @@ void NetServer::ServerThread() {
 void NetServer::DisconnectPlayer(DuelPlayer* dp) {
 	auto bit = users.find(dp->bev);
 	if(bit != users.end()) {
+        pending_rejections.erase(dp->bev);
 		if(dp->game) {
 			dp->game->OnPlayerDisconnected(dp);
 			dp->game = nullptr;
@@ -333,7 +372,7 @@ void NetServer::DisconnectPlayer(DuelPlayer* dp) {
 	}
 }
 void NetServer::HandleCTOSPacket(DuelPlayer* dp, unsigned char* data, size_t len) {
-    if(!dp || !data || !len) return;
+    if(!dp || !data || !len || pending_rejections.count(dp->bev)) return;
     if(data[0]==CTOS_UNDO) {
         if(!room_admission) return; // Ordinary servers retain their old protocol.
         try {
@@ -352,7 +391,13 @@ void NetServer::HandleCTOSPacket(DuelPlayer* dp, unsigned char* data, size_t len
 	unsigned char pktType = BufferIO::Read<uint8_t>(pdata);
     if(room_admission) {
         if((pktType==CTOS_HS_READY || pktType==CTOS_HS_NOTREADY || pktType==CTOS_HS_START) && !dp->undoPeer.ready) return;
-        if(pktType==CTOS_HS_TOOBSERVER) return; // Undo rooms have exactly two duel participants.
+        if(pktType==CTOS_HS_TOOBSERVER) {
+            if(dp->game && dp->undoPeer.ready) {
+                if(!PolicyNotice(dp,undo::RoomPolicyReason::Observer,false))FinishUndoReject(dp->bev);
+            }
+            else RejectUndoPeer(dp,undo::RoomPolicyReason::MissingMod);
+            return;
+        }
         if(dp->game && dp->game->HasActiveDuel() &&
            (pktType==CTOS_RESPONSE || pktType==CTOS_TIME_CONFIRM || pktType==CTOS_SURRENDER || pktType==CTOS_CHAT)) return;
         if(pktType==CTOS_HS_START && dp->game && !dp->game->SupportsUndo()) return;
@@ -439,7 +484,7 @@ void NetServer::HandleCTOSPacket(DuelPlayer* dp, unsigned char* data, size_t len
         std::optional<undo::Envelope> challenge;
         if(room_admission) {
             try { challenge=room_admission->Challenge(dp->undoPeer); }
-            catch(...) { RejectUndoPeer(dp);return; }
+            catch(...) { RejectUndoPeer(dp,dp->undoPeer.offered?undo::RoomPolicyReason::Incompatible:undo::RoomPolicyReason::MissingMod);return; }
         }
 		if(dp->game || duel_mode)
 			return;
@@ -448,7 +493,8 @@ void NetServer::HandleCTOSPacket(DuelPlayer* dp, unsigned char* data, size_t len
 		CTOS_CreateGame packet;
 		std::memcpy(&packet, pdata, sizeof packet);
 		auto pkt = &packet;
-        if(room_admission && pkt->info.mode==MODE_TAG) { RejectUndoPeer(dp);return; }
+        if(room_admission && pkt->info.mode==MODE_TAG) { RejectUndoPeer(dp,undo::RoomPolicyReason::Tag);return; }
+        if(room_admission && pkt->info.mode==MODE_MATCH) { RejectUndoPeer(dp,undo::RoomPolicyReason::Match);return; }
 		if(pkt->info.rule > CURRENT_RULE)
 			pkt->info.rule = CURRENT_RULE;
 		if(pkt->info.mode > MODE_TAG)
@@ -500,9 +546,9 @@ void NetServer::HandleCTOSPacket(DuelPlayer* dp, unsigned char* data, size_t len
         if(room_admission) {
             size_t occupied=0;
             for(const auto& peer:users) if(peer.second.game==duel_mode && peer.second.type<2) ++occupied;
-            if(occupied>=2) { RejectUndoPeer(dp);return; }
+            if(occupied>=2 || !duel_mode->CanJoinHuman()) { RejectUndoPeer(dp,undo::RoomPolicyReason::Full);return; }
             try { challenge=room_admission->Challenge(dp->undoPeer); }
-            catch(...) { RejectUndoPeer(dp);return; }
+            catch(...) { RejectUndoPeer(dp,dp->undoPeer.offered?undo::RoomPolicyReason::Incompatible:undo::RoomPolicyReason::MissingMod);return; }
         }
         auto* joinedBev=dp->bev;
         duel_mode->JoinGame(dp, pdata, false);
