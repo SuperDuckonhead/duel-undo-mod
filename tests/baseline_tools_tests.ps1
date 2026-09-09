@@ -149,6 +149,14 @@ try {
             Assert-True ((Invoke-ScriptProcess $lockScript @('-Path', $path)).ExitCode -ne 0) "unsafe destination accepted: $destination"
         }
     }
+    Test-Case 'source lock rejects Windows reserved device names and unusable segments' {
+        $controlCharacterPath = 'client/bad' + [char]1 + 'name'
+        foreach ($destination in @('NUL', 'client/con.txt', 'client/PRN', 'client/AUX.log', 'client/COM1', 'client/com9.dll', 'client/LPT1', 'client/lpt9.txt', 'client/trailing.', 'client/trailing ', $controlCharacterPath)) {
+            $component = [ordered]@{} + $validComponent; $component.destination = $destination
+            $path = Join-Path $tempRoot ('windows-path-' + [guid]::NewGuid() + '.json'); Write-LockFixture $path @($component)
+            Assert-True ((Invoke-ScriptProcess $lockScript @('-Path', $path)).ExitCode -ne 0) "Windows-invalid destination accepted: $destination"
+        }
+    }
 } finally {
     if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
 }

@@ -26,6 +26,13 @@ function Assert-SafeDestination {
         throw "Component '$ComponentName' has an unsafe destination"
     }
     foreach ($segment in $segments) {
+        if ($segment.EndsWith('.') -or $segment.EndsWith(' ')) {
+            throw "Component '$ComponentName' has a destination segment ending in a dot or space"
+        }
+        $deviceBaseName = ($segment -split '\.', 2)[0]
+        if ($deviceBaseName -imatch '^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9]|CONIN\$|CONOUT\$)$') {
+            throw "Component '$ComponentName' uses a reserved Windows device name"
+        }
         if ($segment.IndexOfAny([IO.Path]::GetInvalidFileNameChars()) -ge 0) {
             throw "Component '$ComponentName' has invalid destination characters"
         }

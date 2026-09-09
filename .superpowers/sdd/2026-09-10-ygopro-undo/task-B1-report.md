@@ -44,3 +44,24 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/baseline_tools_tes
 ## Concern
 
 No source lock was created or validated by this task. A later integration step must run `tools/Test-SourceLock.ps1 -Path sources.lock.json` after the provenance workstream supplies evidence-backed commits.
+
+## Review fix round 1 TDD evidence
+
+Focused red run before the validator change:
+
+```text
+pwsh -NoProfile -File tests/baseline_tools_tests.ps1
+FAIL: source lock rejects Windows reserved device names and unusable segments
+Windows-invalid destination accepted: NUL
+7 passed, 1 failed
+```
+
+Fresh green runs after rejecting reserved DOS device basenames (including extensions), numbered COM/LPT devices, control or invalid characters, and trailing dots/spaces:
+
+```text
+pwsh -NoProfile -File tests/baseline_tools_tests.ps1
+8 passed, 0 failed
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/baseline_tools_tests.ps1
+8 passed, 0 failed
+```
