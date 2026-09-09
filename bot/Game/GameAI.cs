@@ -55,7 +55,8 @@ namespace WindBot.Game
         public void OnDeckError(string card)
         {
             _dialogs.SendDeckSorry(card);
-            Thread.Sleep(1000);
+            if (!Game.Offline)
+                Thread.Sleep(1000);
             _dialogs.SendSurrender();
             Game.Connection.Close();
         }

@@ -66,8 +66,29 @@ namespace WindBot.Game
                 + ", STOCMessage=" + (CurrentSTOCMessage ?? "<none>");
         }
 
+        internal bool Offline { get; private set; }
+
+        internal void StartOffline(Action<byte[]> sink)
+        {
+            if (Connection != null) throw new InvalidOperationException("Client already started");
+            Offline = true;
+            Connection = new YGOClient(sink);
+            _behavior = new GameBehavior(this);
+            if (_behavior.Deck == null) throw new InvalidOperationException("Fixed deck failed to load");
+        }
+
+        internal void DispatchOffline(byte[] packet)
+        {
+            if (!Offline) throw new InvalidOperationException("Not an isolated client");
+            using (var reader = new BinaryReader(new MemoryStream(packet)))
+                _behavior.OnPacket(reader);
+        }
+
+        internal object OfflineState() { return _behavior; }
+
         public void Start()
         {
+            if (Offline) throw new InvalidOperationException("Offline client cannot connect");
             Connection = new YGOClient();
             _behavior = new GameBehavior(this);
 

@@ -53,6 +53,23 @@
       "configuration": "Debug"
     },
     {
+      "program": "powershell.exe",
+      "workingDirectory": ".",
+      "arguments": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools/Build-BotTests.ps1",
+        "-Configuration",
+        "Debug"
+      ],
+      "targets": [
+        "Bot"
+      ],
+      "configuration": "Debug"
+    },
+    {
       "program": ".cache/tools/cmake-4.4.3-windows-x86_64/bin/cmake.exe",
       "workingDirectory": ".",
       "arguments": [
@@ -126,6 +143,23 @@
         "Release",
         "-OutputDirectory",
         "out/bot/Release"
+      ],
+      "targets": [
+        "Bot"
+      ],
+      "configuration": "Release"
+    },
+    {
+      "program": "powershell.exe",
+      "workingDirectory": ".",
+      "arguments": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools/Build-BotTests.ps1",
+        "-Configuration",
+        "Release"
       ],
       "targets": [
         "Bot"

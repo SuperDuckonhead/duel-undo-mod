@@ -24,10 +24,10 @@ namespace WindBot.Game.AI
         private static List<DeckInstance> _list;
         private static Random _rand;
 
-        public static void Init()
+        public static void Init(Random random = null)
         {
             _decks = new Dictionary<string, DeckInstance>();
-            _rand = new Random();
+            _rand = random ?? new Random();
 
             Assembly asm = Assembly.GetExecutingAssembly();
             Type[] types = asm.GetTypes();

@@ -11,7 +11,7 @@ namespace YGOSharp.OCGWrapper
     {
         private static IDictionary<int, NamedCard> _cards;
 
-        public static void Init(string databaseFullPath)
+        public static void Init(string databaseFullPath, bool readOnly = false)
         {
             try
             {
@@ -22,7 +22,8 @@ namespace YGOSharp.OCGWrapper
 
                 _cards = new Dictionary<int, NamedCard>();
 
-                using (SqliteConnection connection = new SqliteConnection("Data Source=" + databaseFullPath))
+                var settings = new SqliteConnectionStringBuilder { DataSource = databaseFullPath, ReadOnly = readOnly };
+                using (SqliteConnection connection = new SqliteConnection(settings.ConnectionString))
                 {
                     connection.Open();
 

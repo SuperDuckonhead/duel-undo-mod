@@ -17,6 +17,8 @@ namespace YGOSharp.Network
         protected bool IsHeaderSizeIncluded = false;
 
         private NetworkClient _client;
+        private readonly Action<byte[]> _sendSink;
+        public int NetworkSendCount { get; private set; }
 
         private List<byte> _receiveBuffer = new List<byte>();
         private Queue<byte[]> _pendingPackets = new Queue<byte[]>();
@@ -38,9 +40,17 @@ namespace YGOSharp.Network
             get { return _client.RemoteIPAddress; }
         }
 
-        public BinaryClient(NetworkClient client)
+        public BinaryClient(NetworkClient client, Action<byte[]> sendSink = null)
         {
+            if (client != null && sendSink != null)
+                throw new InvalidOperationException("A sink client cannot own a network client");
             _client = client;
+            _sendSink = sendSink;
+            if (client == null)
+            {
+                if (sendSink == null) throw new ArgumentNullException("client");
+                return;
+            }
 
             client.Connected += Client_Connected;
             client.Disconnected += Client_Disconnected;
@@ -54,11 +64,13 @@ namespace YGOSharp.Network
 
         public void Connect(IPAddress address, int port)
         {
+            if (_sendSink != null) throw new InvalidOperationException("Isolated client cannot connect");
             _client.BeginConnect(address, port);
         }
 
         public void Initialize(Socket socket)
         {
+            if (_sendSink != null) throw new InvalidOperationException("Isolated client cannot attach a socket");
             _client.Initialize(socket);
         }
 
@@ -84,6 +96,12 @@ namespace YGOSharp.Network
                 throw new Exception("Tried to send a too large packet");
             }
 
+            if (_sendSink != null)
+            {
+                _sendSink((byte[])packet.Clone());
+                return;
+            }
+
             int packetLength = packet.Length;
             if (IsHeaderSizeIncluded) packetLength += HeaderSize;
 
@@ -103,11 +121,17 @@ namespace YGOSharp.Network
             byte[] data = new byte[packet.Length + HeaderSize];
             Array.Copy(header, 0, data, 0, header.Length);
             Array.Copy(packet, 0, data, header.Length, packet.Length);
+            NetworkSendCount++;
             _client.BeginSend(data);
         }
 
         public void Close(Exception error = null)
         {
+            if (_sendSink != null)
+            {
+                _wasDisconnectedEventFired = true;
+                return;
+            }
             _client.Close(error);
         }
 

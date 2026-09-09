@@ -14,9 +14,15 @@ namespace WindBot
     {
         internal static Random Rand;
         internal static bool ServerMode;
+        internal static string ResourceRoot;
 
         internal static void Main(string[] args)
         {
+            if (args.Length == 1 && args[0] == "--undo-replay-worker")
+            {
+                Environment.ExitCode = Undo.ReplayWorker.Run();
+                return;
+            }
             Logger.WriteLine("WindBot starting...");
 
             Config.Load(args);
@@ -211,6 +217,8 @@ namespace WindBot
 
         public static FileStream ReadFile(string directory, string filename, string extension)
         {
+            if (ResourceRoot != null)
+                return new FileStream(Path.Combine(ResourceRoot, directory, filename + "." + extension), FileMode.Open, FileAccess.Read, FileShare.Read);
             string tryfilename = filename + "." + extension;
             string fullpath = Path.Combine(directory, tryfilename);
             if (!File.Exists(fullpath))

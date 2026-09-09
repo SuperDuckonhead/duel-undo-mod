@@ -326,7 +326,8 @@ namespace WindBot.Game
         
         private void OnDuelEnd(BinaryReader packet)
         {
-            Thread.Sleep(500);
+            if (!Game.Offline)
+                Thread.Sleep(500);
             Connection.Close();
         }
 
@@ -378,7 +379,8 @@ namespace WindBot.Game
 
         private void OnTeammateSurrender(BinaryReader packet)
         {
-            Thread.Sleep(500);
+            if (!Game.Offline)
+                Thread.Sleep(500);
             Game.Surrender();
         }
 

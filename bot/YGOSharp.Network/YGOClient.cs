@@ -1,4 +1,5 @@
-﻿using System.IO;
+﻿using System;
+using System.IO;
 using YGOSharp.Network.Enums;
 
 namespace YGOSharp.Network
@@ -13,6 +14,12 @@ namespace YGOSharp.Network
         public YGOClient(NetworkClient client)
             : base(client)
         {
+        }
+
+        public YGOClient(Action<byte[]> sink)
+            : base(null, sink)
+        {
+            if (sink == null) throw new ArgumentNullException("sink");
         }
 
         public void Send(BinaryWriter writer)
