@@ -21,6 +21,7 @@ Bootstrap 只下载并校验锁定的工具及库，不导入覆盖已修改的�
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Prepare-SmokeRuntime.ps1 -RuntimeRoot F:/MyCardLibrary/ygopro -OutputName baseline-runtime
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Test-SingleIntegration.ps1 -Configuration Release -RuntimeRoot F:/MyCardLibrary/ygopro
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Test-RoomClientIntegration.ps1 -Configuration Release -Pair
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Test-RoomClientIntegration.ps1 -Configuration Release -FreePair
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Test-RoomClientIntegration.ps1 -Configuration Release -Ai
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Test-UndoBotHost.ps1 -Configuration Release -RuntimeRoot F:/MyCardLibrary/ygopro
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Test-AiHostHistory.ps1 -Configuration Release -RuntimeRoot F:/MyCardLibrary/ygopro -All -Workers 2

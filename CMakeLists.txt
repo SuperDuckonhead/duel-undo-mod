@@ -46,5 +46,6 @@ include(tests/core_wait.cmake)
 
 include(tests/ai_host_history.cmake)
 include(tests/core_lookup.cmake)
+include(tests/undo_host_measure_tests.cmake)
 
 include(tests/undo_pending_response_tests.cmake)

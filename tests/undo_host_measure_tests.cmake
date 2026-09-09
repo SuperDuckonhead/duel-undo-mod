@@ -1,0 +1,6 @@
+add_executable(undo_host_measure_tests tests/undo_host_measure_tests.cpp)
+target_compile_features(undo_host_measure_tests PRIVATE cxx_std_17)
+target_include_directories(undo_host_measure_tests PRIVATE tests client/gframe)
+target_link_options(undo_host_measure_tests PRIVATE -static)
+configure_undo_host_target(undo_host_measure_tests)
+target_link_libraries(undo_host_measure_tests PRIVATE psapi)

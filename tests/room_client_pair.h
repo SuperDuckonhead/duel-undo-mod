@@ -1,7 +1,8 @@
 // Included by the actual initialized Game integration executable. Each role
 // owns a separate process, Game, RoomClient, resource capture and GUI
 // environment.
-static int pairGame(bool host, const std::filesystem::path &shared) {
+static int pairGame(bool host, const std::filesystem::path &shared,
+                    bool freePair = false) {
   WSADATA winsock{};
   CHECK(WSAStartup(MAKEWORD(2, 2), &winsock) == 0);
   evthread_use_windows_threads();
@@ -28,13 +29,45 @@ static int pairGame(bool host, const std::filesystem::path &shared) {
     e.GUIEvent.EventType = irr::gui::EGET_BUTTON_CLICKED;
     game.dField.OnEvent(e);
   };
+  auto menuClick = [&](irr::gui::IGUIElement *widget) {
+    irr::SEvent e{};
+    e.EventType = irr::EET_GUI_EVENT;
+    e.GUIEvent.Caller = widget;
+    e.GUIEvent.EventType = irr::gui::EGET_BUTTON_CLICKED;
+    game.menuHandler.OnEvent(e);
+  };
+  game.ebNickName->setText(host ? L"Actual Game Host" : L"Actual Game Guest");
   auto config =
       CaptureRoomConfig(dataManager, std::filesystem::current_path().u8string(),
                         false, RoomMode::ConsentLan);
   unsigned short port{};
   if (host) {
-    CHECK(NetServer::StartServer(0, 0x7f000001, &port, false,
-                                 &config->capability, config));
+    if (freePair) {
+      // Reserve an available loopback port for the real menu's configured
+      // listener.
+      SOCKET probe = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+      CHECK(probe != INVALID_SOCKET);
+      sockaddr_in address{};
+      address.sin_family = AF_INET;
+      address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+      CHECK(bind(probe, reinterpret_cast<sockaddr *>(&address),
+                 sizeof(address)) == 0);
+      int length = sizeof(address);
+      CHECK(getsockname(probe, reinterpret_cast<sockaddr *>(&address),
+                        &length) == 0);
+      port = ntohs(address.sin_port);
+      closesocket(probe);
+      game.gameConf.serverport = port;
+      game.cbMatchMode->setSelected(0);
+      menuClick(game.btnLanMode);
+      menuClick(game.btnCreateHost);
+      game.chkUndoLoopback->setChecked(true);
+      CHECK(game.chkUndoLoopback->isChecked());
+      menuClick(game.btnHostConfirm);
+      CHECK(NetServer::IsRunning());
+    } else
+      CHECK(NetServer::StartServer(0, 0x7f000001, &port, false,
+                                   &config->capability, config));
     std::ofstream(shared / "port") << port;
   } else {
     for (int i = 0; i < 15000 && !port; ++i) {
@@ -46,9 +79,18 @@ static int pairGame(bool host, const std::filesystem::path &shared) {
       std::this_thread::sleep_for(std::chrono::milliseconds(2));
     CHECK(has("host-lobby"));
   }
-  game.ebNickName->setText(host ? L"Actual Game Host" : L"Actual Game Guest");
-  DuelClient::ConfigureRoom(config);
-  CHECK(DuelClient::StartClient(0x7f000001, port, host));
+  if (freePair) {
+    if (!host) {
+      menuClick(game.btnLanMode);
+      game.ebJoinHost->setText(L"127.0.0.1");
+      auto portText = std::to_wstring(port);
+      game.ebJoinPort->setText(portText.c_str());
+      menuClick(game.btnJoinHost);
+    }
+  } else {
+    DuelClient::ConfigureRoom(config);
+    CHECK(DuelClient::StartClient(0x7f000001, port, host));
+  }
   auto *factory = new FailingFactory;
   game.env->registerGUIElementFactory(factory);
   factory->drop();
@@ -118,6 +160,8 @@ static int pairGame(bool host, const std::filesystem::path &shared) {
         click(game.btnFirst);
         first = true;
       }
+      if (freePair && room)
+        CHECK(!room->NeedsConsent());
       if (room && room->NeedsConsent()) {
         game.UpdateDuelUndoStatus();
         CHECK(game.btnUndoApprove->isVisible() &&
@@ -132,11 +176,16 @@ static int pairGame(bool host, const std::filesystem::path &shared) {
         } else
           click(game.btnUndoApprove);
       }
-      if(room && !room->InputPaused() && game.fadingList.empty() &&
-         game.dInfo.curMsg==MSG_SELECT_CARD && room->Token().prompt!=lastDiscard) {
+      if (room && !room->InputPaused() && game.fadingList.empty() &&
+          game.dInfo.curMsg == MSG_SELECT_CARD &&
+          room->Token().prompt != lastDiscard) {
         Bytes response{uint8_t(game.dField.select_min)};
-        for(unsigned i=0;i<game.dField.select_min;++i)response.push_back(uint8_t(game.dField.selectable_cards.at(i)->select_seq));
-        DuelClient::SetResponseB(response.data(),response.size());DuelClient::SendResponse();lastDiscard=room->Token().prompt;
+        for (unsigned i = 0; i < game.dField.select_min; ++i)
+          response.push_back(
+              uint8_t(game.dField.selectable_cards.at(i)->select_seq));
+        DuelClient::SetResponseB(response.data(), response.size());
+        DuelClient::SendResponse();
+        lastDiscard = room->Token().prompt;
       }
       bool idle = room && !room->InputPaused() &&
                   game.dInfo.curMsg == MSG_SELECT_IDLECMD &&
@@ -152,7 +201,7 @@ static int pairGame(bool host, const std::filesystem::path &shared) {
         g1 = true;
         mark("guest-A");
       }
-      if (host && idle && has("guest-A") && !declineRequested &&
+      if (!freePair && host && idle && has("guest-A") && !declineRequested &&
           room->CanUndo()) {
         failedWidget = game.btnEP;
         failedToken = room->Token();
@@ -190,7 +239,9 @@ static int pairGame(bool host, const std::filesystem::path &shared) {
         armed = true;
         mark("armed");
       }
-      if (host && idle && has("guest-decline-continued") && !requestFailure) {
+      if (host && idle &&
+          has(freePair ? "guest-A" : "guest-decline-continued") &&
+          !requestFailure) {
         mark("arm-failure");
         if (has("armed") && room->CanUndo()) {
           failedWidget = game.btnEP;
@@ -274,6 +325,8 @@ static int pairGame(bool host, const std::filesystem::path &shared) {
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
   CHECK(has("host-done") && has("guest-done"));
+  if (freePair)
+    CHECK(!has("decline-next") && !has("declined"));
   std::cerr << (host ? "host" : "guest") << " stopping client" << std::endl;
   DuelClient::StopClient();
   if (host)
@@ -287,7 +340,9 @@ static int pairGame(bool host, const std::filesystem::path &shared) {
   if (host)
     CHECK(!NetServer::IsRunning());
   std::cout << "PASS paired actual Game " << (host ? "host" : "guest")
-            << " LAN decline/continued input, failure rollback, two epochs, "
+            << (freePair ? " LoopbackFree real menu, no consent, "
+                         : " LAN decline/continued input, ")
+            << "failure rollback, two epochs, "
                "B-only continued field\n";
   return 0;
 }

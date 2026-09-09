@@ -65,6 +65,8 @@ int main(int argc, char **argv) {
     game.actionSignal.SetNoWait(true);
     if (argc == 3 && std::string(argv[1]) == "--ai")
       return aiGame();
+    if (argc == 4 && std::string(argv[3]) == "--free")
+      return pairGame(std::string(argv[1]) == "--pair-host", std::filesystem::u8path(argv[2]), true);
     if (argc == 3)
       return pairGame(std::string(argv[1]) == "--pair-host",
                       std::filesystem::u8path(argv[2]));

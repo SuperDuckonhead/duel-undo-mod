@@ -1,6 +1,6 @@
 # Undo network protocol and server admission
 
-Status: codecs, coordinator and optional real NetServer admission are implemented. N1/N2 and acceptance 6.1 remain open. Client/menu and live duel transaction integration are still pending.
+Status: codecs, actual client/menu, authoritative host, private AI, player restoration and retained-branch terminal replay are implemented and tested locally. Two-device LAN and manual visual acceptance remain open.
 
 ## Outer reservation
 
@@ -18,7 +18,7 @@ layout or native memcpy serialization is used.
 | Offset | Field | Bytes |
 | --- | --- | --- |
 | 0 | version = 1 | 2 |
-| 2 | kind = 1..13 | 1 |
+| 2 | kind = 1..14 | 1 |
 | 3 | session | 16 |
 | 19 | base epoch | 8 |
 | 27 | request | 8 |
@@ -28,7 +28,7 @@ layout or native memcpy serialization is used.
 | 79 | payload | 0..49,152 |
 
 Kinds: Hello 1, Response 2, Request 3, Consent 4, Prepare 5, Ready 6,
-Commit 7, CommitAck 8, Resume 9, Abort 10, AbortAck 11, Game 12, Status 13.
+Commit 7, CommitAck 8, Resume 9, Abort 10, AbortAck 11, Game 12, Status 13, RequestRejected 14.
 Unknown kind/version, every truncation, trailing bytes, and oversize lengths
 fail explicitly. Encode applies the same limits. Generic payload bytes are
 opaque here; adapters must validate each message kind's payload schema and
@@ -146,19 +146,60 @@ request: the session high-water request ID still rejects it. Cache replay is
 suppressed while another transaction is active; clients must also reject
 terminal intents for unrelated transactions.
 
-## Required live work still open
+## Implemented live bindings and remaining acceptance
 
-- Client/menu capability exchange, fresh per-duel session renewal and actual UndoDuel creation.
-- Legacy/unwrapped CTOS_RESPONSE rejection in extended rooms, game/control
-  epoch tagging in all message and animation/AI callback paths.
-- Trusted public target digest construction, C4 no-fail ownership/history
-  commit, original retention and clock application.
-- N3 per-player restore serialization, digest verification and model swap.
-- Consent dialog and freeze/unfreeze handling; loopback listener/peer policy.
-- Real two-client and two-device LAN failure/loss/old-peer/privacy acceptance.
+The current client/menu exchanges capabilities and creates authoritative UndoDuel
+sessions. Unwrapped duel responses are rejected; gameplay and private AI outputs
+use installed-epoch/prompt gates. Public target digests, retained core ownership,
+per-player model/widget preparation, commit barriers, clock restoration and the
+explicit loopback listener policy are connected to production paths.
+
+Initialized Game and same-machine two-client TCP tests cover these bindings,
+including consent refusal/approval and preparation failure. Actual private AI
+and final-branch replay paths are tested separately. Two-device LAN and human
+visual acceptance remain open; see tests/local-acceptance.md and acceptance.csv.
 
 ## Production admission seam
 
 NetServer StartServer takes an optional Hello. Its configured mode is checked against the actual bound socket; free mode requires exactly 127.0.0.1 and accepted peers in 127/8. The client advertises with zero session, receives the host session/mode challenge (request 0), echoes it exactly, then receives confirmation (request 1). Engine/rules/resources match throughout. Ready/start are closed until confirmation. Unconfirmed connections expire after 30 seconds. An ordinary server with no capability keeps the baseline protocol.
 
 Game packets carry the session/installed epoch, current prompt in request, consecutive per-recipient packet sequence in targetIndex and zero digest. Fragmented raw STOC is limited to 1 MiB; malformed current streams poison assembly until an authenticated reset, while old-session/epoch and completed duplicates are ignored. Response carries Manual/Automatic origin, u16 length and 1..256 bytes; a network peer cannot claim Bot origin. Status is 36 bytes containing state, eligibility, prompt/time players, next request ID, current prompt ID and both millisecond clocks. These codecs do not themselves wire the client or perform a restore.
+
+## Directed request rejection and room policy
+
+RequestRejected (14) is host-to-requester only. It echoes the exact submitted
+unbound key (current session/epoch, nonzero request, zero targetIndex/digest)
+with one byte: 1 Busy, 2 Unavailable. Invalid/old-epoch requests are ignored.
+It does not cancel, acknowledge or resume the other selected transaction.
+A client clears only its own matching pending request, keeps another active
+consent/prepared transaction frozen, and shows a persistent busy notice.
+Same-request duplicate active requests still retransmit their original control.
+
+Consent text uses only public requester seat and targetIndex+1. It does not
+include private prompt/card data. A response already queued by the UI closes
+undo admission until a new input boundary or the actual rejection/retry boundary.
+
+Fixed legacy STOC_ErrorMsg uses discriminator 0x7e for explicit public policy
+notices. Code bit31 means fatal; low values are Tag1, Observer2, Full3,
+Incompatible4, MissingMod5, HandshakeTimeout6, Match7. These notices bypass the
+gameplay/AI callback journal and remain deliverable while a transaction is
+paused. Fatal replies drain before closing, bounded by a two-second deadline.
+First-release undo rooms accept exactly two duelists in single-duel mode;
+Match, Tag and observers are rejected before unsupported participation begins.
+
+
+## Responses already in flight when undo starts
+
+A client that has queued a response cannot also request undo for that prompt.
+If another participant's transaction arrives before transport Poll, the client
+retains its unsent exact-token response while frozen. Final Abort permits its
+first delivery; epoch replacement and terminal/failure discard it.
+
+For a response already sent when the other request freezes the host, the host
+keeps at most the first valid Manual/Automatic response from the current actor,
+bound to the original endpoint, session/epoch/prompt and active transaction.
+No input is applied during freeze. Only a completed Abort whose final control
+was successfully broadcast can drain that value through normal current-token,
+player, state, clock and core-legality checks. Commit or terminal/disconnect/
+uncertain failure discards it. Conflicting or duplicate inputs cannot replace
+the saved value. Clients do not blindly resend previously delivered responses.
