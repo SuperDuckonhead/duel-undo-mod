@@ -1,0 +1,473 @@
+stages:
+  - prepare
+  - build
+  - combine
+  - pack
+  - deploy
+  - notify
+
+variables:
+  GIT_DEPTH: "1"
+
+mat_common:
+  stage: prepare
+  tags: 
+    - linux
+  script:
+    # lua
+    - wget -O - https://mat-cacher.moenext.com/https://www.lua.org/ftp/lua-5.4.8.tar.gz?sha256sum=4f18ddae154e793e46eeab727c59ef1c0c0c2b744e7b94219710d76f530629ae | tar zfx -
+    - mv lua-5.4.8 lua
+    # sqlite3
+    - wget -O - https://mat-cacher.moenext.com/https://www.sqlite.org/2026/sqlite-autoconf-3530300.tar.gz?sha256sum=c917d7db16648ec95f714974ace5e5dcf46b7dc70e26600a0a102a3141125db0 | tar zfx -
+    - mv sqlite-autoconf-3530300 sqlite3
+    # freetype
+    - wget -O - https://mat-cacher.moenext.com/https://downloads.sourceforge.net/freetype/freetype-2.14.3.tar.gz?sha256sum=e61b31ab26358b946e767ed7eb7f4bb2e507da1cfefeb7a8861ace7fd5c899a1 | tar zfx -
+    - mv freetype-2.14.3 freetype
+    # event
+    - wget -O - https://mat-cacher.moenext.com/https://github.com/libevent/libevent/releases/download/release-2.1.13-stable/libevent-2.1.13-stable.tar.gz?sha256sum=f7e9383b8c0baa81b687e5b5eecc01beefaf1b19b64151d95ed61647fe7a315c | tar zfx -
+    - mv libevent-2.1.13-stable event
+    # jpeg
+    - wget -O - https://mat-cacher.moenext.com/https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.0/libjpeg-turbo-3.2.0.tar.gz?sha256sum=6f30092cef9fb839779646608f4ee14ae3cbac989c47fa05e841b0841f09878e | tar zfx -
+    - mv libjpeg-turbo-3.2.0 jpeg
+    - cp jpeg/src/jversion.h.in jpeg/src/jversion.h
+    # libpng
+    - wget -O - https://mat-cacher.moenext.com/https://downloads.sourceforge.net/libpng/libpng-1.6.58.tar.gz?sha256sum=8c9b05b675ca7301a458df2c2e46f26e1d41ff36b8863f8c33530bc58c2e6225 | tar zfx -
+    - mv libpng-1.6.58 png
+    - cp png/scripts/pnglibconf.h.prebuilt png/pnglibconf.h
+    # zlib
+    - wget -O - https://mat-cacher.moenext.com/https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.gz?sha256sum=bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16 | tar zfx -
+    - mv zlib-1.3.2 zlib
+    # lzma
+    - wget -O - https://mat-cacher.moenext.com/https://github.com/tukaani-project/xz/releases/download/v5.8.3/xz-5.8.3.tar.gz?sha256sum=3d3a1b973af218114f4f889bbaa2f4c037deaae0c8e815eec381c3d546b974a0 | tar zfx -
+    - mv xz-5.8.3 lzma
+    # irrlicht
+    - ./.ci/prepare-irrlicht.sh
+    # miniaudio
+    - ./.ci/prepare-miniaudio.sh
+    # premake
+    - cp -rf premake/* .;
+  artifacts:
+    paths:
+      - lua
+      - freetype
+      - sqlite3
+      - event
+      - jpeg
+      - png
+      - zlib
+      - lzma
+      - irrlicht
+      - miniaudio
+
+mat_submodules:
+  stage: prepare
+  tags: 
+    - linux
+  script:
+    - rm -rf ocgcore script
+    - mkdir ocgcore script
+    - git config --global --add safe.directory $CI_PROJECT_DIR
+    - git submodule update --init
+  artifacts:
+    paths:
+      - ocgcore
+      - script
+
+#mat_linux:
+#  stage: prepare
+#  tags:
+#    - linux
+#  script:
+#    - apt update; apt -y install git wget tar
+#    - ./.ci/prepare-irrlicht.sh
+#    # - wget -O - https://cdn02.moecube.com:444/ygopro-build-materials/premake-5.0.0-beta6-linux.tar.gz | tar zfx -
+#    # - env PROCESSOR_COUNT=$(nproc) ./.ci/libevent-prebuild.sh
+#  artifacts:
+#    paths:
+#      # - premake5
+#      - irrlicht
+#      # - libevent-stable
+#  image: git-registry.mycard.moe/mycard/docker-runner-base:debian11
+
+mat_macos:
+  stage: prepare
+  tags:
+    - linux
+  script:
+    - wget -O - https://cdn02.moecube.com:444/premake5-built/premake-5.0.0-beta8-macosx.tar.gz | tar zfx -
+    - chmod +x premake5
+  artifacts:
+    paths:
+      - premake5
+
+mat_windows:
+  stage: prepare
+  tags:
+    - linux
+  script:
+    # premake5.exe
+    - wget https://cdn02.moecube.com:444/premake5-built/premake-5.0.0-beta8-windows.zip
+    - 7z x -y premake-5.0.0-beta8-windows.zip
+    # nasm.exe
+    - wget -O nasm-3.02-win64.zip https://mat-cacher.moenext.com/https://www.nasm.us/pub/nasm/releasebuilds/3.02/win64/nasm-3.02-win64.zip?sha256sum=161d0bfaff53c2f9e9f3e69fd0672323ebabafd1268976a5cec11be92a19aee7
+    - 7z x -y nasm-3.02-win64.zip
+    - cp nasm-3.02/nasm.exe .
+  artifacts:
+    paths:
+      - premake5.exe
+      - nasm.exe
+
+._exec_build:
+  stage: build
+  variables:
+    GIT_STRATEGY: 'clone'
+
+exec_windows:
+  extends: ._exec_build
+  tags:
+    - vs
+  variables:
+    USE_SIMD: 'sse2'
+    VS2026_WIN7_SUPPORT: '1'
+  dependencies:
+    - mat_common
+    - mat_windows
+    - mat_submodules
+  script:
+    - bash -c 'cp -rf premake/* . ; cp -rf resource/* .'
+    - bash -c 'cp event/msvc-event-config.h event/include/event2/event-config.h' # TODO: prepare-event.bat ?
+    - bash -c 'cp event/WIN32-Code/nmake/evconfig-private.h event/include/evconfig-private.h'
+    - copy nasm.exe C:\Windows\
+    - '.\premake5.exe vs2026'
+    - cmd /c '"C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\msbuild.exe" build\YGOPro.slnx /m /p:Configuration=Release /p:Platform=x64'
+    - copy bin\release\x64\ygopro.exe .
+  artifacts:
+    paths:
+      - ygopro.exe
+
+.exec_unix:
+  extends: ._exec_build
+  variables:
+    BUILD_FREETYPE: '1'
+    BUILD_SQLITE: '1'
+    BUILD_IRRLICHT: '1'
+    BUILD_EVENT: '1'
+    BUILD_OPUS_VORBIS: '1'
+    AUDIO_LIB: 'miniaudio'
+    MINIAUDIO_SUPPORT_OPUS_VORBIS: '1'
+    BUILD_JPEG: '1'
+    BUILD_PNG: '1'
+    BUILD_ZLIB: '1'
+    BUILD_LZMA: '1'
+  before_script:
+    - ./.ci/configure-libevent.sh
+
+exec_linux:
+  extends: .exec_unix
+  tags:
+    - linux
+  image: git-registry.moenext.com/mycard/docker-ygopro-builder:latest
+  dependencies:
+    - mat_common
+    #- mat_linux
+    - mat_submodules
+  script:
+    - apt update; apt -y install nasm
+    - ./.ci/configure-audio.sh
+    - premake5 gmake
+    - cd build
+    - make config=release -j$(nproc)
+    - cd ..
+    - mv bin/release/YGOPro ./ygopro
+    - strip ygopro
+  artifacts:
+    paths:
+      - ygopro
+
+.exec_macos_platform:
+  extends: .exec_unix
+  dependencies:
+    - mat_macos
+    - mat_common
+    - mat_submodules
+  script: ./.ci/exec-macos-platform.sh
+  artifacts:
+    paths:
+      - ygopro-platforms
+
+exec_macos_platform_x86:
+  extends: .exec_macos_platform
+  tags:
+    - macos
+      
+exec_macos_platform_m1:
+  extends: .exec_macos_platform
+  tags:
+    - macos-m1
+
+exec_macos:
+  stage: combine
+  tags:
+    - macos
+  dependencies:
+    - exec_macos_platform_x86
+    - exec_macos_platform_m1
+  script:
+    - mkdir -p ygopro.app/Contents/MacOS ygopro.app/Contents/Frameworks;
+    - lipo -create -output ygopro.app/Contents/MacOS/ygopro $(ls -1 ygopro-platforms/ygopro-platform-*);
+    - mkdir ygopro.app/Contents/Resources;
+    - mv resource/gframe/ygopro.icns ygopro.app/Contents/Resources/Icon.icns;
+    - defaults write "$PWD/ygopro.app/Contents/Info.plist" "CFBundleIconFile" "Icon.icns";
+    - defaults write "$PWD/ygopro.app/Contents/Info.plist" "CFBundleIdentifier" "moe.mycard.ygopro";
+
+  artifacts:
+    paths:
+      - ygopro.app
+
+#exec_macos_sign:
+#  stage: sign
+#  tags:
+#    - macos
+#  dependencies:
+#    - exec_macos
+#  script: ./.ci/sign-macos.sh
+#  artifacts:
+#    paths:
+#      - ygopro.app
+#  only:
+#    - tags
+#    - gitlabci
+
+assets:
+  stage: prepare
+  tags:
+    - linux
+  script:
+    - apt update; apt -y install tar wget git
+    # starter pack
+    - wget -O - https://code.moenext.com/mycard/ygopro-starter-pack/-/archive/master/ygopro-starter-pack-master.tar.gz | tar zfx -
+    - mv ygopro-starter-pack-master/* .
+    # sound
+    - wget -O - https://code.moenext.com/mycard/ygopro-sounds/-/archive/master/ygopro-sounds-master.tar.gz | tar zfx -
+    - mv ygopro-sounds-master/sound/* sound
+    # fonts
+    - git clone --depth=1 https://code.moenext.com/mycard/ygopro-fonts
+    - mv ygopro-fonts/fonts .
+    # pack
+    - git clone --depth=1 https://code.moenext.com/mycard/ygopro-card-list
+    - mv ygopro-card-list/pack .
+    # load-once.conf
+    - cp ./resource/load-once.conf .
+  artifacts:
+    paths:
+      - deck
+      - single
+      - sound
+      - fonts
+      - pack
+      - load-once.conf
+  only:
+    - tags
+    - gitlabci
+
+assets_nonwindows:
+  stage: prepare
+  tags:
+    - linux
+  script:
+    - apt update; apt -y install tar wget
+    - wget -O - https://cdn02.moecube.com:444/windbot-mc/windbot.tar.gz | tar zfx -
+  artifacts:
+    paths:
+      - bot.conf
+      - windbot
+      - bot
+  only:
+    - tags
+    - gitlabci
+
+assets_windows:
+  stage: prepare
+  tags:
+    - linux
+  script:
+    - apt update; apt -y install wget p7zip-full
+    - wget https://cdn02.moecube.com:444/windbot-mc/WindBot.7z
+    - 7z x -y WindBot.7z
+  artifacts:
+    paths:
+      - bot.conf
+      - WindBot
+      - Bot.exe
+  only:
+    - tags
+    - gitlabci
+
+assets_zh-CN:
+  stage: build
+  tags:
+    - linux
+  script: ./.ci/assets-locale.sh
+  variables:
+    TARGET_LOCALE: zh-CN
+  artifacts:
+    paths:
+      - pics
+      - cards.cdb
+      - strings.conf
+  only:
+    - tags
+    - gitlabci
+
+assets_en-US:
+  stage: build
+  tags:
+    - linux
+  script: ./.ci/assets-locale.sh
+  variables:
+    TARGET_LOCALE: en-US
+  artifacts:
+    paths:
+      - pics
+      - cards.cdb
+      - strings.conf
+  only:
+    - tags
+    - gitlabci
+
+pack_windows_zh-CN:
+  stage: pack
+  tags:
+    - linux
+  dependencies:
+    - assets
+    - assets_windows
+    - exec_windows
+    - assets_zh-CN
+    - mat_submodules
+  script: ./.ci/pack-windows.sh
+  variables:
+    TARGET_LOCALE: zh-CN
+  artifacts:
+    paths:
+      - dist
+  only:
+    - tags
+    - gitlabci
+
+pack_windows_en-US:
+  stage: pack
+  tags:
+    - linux
+  dependencies:
+    - assets
+    - assets_windows
+    - exec_windows
+    - assets_en-US
+    - mat_submodules
+  script: ./.ci/pack-windows.sh
+  variables:
+    TARGET_LOCALE: en-US
+  artifacts:
+    paths:
+      - dist
+  only:
+    - tags
+    - gitlabci
+
+pack_linux_zh-CN:
+  stage: pack
+  tags:
+    - linux
+  dependencies:
+    - assets
+    - assets_nonwindows
+    - exec_linux
+    - assets_zh-CN
+    - mat_submodules
+  script: ./.ci/pack-linux.sh
+  variables:
+    TARGET_LOCALE: zh-CN
+  artifacts:
+    paths:
+      - dist
+  only:
+    - tags
+    - gitlabci
+
+pack_linux_en-US:
+  stage: pack
+  tags:
+    - linux
+  dependencies:
+    - assets
+    - assets_nonwindows
+    - exec_linux
+    - assets_en-US
+    - mat_submodules
+  script: ./.ci/pack-linux.sh
+  variables:
+    TARGET_LOCALE: en-US
+  artifacts:
+    paths:
+      - dist
+  only:
+    - tags
+    - gitlabci
+
+pack_macos_zh-CN:
+  stage: pack
+  tags:
+    - linux
+  dependencies:
+    - assets
+    - assets_nonwindows
+    - exec_macos
+    - assets_zh-CN
+    - mat_submodules
+  script: ./.ci/pack-macos.sh
+  variables:
+    TARGET_LOCALE: zh-CN
+  artifacts:
+    paths:
+      - dist
+  only:
+    - tags
+    - gitlabci
+
+pack_macos_en-US:
+  stage: pack
+  tags:
+    - linux
+  dependencies:
+    - assets
+    - assets_nonwindows
+    - exec_macos
+    - assets_en-US
+    - mat_submodules
+  script: ./.ci/pack-macos.sh
+  variables:
+    TARGET_LOCALE: en-US
+  artifacts:
+    paths:
+      - dist
+  only:
+    - tags
+    - gitlabci
+
+upload:
+  stage: deploy
+  dependencies:
+    - pack_windows_zh-CN
+    - pack_linux_zh-CN
+    - pack_macos_zh-CN
+    - pack_windows_en-US
+    - pack_linux_en-US
+    - pack_macos_en-US
+  tags: 
+    - linux
+  variables:
+    appVersion: $CI_COMMIT_TAG
+  script: ./.ci/upload-packager.sh
+  only:
+    - tags

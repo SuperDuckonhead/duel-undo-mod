@@ -1,0 +1,1525 @@
+#include <algorithm>
+#include <cmath>
+#include <vector>
+#include "game.h"
+#include "CGUITTFont.h"
+#include "client_card.h"
+#include "materials.h"
+#include "image_manager.h"
+#include "data_manager.h"
+#include "deck_manager.h"
+#include "sound_manager.h"
+#include "duelclient.h"
+
+namespace ygo {
+
+void Game::Draw2DImageQuad(irr::video::IVideoDriver* driver, irr::video::ITexture* texture,
+						   const irr::core::recti& sourceRect, const irr::core::vector2di corners[4],
+						   bool useAlphaChannel, irr::video::SColor color) {
+	if (!texture)
+		return;
+
+	irr::video::SMaterial material;
+	irr::core::matrix4 oldProjMat = driver->getTransform(irr::video::ETS_PROJECTION);
+	driver->setTransform(irr::video::ETS_PROJECTION, irr::core::matrix4());
+	irr::core::matrix4 oldViewMat = driver->getTransform(irr::video::ETS_VIEW);
+	driver->setTransform(irr::video::ETS_VIEW, irr::core::matrix4());
+	irr::core::matrix4 oldWorldMat = driver->getTransform(irr::video::ETS_WORLD);
+	driver->setTransform(irr::video::ETS_WORLD, irr::core::matrix4());
+
+	irr::core::vector2df uvCorner[4];
+	uvCorner[0] = irr::core::vector2df((irr::f32)sourceRect.UpperLeftCorner.X, (irr::f32)sourceRect.UpperLeftCorner.Y);
+	uvCorner[1] = irr::core::vector2df((irr::f32)sourceRect.LowerRightCorner.X, (irr::f32)sourceRect.UpperLeftCorner.Y);
+	uvCorner[2] = irr::core::vector2df((irr::f32)sourceRect.UpperLeftCorner.X, (irr::f32)sourceRect.LowerRightCorner.Y);
+	uvCorner[3] = irr::core::vector2df((irr::f32)sourceRect.LowerRightCorner.X, (irr::f32)sourceRect.LowerRightCorner.Y);
+	const irr::f32 invW = 1.0f / (irr::f32)texture->getOriginalSize().Width;
+	const irr::f32 invH = 1.0f / (irr::f32)texture->getOriginalSize().Height;
+	for (int x = 0; x < 4; x++)
+		uvCorner[x] = irr::core::vector2df(uvCorner[x].X * invW, uvCorner[x].Y * invH);
+
+	irr::video::S3DVertex vertices[4];
+	static const irr::u16 indices[6] = { 0, 1, 2, 3, 2, 1 };
+	const irr::f32 screenWidth = (irr::f32)driver->getScreenSize().Width;
+	const irr::f32 screenHeight = (irr::f32)driver->getScreenSize().Height;
+	for (int x = 0; x < 4; x++)
+	{
+		vertices[x].Pos = irr::core::vector3df(
+			((corners[x].X / screenWidth) - 0.5f) * 2.0f,
+			((corners[x].Y / screenHeight) - 0.5f) * -2.0f, 1.0f);
+		vertices[x].TCoords = uvCorner[x];
+		vertices[x].Color = color;
+	}
+
+	material.Lighting = false;
+	material.ZWriteEnable = irr::video::EZW_OFF;
+	material.TextureLayer[0].Texture = texture;
+	material.MaterialType = useAlphaChannel ?
+		irr::video::EMT_TRANSPARENT_ALPHA_CHANNEL : irr::video::EMT_SOLID;
+	driver->setMaterial(material);
+	driver->drawIndexedTriangleList(&vertices[0], 4, &indices[0], 2);
+
+	driver->setTransform(irr::video::ETS_PROJECTION, oldProjMat);
+	driver->setTransform(irr::video::ETS_VIEW, oldViewMat);
+	driver->setTransform(irr::video::ETS_WORLD, oldWorldMat);
+}
+
+void Game::DrawSelectionLine(irr::video::S3DVertex* vec, bool stipple, irr::video::SColor color) {
+	static const int edgeStart[] = { 0, 1, 3, 2 };
+	static const int edgeEnd[]   = { 1, 3, 2, 0 };
+	const irr::core::matrix4 oldWorld = driver->getTransform(irr::video::ETS_WORLD);
+	irr::core::vector3df wp[4];
+	for(int i = 0; i < 4; ++i)
+		oldWorld.transformVect(wp[i], vec[i].Pos);
+	const irr::core::matrix4& view = driver->getTransform(irr::video::ETS_VIEW);
+	irr::core::matrix4 pv = driver->getTransform(irr::video::ETS_PROJECTION);
+	pv *= view;
+	const auto sz = driver->getCurrentRenderTargetSize();
+	if(sz.Width == 0 || sz.Height == 0)
+		return;
+	const irr::f32 hw = sz.Width * 0.5f, hh = sz.Height * 0.5f;
+	const irr::f32 xScale = sz.Width / static_cast<irr::f32>(GAME_WINDOW_WIDTH);
+	const irr::f32 yScale = sz.Height / static_cast<irr::f32>(GAME_WINDOW_HEIGHT);
+	const irr::f32 pixelScale = (xScale < yScale) ? xScale : yScale;
+	constexpr irr::f32 kSelectionLineHalfThicknessScale = 0.2f; // screen-pixel scaling factor for selection outline thickness
+	const irr::f32 halfThick = matManager.mOutLine.Thickness * pixelScale * kSelectionLineHalfThicknessScale;
+	if(halfThick <= 0.0f)
+		return;
+	irr::core::matrix4 invPv;
+	if(!pv.getInverse(invPv))
+		return;
+	struct ProjectedPoint {
+		irr::core::vector2df screen;
+		irr::f32 ndcZ;
+	};
+	const auto projectPoint = [&](const irr::core::vector3df& point, ProjectedPoint& projected) {
+		irr::f32 clip[4] = { point.X, point.Y, point.Z, 1.0f };
+		pv.multiplyWith1x4Matrix(clip);
+		if(clip[3] <= 1e-6f)
+			return false;
+		const irr::f32 invW = 1.0f / clip[3];
+		projected.screen = irr::core::vector2df(clip[0] * invW * hw, clip[1] * invW * hh);
+		projected.ndcZ = clip[2] * invW;
+		return true;
+	};
+	const auto unprojectScreen = [&](const irr::core::vector2df& screen, irr::f32 ndcZ) {
+		irr::f32 point[4] = { screen.X / hw, screen.Y / hh, ndcZ, 1.0f };
+		invPv.multiplyWith1x4Matrix(point);
+		if(std::fabs(point[3]) < 1e-6f)
+			return irr::core::vector3df();
+		const irr::f32 invW = 1.0f / point[3];
+		return irr::core::vector3df(point[0] * invW, point[1] * invW, point[2] * invW);
+	};
+	// must be static due to a VS2019 compiler bug
+	static constexpr size_t THICK_LINE_VERTICES_PER_SEGMENT = 8;
+	static constexpr size_t THICK_LINE_INDICES_PER_SEGMENT = 30;
+	const auto lerpProjected = [](const ProjectedPoint& start, const ProjectedPoint& end, irr::f32 t) {
+		ProjectedPoint result;
+		result.screen = start.screen + (end.screen - start.screen) * t;
+		result.ndcZ = start.ndcZ + (end.ndcZ - start.ndcZ) * t;
+		return result;
+	};
+	const auto buildThickLine = [&](const ProjectedPoint& ps, const ProjectedPoint& pe,
+	                                irr::video::S3DVertex* outVertices, irr::u16* outIndices, irr::u16 base) {
+		const auto screenDirection = pe.screen - ps.screen;
+		const irr::f32 screenLenSq = screenDirection.getLengthSQ();
+		if(screenLenSq < 1e-4f) return false;
+		const irr::f32 invScreenLen = 1.0f / std::sqrt(screenLenSq);
+		const irr::core::vector2df dir = screenDirection * invScreenLen;
+		const irr::core::vector2df perp(-dir.Y, dir.X);
+		const irr::f32 feather = halfThick * 2.0f;
+		const auto innerPerp = perp * halfThick;
+		const auto outerPerp = perp * (halfThick + feather);
+		const auto endFeather = dir * feather;
+		static const irr::u16 idx[30] = {
+			0, 1, 3, 0, 3, 2,
+			4, 5, 0, 0, 5, 1,
+			5, 6, 1, 1, 6, 3,
+			6, 7, 3, 3, 7, 2,
+			7, 4, 2, 2, 4, 0
+		};
+		const irr::core::vector3df normal(0.0f, 0.0f, -1.0f);
+		irr::video::SColor transparent = color;
+		transparent.setAlpha(0);
+		outVertices[0] = irr::video::S3DVertex(unprojectScreen(ps.screen + innerPerp, ps.ndcZ), normal, color, irr::core::vector2df());
+		outVertices[1] = irr::video::S3DVertex(unprojectScreen(pe.screen + innerPerp, pe.ndcZ), normal, color, irr::core::vector2df());
+		outVertices[2] = irr::video::S3DVertex(unprojectScreen(ps.screen - innerPerp, ps.ndcZ), normal, color, irr::core::vector2df());
+		outVertices[3] = irr::video::S3DVertex(unprojectScreen(pe.screen - innerPerp, pe.ndcZ), normal, color, irr::core::vector2df());
+		outVertices[4] = irr::video::S3DVertex(unprojectScreen(ps.screen - endFeather + outerPerp, ps.ndcZ), normal, transparent, irr::core::vector2df());
+		outVertices[5] = irr::video::S3DVertex(unprojectScreen(pe.screen + endFeather + outerPerp, pe.ndcZ), normal, transparent, irr::core::vector2df());
+		outVertices[6] = irr::video::S3DVertex(unprojectScreen(pe.screen + endFeather - outerPerp, pe.ndcZ), normal, transparent, irr::core::vector2df());
+		outVertices[7] = irr::video::S3DVertex(unprojectScreen(ps.screen - endFeather - outerPerp, ps.ndcZ), normal, transparent, irr::core::vector2df());
+		for(size_t i = 0; i < THICK_LINE_INDICES_PER_SEGMENT; ++i)
+			outIndices[i] = base + idx[i];
+		return true;
+	};
+	driver->setMaterial(matManager.mOutLine);
+	driver->setTransform(irr::video::ETS_WORLD, irr::core::matrix4());
+	const auto drawFixedSegments = [&](const auto& getSegment) {
+		irr::video::S3DVertex vertices[4 * THICK_LINE_VERTICES_PER_SEGMENT];
+		irr::u16 indices[4 * THICK_LINE_INDICES_PER_SEGMENT];
+		size_t vertexCount = 0;
+		size_t indexCount = 0;
+		for(int i = 0; i < 4; ++i) {
+			ProjectedPoint ps, pe;
+			if(!getSegment(i, ps, pe))
+				continue;
+			if(buildThickLine(ps, pe, vertices + vertexCount, indices + indexCount, static_cast<irr::u16>(vertexCount))) {
+				vertexCount += THICK_LINE_VERTICES_PER_SEGMENT;
+				indexCount += THICK_LINE_INDICES_PER_SEGMENT;
+			}
+		}
+		if(indexCount)
+			driver->drawVertexPrimitiveList(vertices, static_cast<irr::u32>(vertexCount),
+			    indices, static_cast<irr::u32>(indexCount / 3),
+			    irr::video::EVT_STANDARD, irr::scene::EPT_TRIANGLES);
+	};
+	if(!stipple) {
+		drawFixedSegments([&](int i, ProjectedPoint& ps, ProjectedPoint& pe) {
+			return projectPoint(wp[edgeStart[i]], ps) && projectPoint(wp[edgeEnd[i]], pe);
+		});
+	} else if(gameConf.solid_selection_line) {
+		const bool firstHalf = linePattern < 15;
+		const irr::f32 progress = firstHalf ? (linePattern + 1) / 15.0f : (linePattern - 14) / 15.0f;
+		drawFixedSegments([&](int i, ProjectedPoint& ps, ProjectedPoint& pe) {
+			const auto& s = wp[edgeStart[i]];
+			const auto d = wp[edgeEnd[i]] - s;
+			const bool forwardHalf = firstHalf == ((i & 1) == 0);
+			const irr::f32 t0 = forwardHalf ? 0.0f : progress;
+			const irr::f32 t1 = forwardHalf ? progress : 1.0f;
+			return projectPoint(s + d * t0, ps) && projectPoint(s + d * t1, pe);
+		});
+	} else {
+		constexpr size_t MAX_THICK_LINE_BATCH_VERTICES = size_t{1} << (sizeof(irr::u16) * 8);
+		struct ProjectedEdge {
+			ProjectedPoint start;
+			ProjectedPoint end;
+			irr::f32 screenLen;
+			bool projected;
+		};
+		ProjectedEdge projectedEdges[4];
+		for(int i = 0; i < 4; ++i) {
+			auto& edge = projectedEdges[i];
+			edge.projected = projectPoint(wp[edgeStart[i]], edge.start) && projectPoint(wp[edgeEnd[i]], edge.end);
+			edge.screenLen = 1.0f;
+			if(edge.projected)
+				edge.screenLen = std::sqrt((edge.start.screen - edge.end.screen).getLengthSQ());
+		}
+		constexpr size_t RESERVED_THICK_LINE_SEGMENTS = 128;
+		static std::vector<irr::video::S3DVertex> vertices;
+		static std::vector<irr::u16> indices;
+		vertices.clear();
+		indices.clear();
+		vertices.reserve(RESERVED_THICK_LINE_SEGMENTS * THICK_LINE_VERTICES_PER_SEGMENT);
+		indices.reserve(RESERVED_THICK_LINE_SEGMENTS * THICK_LINE_INDICES_PER_SEGMENT);
+		const auto drawBatch = [&]() {
+			if(indices.empty())
+				return;
+			driver->drawVertexPrimitiveList(vertices.data(), static_cast<irr::u32>(vertices.size()),
+			    indices.data(), static_cast<irr::u32>(indices.size() / 3),
+			    irr::video::EVT_STANDARD, irr::scene::EPT_TRIANGLES);
+			vertices.clear();
+			indices.clear();
+		};
+		const auto appendProjectedThickLine = [&](const ProjectedPoint& ps, const ProjectedPoint& pe) {
+			if(vertices.size() + THICK_LINE_VERTICES_PER_SEGMENT > MAX_THICK_LINE_BATCH_VERTICES)
+				drawBatch();
+			const auto base = static_cast<irr::u16>(vertices.size());
+			const size_t oldVertexCount = vertices.size();
+			const size_t oldIndexCount = indices.size();
+			vertices.resize(oldVertexCount + THICK_LINE_VERTICES_PER_SEGMENT);
+			indices.resize(oldIndexCount + THICK_LINE_INDICES_PER_SEGMENT);
+			if(!buildThickLine(ps, pe, vertices.data() + oldVertexCount, indices.data() + oldIndexCount, base)) {
+				vertices.resize(oldVertexCount);
+				indices.resize(oldIndexCount);
+			}
+		};
+		// Project edge endpoints to screen space to get pixel length for pattern tiling.
+		// (1 pattern bit = 1 screen pixel, matching the original GL stipple behaviour.)
+		irr::f32 patternCursor = 0.0f;
+		for(int i = 0; i < 4; ++i) {
+			const auto& edge = projectedEdges[i];
+			const irr::f32 screenLen = edge.screenLen;
+			for(irr::f32 cursor = 0.0f; cursor < screenLen; ) {
+				const int bit = static_cast<int>(patternCursor + cursor) & 0xf;
+				if(!((stippleMask >> bit) & 1)) {
+					irr::f32 runEnd = cursor + 1.0f;
+					while(runEnd < screenLen && !((stippleMask >> (static_cast<int>(patternCursor + runEnd) & 0xf)) & 1))
+						runEnd += 1.0f;
+					cursor = runEnd;
+					continue;
+				}
+				irr::f32 runEnd = cursor + 1.0f;
+				while(runEnd < screenLen && ((stippleMask >> (static_cast<int>(patternCursor + runEnd) & 0xf)) & 1))
+					runEnd += 1.0f;
+				if(runEnd > screenLen)
+					runEnd = screenLen;
+				if(edge.projected) {
+					appendProjectedThickLine(lerpProjected(edge.start, edge.end, cursor / screenLen),
+					    lerpProjected(edge.start, edge.end, runEnd / screenLen));
+				}
+				cursor = runEnd;
+			}
+			patternCursor = std::fmod(patternCursor + screenLen, 16.0f);
+		}
+		drawBatch();
+	}
+	driver->setTransform(irr::video::ETS_WORLD, oldWorld);
+}
+void Game::DrawSelectionLine(irr::gui::IGUIElement* element, int width, irr::video::SColor color) {
+	irr::core::recti pos = element->getAbsolutePosition();
+	irr::s32 x1 = pos.UpperLeftCorner.X;
+	irr::s32 x2 = pos.LowerRightCorner.X;
+	irr::s32 y1 = pos.UpperLeftCorner.Y;
+	irr::s32 y2 = pos.LowerRightCorner.Y;
+	irr::s32 w = pos.getWidth();
+	irr::s32 h = pos.getHeight();
+	if(linePattern < 15) {
+		float progress = (linePattern + 1) / 15.0f;
+		irr::s32 wp = w * progress;
+		irr::s32 hp = h * progress;
+		driver->draw2DRectangle(color, irr::core::recti(x1 - 1 - width, y1 - 1 - width, x1 + wp + 1 + width, y1 - 1));
+		driver->draw2DRectangle(color, irr::core::recti(x2 - wp - 1 - width, y2 + 1, x2 + 1 + width, y2 + 1 + width));
+		driver->draw2DRectangle(color, irr::core::recti(x1 - 1 - width, y1 - 1 - width, x1 - 1, y2 - hp + 1 + width));
+		driver->draw2DRectangle(color, irr::core::recti(x2 + 1, y1 + hp - 1 - width, x2 + 1 + width, y2 + 1 + width));
+	} else {
+		float progress = (linePattern - 14) / 15.0f;
+		irr::s32 wp = w * progress;
+		irr::s32 hp = h * progress;
+		driver->draw2DRectangle(color, irr::core::recti(x1 - 1 - width + wp, y1 - 1 - width, x2 + 1 + width, y1 - 1));
+		driver->draw2DRectangle(color, irr::core::recti(x1 - 1 - width, y2 + 1, x2 - wp + 1 + width, y2 + 1 + width));
+		driver->draw2DRectangle(color, irr::core::recti(x1 - 1 - width, y2 - hp - 1 - width, x1 - 1, y2 + 1 + width));
+		driver->draw2DRectangle(color, irr::core::recti(x2 + 1, y1 - 1 - width, x2 + 1 + width, y1 + hp + 1 + width));
+	}
+}
+void Game::DrawBackGround() {
+	static int selFieldAlpha = 255;
+	static int selFieldDAlpha = -10;
+	//draw field spell card
+	driver->setTransform(irr::video::ETS_WORLD, irr::core::IdentityMatrix);
+	bool drawField = false;
+	int rule = (dInfo.duel_rule >= 4) ? 1 : 0;
+	if(gameConf.draw_field_spell) {
+		int fieldcode1 = -1;
+		int fieldcode2 = -1;
+		if(dField.szone[0][5] && dField.szone[0][5]->position & POS_FACEUP)
+			fieldcode1 = dField.szone[0][5]->code;
+		if(dField.szone[1][5] && dField.szone[1][5]->position & POS_FACEUP)
+			fieldcode2 = dField.szone[1][5]->code;
+		int fieldcode = (fieldcode1 > 0) ? fieldcode1 : fieldcode2;
+		if(fieldcode1 > 0 && fieldcode2 > 0 && fieldcode1 != fieldcode2) {
+			auto texture = imageManager.GetTextureField(fieldcode1);
+			if(texture) {
+				drawField = true;
+				matManager.mTexture.setTexture(0, texture);
+				driver->setMaterial(matManager.mTexture);
+				driver->drawVertexPrimitiveList(matManager.vFieldSpell1, 4, matManager.iRectangle, 2);
+			}
+			texture = imageManager.GetTextureField(fieldcode2);
+			if(texture) {
+				drawField = true;
+				matManager.mTexture.setTexture(0, texture);
+				driver->setMaterial(matManager.mTexture);
+				driver->drawVertexPrimitiveList(matManager.vFieldSpell2, 4, matManager.iRectangle, 2);
+			}
+		} else if(fieldcode > 0) {
+			auto texture = imageManager.GetTextureField(fieldcode);
+			if(texture) {
+				drawField = true;
+				matManager.mTexture.setTexture(0, texture);
+				driver->setMaterial(matManager.mTexture);
+				driver->drawVertexPrimitiveList(matManager.vFieldSpell, 4, matManager.iRectangle, 2);
+			}
+		}
+	}
+	matManager.mTexture.setTexture(0, drawField ? imageManager.tFieldTransparent[rule] : imageManager.tField[rule]);
+	driver->setMaterial(matManager.mTexture);
+	driver->drawVertexPrimitiveList(matManager.vField, 4, matManager.iRectangle, 2);
+	//select field
+	driver->setMaterial(matManager.mOutLine);
+	if(dInfo.curMsg == MSG_SELECT_PLACE || dInfo.curMsg == MSG_SELECT_DISFIELD || dInfo.curMsg == MSG_HINT) {
+		unsigned int filter = 0x1;
+		for (int i = 0; i < 7; ++i, filter <<= 1) {
+			if (dField.selectable_field & filter)
+				DrawSelectionLine(matManager.vFieldMzone[0][i], !(dField.selected_field & filter), 0xff0000ff);
+		}
+		filter = 0x100;
+		for (int i = 0; i < 8; ++i, filter <<= 1) {
+			if (dField.selectable_field & filter)
+				DrawSelectionLine(matManager.vFieldSzone[0][i][rule], !(dField.selected_field & filter), 0xff0000ff);
+		}
+		filter = 0x10000;
+		for (int i = 0; i < 7; ++i, filter <<= 1) {
+			if (dField.selectable_field & filter)
+				DrawSelectionLine(matManager.vFieldMzone[1][i], !(dField.selected_field & filter), 0xff0000ff);
+		}
+		filter = 0x1000000;
+		for (int i = 0; i < 8; ++i, filter <<= 1) {
+			if (dField.selectable_field & filter)
+				DrawSelectionLine(matManager.vFieldSzone[1][i][rule], !(dField.selected_field & filter), 0xff0000ff);
+		}
+	}
+	//disabled field
+	driver->setMaterial(matManager.mBackLine);
+	{
+		/*float cv[4] = {0.0f, 0.0f, 1.0f, 1.0f};*/
+		unsigned int filter = 0x1;
+		for (int i = 0; i < 7; ++i, filter <<= 1) {
+			if (dField.disabled_field & filter) {
+				driver->draw3DLine(matManager.vFieldMzone[0][i][0].Pos, matManager.vFieldMzone[0][i][3].Pos, 0xffffffff);
+				driver->draw3DLine(matManager.vFieldMzone[0][i][1].Pos, matManager.vFieldMzone[0][i][2].Pos, 0xffffffff);
+			}
+		}
+		filter = 0x100;
+		for (int i = 0; i < 8; ++i, filter <<= 1) {
+			if (dField.disabled_field & filter) {
+				driver->draw3DLine(matManager.vFieldSzone[0][i][rule][0].Pos, matManager.vFieldSzone[0][i][rule][3].Pos, 0xffffffff);
+				driver->draw3DLine(matManager.vFieldSzone[0][i][rule][1].Pos, matManager.vFieldSzone[0][i][rule][2].Pos, 0xffffffff);
+			}
+		}
+		filter = 0x10000;
+		for (int i = 0; i < 7; ++i, filter <<= 1) {
+			if (dField.disabled_field & filter) {
+				driver->draw3DLine(matManager.vFieldMzone[1][i][0].Pos, matManager.vFieldMzone[1][i][3].Pos, 0xffffffff);
+				driver->draw3DLine(matManager.vFieldMzone[1][i][1].Pos, matManager.vFieldMzone[1][i][2].Pos, 0xffffffff);
+			}
+		}
+		filter = 0x1000000;
+		for (int i = 0; i < 8; ++i, filter <<= 1) {
+			if (dField.disabled_field & filter) {
+				driver->draw3DLine(matManager.vFieldSzone[1][i][rule][0].Pos, matManager.vFieldSzone[1][i][rule][3].Pos, 0xffffffff);
+				driver->draw3DLine(matManager.vFieldSzone[1][i][rule][1].Pos, matManager.vFieldSzone[1][i][rule][2].Pos, 0xffffffff);
+			}
+		}
+	}
+	//current sel
+	if (dField.hovered_location != 0 && dField.hovered_location != 2 && dField.hovered_location != POSITION_HINT
+		&& !(dInfo.duel_rule < 4 && dField.hovered_location == LOCATION_MZONE && dField.hovered_sequence > 4)
+		&& !(dInfo.duel_rule >= 4 && dField.hovered_location == LOCATION_SZONE && dField.hovered_sequence > 5)) {
+		irr::video::S3DVertex* vertex = 0;
+		if (dField.hovered_location == LOCATION_DECK)
+			vertex = matManager.vFieldDeck[dField.hovered_controler];
+		else if (dField.hovered_location == LOCATION_MZONE) {
+			vertex = matManager.vFieldMzone[dField.hovered_controler][dField.hovered_sequence];
+			ClientCard* pcard = dField.mzone[dField.hovered_controler][dField.hovered_sequence];
+			if(pcard && pcard->type & TYPE_LINK) {
+				DrawLinkedZones(pcard);
+			}
+		} else if (dField.hovered_location == LOCATION_SZONE)
+			vertex = matManager.vFieldSzone[dField.hovered_controler][dField.hovered_sequence][rule];
+		else if (dField.hovered_location == LOCATION_GRAVE)
+			vertex = matManager.vFieldGrave[dField.hovered_controler][rule];
+		else if (dField.hovered_location == LOCATION_REMOVED)
+			vertex = matManager.vFieldRemove[dField.hovered_controler][rule];
+		else if (dField.hovered_location == LOCATION_EXTRA)
+			vertex = matManager.vFieldExtra[dField.hovered_controler];
+		selFieldAlpha += selFieldDAlpha;
+		if (selFieldAlpha <= 5) {
+			selFieldAlpha = 5;
+			selFieldDAlpha = 10;
+		}
+		if (selFieldAlpha >= 205) {
+			selFieldAlpha = 205;
+			selFieldDAlpha = -10;
+		}
+		matManager.mSelField.AmbientColor = 0xffffffff;
+		matManager.mSelField.DiffuseColor = (irr::u32)selFieldAlpha << 24;
+		driver->setMaterial(matManager.mSelField);
+		driver->drawVertexPrimitiveList(vertex, 4, matManager.iRectangle, 2);
+	}
+}
+void Game::DrawLinkedZones(ClientCard* pcard) {
+	auto mark = pcard->link_marker;
+	ClientCard* pcard2;
+	if (dField.hovered_sequence < 5) {
+		if (mark & LINK_MARKER_LEFT && dField.hovered_sequence > 0) {
+			pcard2 = dField.mzone[dField.hovered_controler][dField.hovered_sequence - 1];
+			CheckMutual(pcard2, LINK_MARKER_RIGHT);
+			driver->drawVertexPrimitiveList(&matManager.vFieldMzone[dField.hovered_controler][dField.hovered_sequence - 1], 4, matManager.iRectangle, 2);
+		}
+		if (mark & LINK_MARKER_RIGHT && dField.hovered_sequence < 4) {
+			pcard2 = dField.mzone[dField.hovered_controler][dField.hovered_sequence + 1];
+			CheckMutual(pcard2, LINK_MARKER_LEFT);
+			driver->drawVertexPrimitiveList(&matManager.vFieldMzone[dField.hovered_controler][dField.hovered_sequence + 1], 4, matManager.iRectangle, 2);
+		}
+		if (dInfo.duel_rule >= 4) {
+			if ((mark & LINK_MARKER_TOP_LEFT && dField.hovered_sequence == 2)
+				|| (mark & LINK_MARKER_TOP && dField.hovered_sequence == 1)
+				|| (mark & LINK_MARKER_TOP_RIGHT && dField.hovered_sequence == 0)) {
+				int arrow = (dField.hovered_sequence == 2) ? LINK_MARKER_BOTTOM_RIGHT : (dField.hovered_sequence == 1) ? LINK_MARKER_BOTTOM : LINK_MARKER_BOTTOM_LEFT;
+				pcard2 = dField.mzone[dField.hovered_controler][5];
+				if (!pcard2) {
+					pcard2 = dField.mzone[1 - dField.hovered_controler][6];
+					arrow = (dField.hovered_sequence == 2) ? LINK_MARKER_TOP_LEFT : (dField.hovered_sequence == 1) ? LINK_MARKER_TOP : LINK_MARKER_TOP_RIGHT;
+				}
+				CheckMutual(pcard2, arrow);
+				driver->drawVertexPrimitiveList(&matManager.vFieldMzone[dField.hovered_controler][5], 4, matManager.iRectangle, 2);
+			}
+			if ((mark & LINK_MARKER_TOP_LEFT && dField.hovered_sequence == 4)
+				|| (mark & LINK_MARKER_TOP && dField.hovered_sequence == 3)
+				|| (mark & LINK_MARKER_TOP_RIGHT && dField.hovered_sequence == 2)) {
+				int arrow = (dField.hovered_sequence == 4) ? LINK_MARKER_BOTTOM_RIGHT : (dField.hovered_sequence == 3) ? LINK_MARKER_BOTTOM : LINK_MARKER_BOTTOM_LEFT;
+				pcard2 = dField.mzone[dField.hovered_controler][6];
+				if (!pcard2) {
+					pcard2 = dField.mzone[1 - dField.hovered_controler][5];
+					arrow = (dField.hovered_sequence == 4) ? LINK_MARKER_TOP_LEFT : (dField.hovered_sequence == 3) ? LINK_MARKER_TOP : LINK_MARKER_TOP_RIGHT;
+				}
+				CheckMutual(pcard2, arrow);
+				driver->drawVertexPrimitiveList(&matManager.vFieldMzone[dField.hovered_controler][6], 4, matManager.iRectangle, 2);
+			}
+		}
+	} else {
+		int swap = (dField.hovered_sequence == 5) ? 0 : 2;
+		if (mark & LINK_MARKER_BOTTOM_LEFT) {
+			pcard2 = dField.mzone[dField.hovered_controler][0 + swap];
+			CheckMutual(pcard2, LINK_MARKER_TOP_RIGHT);
+			driver->drawVertexPrimitiveList(&matManager.vFieldMzone[dField.hovered_controler][0 + swap], 4, matManager.iRectangle, 2);
+		}
+		if (mark & LINK_MARKER_BOTTOM) {
+			pcard2 = dField.mzone[dField.hovered_controler][1 + swap];
+			CheckMutual(pcard2, LINK_MARKER_TOP);
+			driver->drawVertexPrimitiveList(&matManager.vFieldMzone[dField.hovered_controler][1 + swap], 4, matManager.iRectangle, 2);
+		}
+		if (mark & LINK_MARKER_BOTTOM_RIGHT) {
+			pcard2 = dField.mzone[dField.hovered_controler][2 + swap];
+			CheckMutual(pcard2, LINK_MARKER_TOP_LEFT);
+			driver->drawVertexPrimitiveList(&matManager.vFieldMzone[dField.hovered_controler][2 + swap], 4, matManager.iRectangle, 2);
+		}
+		if (mark & LINK_MARKER_TOP_LEFT) {
+			pcard2 = dField.mzone[1 - dField.hovered_controler][4 - swap];
+			CheckMutual(pcard2, LINK_MARKER_TOP_LEFT);
+			driver->drawVertexPrimitiveList(&matManager.vFieldMzone[1 - dField.hovered_controler][4 - swap], 4, matManager.iRectangle, 2);
+		}
+		if (mark & LINK_MARKER_TOP) {
+			pcard2 = dField.mzone[1 - dField.hovered_controler][3 - swap];
+			CheckMutual(pcard2, LINK_MARKER_TOP);
+			driver->drawVertexPrimitiveList(&matManager.vFieldMzone[1 - dField.hovered_controler][3 - swap], 4, matManager.iRectangle, 2);
+		}
+		if (mark & LINK_MARKER_TOP_RIGHT) {
+			pcard2 = dField.mzone[1 - dField.hovered_controler][2 - swap];
+			CheckMutual(pcard2, LINK_MARKER_TOP_RIGHT);
+			driver->drawVertexPrimitiveList(&matManager.vFieldMzone[1 - dField.hovered_controler][2 - swap], 4, matManager.iRectangle, 2);
+		}
+	}
+}
+void Game::CheckMutual(ClientCard* pcard, int mark) {
+	matManager.mSelField.AmbientColor = 0xff0261a2;
+	driver->setMaterial(matManager.mSelField);
+	if (pcard && pcard->type & TYPE_LINK && pcard->link_marker & mark) {
+		matManager.mSelField.AmbientColor = 0xff009900;
+		driver->setMaterial(matManager.mSelField);
+	}
+}
+void Game::DrawCards() {
+	for(int p = 0; p < 2; ++p) {
+		for(auto it = dField.mzone[p].begin(); it != dField.mzone[p].end(); ++it)
+			if(*it)
+				DrawCard(*it);
+		for(auto it = dField.szone[p].begin(); it != dField.szone[p].end(); ++it)
+			if(*it)
+				DrawCard(*it);
+		for(auto it = dField.deck[p].begin(); it != dField.deck[p].end(); ++it)
+			DrawCard(*it);
+		for(auto it = dField.hand[p].begin(); it != dField.hand[p].end(); ++it)
+			DrawCard(*it);
+		for(auto it = dField.grave[p].begin(); it != dField.grave[p].end(); ++it)
+			DrawCard(*it);
+		for(auto it = dField.remove[p].begin(); it != dField.remove[p].end(); ++it)
+			DrawCard(*it);
+		for(auto it = dField.extra[p].begin(); it != dField.extra[p].end(); ++it)
+			DrawCard(*it);
+	}
+	for (auto cit = dField.overlay_cards.begin(); cit != dField.overlay_cards.end(); ++cit) {
+		auto pcard = (*cit);
+		auto olcard = pcard->overlayTarget;
+		if (pcard->aniFrame) {
+			DrawCard(pcard);
+		}
+		else if (olcard && olcard->location == LOCATION_MZONE) {
+			if (pcard->sequence < MAX_LAYER_COUNT) {
+				DrawCard(pcard);
+			}
+		}
+		else {
+			DrawCard(pcard);
+		}
+	}
+}
+void Game::DrawCard(ClientCard* pcard) {
+	if(pcard->aniFrame) {
+		if(pcard->is_moving) {
+			pcard->curPos += pcard->dPos;
+			pcard->curRot += pcard->dRot;
+			pcard->mTransform.setTranslation(pcard->curPos);
+			pcard->mTransform.setRotationRadians(pcard->curRot);
+		}
+		if(pcard->is_fading)
+			pcard->curAlpha += pcard->dAlpha;
+		pcard->aniFrame--;
+		if(pcard->aniFrame == 0) {
+			pcard->is_moving = false;
+			pcard->is_fading = false;
+			pcard->chain_code = 0;
+		}
+	}
+	matManager.mCard.AmbientColor = 0xffffffff;
+	matManager.mCard.DiffuseColor = (pcard->curAlpha << 24) | 0xffffff;
+	driver->setTransform(irr::video::ETS_WORLD, pcard->mTransform);
+	auto m22 = pcard->mTransform(2, 2);
+	if(m22 > -0.99 || pcard->is_moving) {
+		auto code = pcard->code;
+		if (code == 0 && pcard->is_moving)
+			code = pcard->chain_code;
+		matManager.mCard.setTexture(0, imageManager.GetTexture(code));
+		driver->setMaterial(matManager.mCard);
+		driver->drawVertexPrimitiveList(matManager.vCardFront, 4, matManager.iRectangle, 2);
+	}
+	if(m22 < 0.99 || pcard->is_moving) {
+		matManager.mCard.setTexture(0, imageManager.tCover[pcard->controler]);
+		driver->setMaterial(matManager.mCard);
+		driver->drawVertexPrimitiveList(matManager.vCardBack, 4, matManager.iRectangle, 2);
+	}
+	if(pcard->is_moving)
+		return;
+	if(pcard->is_selectable && (pcard->location & 0xe)) {
+		if((pcard->location == LOCATION_HAND && pcard->code) || ((pcard->location & 0xc) && (pcard->position & POS_FACEUP)))
+			DrawSelectionLine(matManager.vCardOutline, !pcard->is_selected, 0xffffff00);
+		else
+			DrawSelectionLine(matManager.vCardOutliner, !pcard->is_selected, 0xffffff00);
+	}
+	if(pcard->is_highlighting) {
+		if((pcard->location == LOCATION_HAND && pcard->code) || ((pcard->location & 0xc) && (pcard->position & POS_FACEUP)))
+			DrawSelectionLine(matManager.vCardOutline, true, 0xff00ffff);
+		else
+			DrawSelectionLine(matManager.vCardOutliner, true, 0xff00ffff);
+	}
+	irr::core::matrix4 im;
+	im.setTranslation(pcard->curPos);
+	driver->setTransform(irr::video::ETS_WORLD, im);
+	if(pcard->is_showequip) {
+		matManager.mTexture.setTexture(0, imageManager.tEquip);
+		driver->setMaterial(matManager.mTexture);
+		driver->drawVertexPrimitiveList(matManager.vSymbol, 4, matManager.iRectangle, 2);
+	} else if(pcard->is_showtarget) {
+		matManager.mTexture.setTexture(0, imageManager.tTarget);
+		driver->setMaterial(matManager.mTexture);
+		driver->drawVertexPrimitiveList(matManager.vSymbol, 4, matManager.iRectangle, 2);
+	} else if(pcard->is_showchaintarget) {
+		matManager.mTexture.setTexture(0, imageManager.tChainTarget);
+		driver->setMaterial(matManager.mTexture);
+		driver->drawVertexPrimitiveList(matManager.vSymbol, 4, matManager.iRectangle, 2);
+	} else if((pcard->status & (STATUS_DISABLED | STATUS_FORBIDDEN))
+		&& (pcard->location & LOCATION_ONFIELD) && (pcard->position & POS_FACEUP)) {
+		matManager.mTexture.setTexture(0, imageManager.tNegated);
+		driver->setMaterial(matManager.mTexture);
+		driver->drawVertexPrimitiveList(matManager.vNegate, 4, matManager.iRectangle, 2);
+	}
+	if(pcard->cmdFlag & COMMAND_ATTACK) {
+		matManager.mTexture.setTexture(0, imageManager.tAttack);
+		driver->setMaterial(matManager.mTexture);
+		irr::core::matrix4 atk;
+		atk.setTranslation(pcard->curPos + irr::core::vector3df(0, (pcard->controler == 0 ? -1 : 1) * (atkdy / 4.0f + 0.35f), 0.05f));
+		atk.setRotationRadians(irr::core::vector3df(0, 0, pcard->controler == 0 ? 0 : 3.1415926f));
+		driver->setTransform(irr::video::ETS_WORLD, atk);
+		driver->drawVertexPrimitiveList(matManager.vSymbol, 4, matManager.iRectangle, 2);
+	}
+}
+template<typename T>
+void Game::DrawShadowText(irr::gui::CGUITTFont* font, const T& text, const irr::core::rect<irr::s32>& position, const irr::core::rect<irr::s32>& padding,
+			irr::video::SColor color, irr::video::SColor shadowcolor, bool hcenter, bool vcenter, const irr::core::rect<irr::s32>* clip) {
+	irr::core::rect<irr::s32> shadowposition = irr::core::recti(position.UpperLeftCorner.X - padding.UpperLeftCorner.X, position.UpperLeftCorner.Y - padding.UpperLeftCorner.Y, 
+										   position.LowerRightCorner.X - padding.LowerRightCorner.X, position.LowerRightCorner.Y - padding.LowerRightCorner.Y);
+	font->drawUstring(text, shadowposition, shadowcolor, hcenter, vcenter, clip);
+	font->drawUstring(text, position, color, hcenter, vcenter, clip);
+}
+void Game::DrawMisc() {
+	static irr::core::vector3df act_rot(0, 0, 0);
+	int rule = (dInfo.duel_rule >= 4) ? 1 : 0;
+	irr::core::matrix4 im, ic, it, ig;
+	act_rot.Z += 0.02f;
+	im.setRotationRadians(act_rot);
+	matManager.mTexture.setTexture(0, imageManager.tAct);
+	driver->setMaterial(matManager.mTexture);
+	for(int player = 0; player < 2; ++player) {
+		if(dField.deck_act[player]) {
+			im.setTranslation(irr::core::vector3df((matManager.vFieldDeck[player][0].Pos.X + matManager.vFieldDeck[player][1].Pos.X) / 2,
+				(matManager.vFieldDeck[player][0].Pos.Y + matManager.vFieldDeck[player][2].Pos.Y) / 2, dField.deck[player].size() * 0.01f + 0.02f));
+			driver->setTransform(irr::video::ETS_WORLD, im);
+			driver->drawVertexPrimitiveList(matManager.vActivate, 4, matManager.iRectangle, 2);
+		}
+		if(dField.grave_act[player]) {
+			im.setTranslation(irr::core::vector3df((matManager.vFieldGrave[player][rule][0].Pos.X + matManager.vFieldGrave[player][rule][1].Pos.X) / 2,
+				(matManager.vFieldGrave[player][rule][0].Pos.Y + matManager.vFieldGrave[player][rule][2].Pos.Y) / 2, dField.grave[player].size() * 0.01f + 0.02f));
+			driver->setTransform(irr::video::ETS_WORLD, im);
+			driver->drawVertexPrimitiveList(matManager.vActivate, 4, matManager.iRectangle, 2);
+		}
+		if(dField.remove_act[player]) {
+			im.setTranslation(irr::core::vector3df((matManager.vFieldRemove[player][rule][0].Pos.X + matManager.vFieldRemove[player][rule][1].Pos.X) / 2,
+				(matManager.vFieldRemove[player][rule][0].Pos.Y + matManager.vFieldRemove[player][rule][2].Pos.Y) / 2, dField.remove[player].size() * 0.01f + 0.02f));
+			driver->setTransform(irr::video::ETS_WORLD, im);
+			driver->drawVertexPrimitiveList(matManager.vActivate, 4, matManager.iRectangle, 2);
+		}
+		if(dField.extra_act[player]) {
+			im.setTranslation(irr::core::vector3df((matManager.vFieldExtra[player][0].Pos.X + matManager.vFieldExtra[player][1].Pos.X) / 2,
+				(matManager.vFieldExtra[player][0].Pos.Y + matManager.vFieldExtra[player][2].Pos.Y) / 2, dField.extra[player].size() * 0.01f + 0.02f));
+			driver->setTransform(irr::video::ETS_WORLD, im);
+			driver->drawVertexPrimitiveList(matManager.vActivate, 4, matManager.iRectangle, 2);
+		}
+		if(dField.pzone_act[player]) {
+			int seq = dInfo.duel_rule >= 4 ? 0 : 6;
+			im.setTranslation(irr::core::vector3df((matManager.vFieldSzone[player][seq][rule][0].Pos.X + matManager.vFieldSzone[player][seq][rule][1].Pos.X) / 2,
+				(matManager.vFieldSzone[player][seq][rule][0].Pos.Y + matManager.vFieldSzone[player][seq][rule][2].Pos.Y) / 2, 0.03f));
+			driver->setTransform(irr::video::ETS_WORLD, im);
+			driver->drawVertexPrimitiveList(matManager.vActivate, 4, matManager.iRectangle, 2);
+		}
+	}
+	if(dField.conti_act) {
+		irr::core::vector3df pos = irr::core::vector3df((matManager.vFieldContiAct[0].X + matManager.vFieldContiAct[1].X) / 2,
+			(matManager.vFieldContiAct[0].Y + matManager.vFieldContiAct[2].Y) / 2, 0);
+		im.setRotationRadians(irr::core::vector3df(0, 0, 0));
+		for(auto cit = dField.conti_cards.begin(); cit != dField.conti_cards.end(); ++cit) {
+			im.setTranslation(pos);
+			driver->setTransform(irr::video::ETS_WORLD, im);
+			matManager.mCard.setTexture(0, imageManager.GetTexture((*cit)->code));
+			driver->setMaterial(matManager.mCard);
+			driver->drawVertexPrimitiveList(matManager.vCardFront, 4, matManager.iRectangle, 2);
+			pos.Z += 0.03f;
+		}
+		im.setTranslation(pos);
+		im.setRotationRadians(act_rot);
+		driver->setTransform(irr::video::ETS_WORLD, im);
+		driver->setMaterial(matManager.mTexture);
+		driver->drawVertexPrimitiveList(matManager.vActivate, 4, matManager.iRectangle, 2);
+	}
+	if(dField.chains.size() > 1 || gameConf.draw_single_chain) {
+		for(size_t i = 0; i < dField.chains.size(); ++i) {
+			if(dField.chains[i].solved)
+				break;
+			matManager.mTRTexture.setTexture(0, imageManager.tChain);
+			matManager.mTRTexture.AmbientColor = 0xffffff00;
+			ic.setRotationRadians(act_rot);
+			ic.setTranslation(dField.chains[i].chain_pos);
+			driver->setMaterial(matManager.mTRTexture);
+			driver->setTransform(irr::video::ETS_WORLD, ic);
+			driver->drawVertexPrimitiveList(matManager.vSymbol, 4, matManager.iRectangle, 2);
+			it.setScale(0.6f);
+			it.setTranslation(dField.chains[i].chain_pos);
+			matManager.mTRTexture.setTexture(0, imageManager.tNumber);
+			matManager.vChainNum[0].TCoords = irr::core::vector2df(0.19375f * (i % 5), 0.2421875f * (i / 5));
+			matManager.vChainNum[1].TCoords = irr::core::vector2df(0.19375f * (i % 5 + 1), 0.2421875f * (i / 5));
+			matManager.vChainNum[2].TCoords = irr::core::vector2df(0.19375f * (i % 5), 0.2421875f * (i / 5 + 1));
+			matManager.vChainNum[3].TCoords = irr::core::vector2df(0.19375f * (i % 5 + 1), 0.2421875f * (i / 5 + 1));
+			driver->setMaterial(matManager.mTRTexture);
+			driver->setTransform(irr::video::ETS_WORLD, it);
+			driver->drawVertexPrimitiveList(matManager.vChainNum, 4, matManager.iRectangle, 2);
+		}
+	}
+	if(dField.cant_check_grave) {
+		matManager.mTexture.setTexture(0, imageManager.tNegated);
+		driver->setMaterial(matManager.mTexture);
+		ig.setTranslation(irr::core::vector3df((matManager.vFieldGrave[0][rule][0].Pos.X + matManager.vFieldGrave[0][rule][1].Pos.X) / 2,
+			(matManager.vFieldGrave[0][rule][0].Pos.Y + matManager.vFieldGrave[0][rule][2].Pos.Y) / 2, dField.grave[0].size() * 0.01f + 0.02f));
+		driver->setTransform(irr::video::ETS_WORLD, ig);
+		driver->drawVertexPrimitiveList(matManager.vNegate, 4, matManager.iRectangle, 2);
+		ig.setTranslation(irr::core::vector3df((matManager.vFieldGrave[1][rule][0].Pos.X + matManager.vFieldGrave[1][rule][1].Pos.X) / 2,
+			(matManager.vFieldGrave[1][rule][0].Pos.Y + matManager.vFieldGrave[1][rule][2].Pos.Y) / 2, dField.grave[1].size() * 0.01f + 0.02f));
+		driver->setTransform(irr::video::ETS_WORLD, ig);
+		driver->drawVertexPrimitiveList(matManager.vNegate, 4, matManager.iRectangle, 2);
+	}
+	//finish button
+	if(btnCancelOrFinish->isVisible() && dField.select_ready)
+		DrawSelectionLine(btnCancelOrFinish, 2, 0xffffff00);
+	if(btnLeaveGame->isVisible() && dField.tag_teammate_surrender)
+		DrawSelectionLine(btnLeaveGame, 2, 0xffffff00);
+	//lp bar
+	if((dInfo.turn % 2 && dInfo.isFirst) || (!(dInfo.turn % 2) && !dInfo.isFirst)) {
+		driver->draw2DRectangle(0xa0000000, Resize(327, 8, 630, 51));
+		driver->draw2DRectangleOutline(Resize(327, 8, 630, 51), 0xffff8080);
+	} else {
+		driver->draw2DRectangle(0xa0000000, Resize(689, 8, 992, 51));
+		driver->draw2DRectangleOutline(Resize(689, 8, 992, 51), 0xffff8080);
+	}
+	if(dInfo.start_lp > 0) {
+		constexpr float maxBarWidth = 292.0f;
+		auto maxLP = dInfo.isTag ? std::max(dInfo.start_lp / 2, 1) : dInfo.start_lp;
+		if(dInfo.lp[0] > maxLP) {
+			auto layerCount = dInfo.lp[0] / maxLP;
+			auto partialLP = dInfo.lp[0] % maxLP;
+			auto bgColorPos = (layerCount - 1) % 5;
+			auto fgColorPos = layerCount % 5; 
+			int barWidth = maxBarWidth * partialLP / maxLP;
+			driver->draw2DImage(imageManager.tLPBar, Resize(333 + barWidth, 12, 625, 28), irr::core::recti(0, bgColorPos * 16, 16, (bgColorPos + 1) * 16), 0, 0, true);
+			if(partialLP > 0) {
+				driver->draw2DImage(imageManager.tLPBar, Resize(333, 12, 333 + barWidth, 28), irr::core::recti(0, fgColorPos * 16, 16, (fgColorPos + 1) * 16), 0, 0, true);
+			}
+		} else {
+			int barWidth = maxBarWidth * dInfo.lp[0] / maxLP;
+			driver->draw2DImage(imageManager.tLPBar, Resize(333, 12, 333 + barWidth, 28), irr::core::recti(0, 0, 16, 16), 0, 0, true);
+		}
+		if(dInfo.lp[1] > maxLP) {
+			auto layerCount = dInfo.lp[1] / maxLP;
+			auto partialLP = dInfo.lp[1] % maxLP;
+			auto bgColorPos = (layerCount - 1) % 5;
+			auto fgColorPos = layerCount % 5;
+			int barWidth = maxBarWidth * partialLP / maxLP;
+			driver->draw2DImage(imageManager.tLPBar, Resize(695, 12, 987 - barWidth, 28), irr::core::recti(0, bgColorPos * 16, 16, (bgColorPos + 1) * 16), 0, 0, true);
+			if(partialLP > 0) {
+				driver->draw2DImage(imageManager.tLPBar, Resize(987 - barWidth, 12, 987, 28), irr::core::recti(0, fgColorPos * 16, 16, (fgColorPos + 1) * 16), 0, 0, true);
+			}
+		} else {
+			int barWidth = maxBarWidth * dInfo.lp[1] / maxLP;
+			driver->draw2DImage(imageManager.tLPBar, Resize(987 - barWidth, 12, 987, 28), irr::core::recti(0, 0, 16, 16), 0, 0, true);
+		}
+	}
+	auto tLPFrameRect = irr::core::recti(0, 0, imageManager.tLPFrame->getOriginalSize().Width, imageManager.tLPFrame->getOriginalSize().Height);
+	driver->draw2DImage(imageManager.tLPFrame, Resize(329, 10, 629, 30), tLPFrameRect, 0, 0, true);
+	driver->draw2DImage(imageManager.tLPFrame, Resize(691, 10, 991, 30), tLPFrameRect, 0, 0, true);
+	if(lpframe) {
+		dInfo.lp[lpplayer] -= lpd;
+		myswprintf(dInfo.strLP[lpplayer], L"%d", dInfo.lp[lpplayer]);
+		lpccolor -= 0x19000000;
+		lpframe--;
+	}
+	if(lpcstring.size()) {
+		if(lpplayer == 0) {
+			DrawShadowText(lpcFont, lpcstring, Resize(400, 472, 922, 520), Resize(0, 2, 2, 0), lpccolor, lpccolor | 0x00ffffff, true, false, 0);
+		} else {
+			DrawShadowText(lpcFont, lpcstring, Resize(400, 162, 922, 210), Resize(0, 2, 2, 0), lpccolor, lpccolor | 0x00ffffff, true, false, 0);
+		}
+	}
+	if(!dInfo.isReplay && dInfo.player_type < 7 && dInfo.time_limit) {
+		driver->draw2DRectangle(Resize(525, 34, 525 + dInfo.time_left[0] * 100 / dInfo.time_limit, 44), 0xa0e0e0e0, 0xa0e0e0e0, 0xa0c0c0c0, 0xa0c0c0c0);
+		driver->draw2DRectangleOutline(Resize(525, 34, 625, 44), 0xffffffff);
+		driver->draw2DRectangle(Resize(795 - dInfo.time_left[1] * 100 / dInfo.time_limit, 34, 795, 44), 0xa0e0e0e0, 0xa0e0e0e0, 0xa0c0c0c0, 0xa0c0c0c0);
+		driver->draw2DRectangleOutline(Resize(695, 34, 795, 44), 0xffffffff);
+	}
+	DrawShadowText(numFont, dInfo.strLP[0], Resize(330, 12, 631, 30), Resize(0, 1, 2, 0), 0xffffff00, 0xff000000, true, false, 0);
+	DrawShadowText(numFont, dInfo.strLP[1], Resize(691, 12, 992, 30), Resize(0, 1, 2, 0), 0xffffff00, 0xff000000, true, false, 0);
+
+	if(!gameConf.hide_player_name) {
+		irr::core::recti p1size = Resize(334, 31, 624, 50);
+		irr::core::recti p2size = Resize(986, 31, 986, 50);
+		if(!dInfo.isTag || !dInfo.tag_player[0])
+			textFont->drawUstring(dInfo.hostname, p1size, 0xffffffff, false, false, 0);
+		else
+			textFont->drawUstring(dInfo.hostname_tag, p1size, 0xffffffff, false, false, 0);
+		if(!dInfo.isTag || !dInfo.tag_player[1]) {
+			auto cld = textFont->getDimension(dInfo.clientname);
+			p2size.UpperLeftCorner.X -= cld.Width;
+			textFont->drawUstring(dInfo.clientname, p2size, 0xffffffff, false, false, 0);
+		} else {
+			auto cld = textFont->getDimension(dInfo.clientname_tag);
+			p2size.UpperLeftCorner.X -= cld.Width;
+			textFont->drawUstring(dInfo.clientname_tag, p2size, 0xffffffff, false, false, 0);
+		}
+	}
+	driver->draw2DRectangle(Resize(632, 10, 688, 30), 0x00000000, 0x00000000, 0xffffffff, 0xffffffff);
+	driver->draw2DRectangle(Resize(632, 30, 688, 50), 0xffffffff, 0xffffffff, 0x00000000, 0x00000000);
+	DrawShadowText(lpcFont, dataManager.GetNumString(dInfo.turn), Resize(635, 5, 687, 40), Resize(0, 0, 2, 0), 0x8000ffff, 0x80000000, true, false, 0);
+	ClientCard* pcard;
+	for(int i = 0; i < 5; ++i) {
+		pcard = dField.mzone[0][i];
+		if(pcard && pcard->code != 0)
+			DrawStatus(pcard, 493 + i * 85, 416, 473 + i * 80, 356);
+	}
+	pcard = dField.mzone[0][5];
+	if(pcard && pcard->code != 0)
+		DrawStatus(pcard, 589, 338, 563, 291);
+	pcard = dField.mzone[0][6];
+	if(pcard && pcard->code != 0)
+		DrawStatus(pcard, 743, 338, 712, 291);
+	for(int i = 0; i < 5; ++i) {
+		pcard = dField.mzone[1][i];
+		if(pcard && (pcard->position & POS_FACEUP))
+			DrawStatus(pcard, 803 - i * 68, 235, 779 - i * 71, 272);
+	}
+	pcard = dField.mzone[1][5];
+	if(pcard && (pcard->position & POS_FACEUP))
+		DrawStatus(pcard, 739, 291, 710, 338);
+	pcard = dField.mzone[1][6];
+	if(pcard && (pcard->position & POS_FACEUP))
+		DrawStatus(pcard, 593, 291, 555, 338);
+	if(dInfo.duel_rule < 4) {
+		pcard = dField.szone[0][6];
+		if(pcard) {
+			DrawShadowText(adFont, pcard->lscstring, Resize(427, 395, 439, 415), Resize(1, 1, 1, 1), 0xffffffff, 0xff000000, true, false, 0);
+		}
+		pcard = dField.szone[0][7];
+		if(pcard) {
+			DrawShadowText(adFont, pcard->rscstring, Resize(881, 395, 913, 415), Resize(1, 1, 1, 1), 0xffffffff, 0xff000000, true, false, 0);
+		}
+		pcard = dField.szone[1][6];
+		if(pcard) {
+			DrawShadowText(adFont, pcard->lscstring, Resize(840, 246, 872, 266), Resize(1, 1, 1, 1), 0xffffffff, 0xff000000, true, false, 0);
+		}
+		pcard = dField.szone[1][7];
+		if(pcard) {
+			DrawShadowText(adFont, pcard->rscstring, Resize(464, 246, 496, 266), Resize(1, 1, 1, 1), 0xffffffff, 0xff000000, true, false, 0);
+		}
+	} else {
+		pcard = dField.szone[0][0];
+		if(pcard && (pcard->type & TYPE_PENDULUM) && !pcard->equipTarget) {
+			DrawShadowText(adFont, pcard->lscstring, Resize(455, 431, 467, 451), Resize(1, 1, 1, 1), 0xffffffff, 0xff000000, true, false, 0);
+		}
+		pcard = dField.szone[0][4];
+		if(pcard && (pcard->type & TYPE_PENDULUM) && !pcard->equipTarget) {
+			DrawShadowText(adFont, pcard->rscstring, Resize(851, 431, 883, 451), Resize(1, 1, 1, 1), 0xffffffff, 0xff000000, true, false, 0);
+		}
+		pcard = dField.szone[1][0];
+		if(pcard && (pcard->type & TYPE_PENDULUM) && !pcard->equipTarget) {
+			DrawShadowText(adFont, pcard->lscstring, Resize(807, 223, 839, 243), Resize(1, 1, 1, 1), 0xffffffff, 0xff000000, true, false, 0);
+		}
+		pcard = dField.szone[1][4];
+		if(pcard && (pcard->type & TYPE_PENDULUM) && !pcard->equipTarget) {
+			DrawShadowText(adFont, pcard->rscstring, Resize(499, 223, 531, 243), Resize(1, 1, 1, 1), 0xffffffff, 0xff000000, true, false, 0);
+		}
+	}
+	if(dField.extra[0].size()) {
+		int offset = (dField.extra[0].size() >= 10) ? 0 : numFont->getDimension(dataManager.GetNumString(1)).Width;
+		DrawShadowText(numFont, dataManager.GetNumString(dField.extra[0].size()), Resize(320, 563, 373, 553, offset, 0, 0, 0), Resize(0, 1, 2, 1), 0xffffff00, 0xff000000, true, false, 0);
+		DrawShadowText(numFont, dataManager.GetNumString(dField.extra_p_count[0], true), Resize(340, 563, 393, 553), Resize(0, 1, 2, 1), 0xffffff00, 0xff000000, true, false, 0);
+	}
+	if(dField.deck[0].size()) {
+		DrawShadowText(numFont, dataManager.GetNumString(dField.deck[0].size()), Resize(908, 563, 1023, 553), Resize(0, 1, 2, 1), 0xffffff00, 0xff000000, true, false, 0);
+	}
+	if (rule == 0) {
+		if (dField.grave[0].size()) {
+			DrawShadowText(numFont, dataManager.GetNumString(dField.grave[0].size()), Resize(837, 376, 986, 381), Resize(0, 1, 2, 1), 0xffffff00, 0xff000000, true, false, 0);
+		}
+		if (dField.remove[0].size()) {
+			DrawShadowText(numFont, dataManager.GetNumString(dField.remove[0].size()), Resize(1015, 376, 959, 381), Resize(0, 1, 2, 1), 0xffffff00, 0xff000000, true, false, 0);
+		}
+	} else {
+		if (dField.grave[0].size()) {
+			DrawShadowText(numFont, dataManager.GetNumString(dField.grave[0].size()), Resize(870, 457, 1004, 462), Resize(0, 1, 2, 1), 0xffffff00, 0xff000000, true, false, 0);
+		}
+		if (dField.remove[0].size()) {
+			DrawShadowText(numFont, dataManager.GetNumString(dField.remove[0].size()), Resize(837, 376, 986, 381), Resize(0, 1, 2, 1), 0xffffff00, 0xff000000, true, false, 0);
+		}
+	}
+	if(dField.extra[1].size()) {
+		int offset = (dField.extra[1].size() >= 10) ? 0 : numFont->getDimension(dataManager.GetNumString(1)).Width;
+		DrawShadowText(numFont, dataManager.GetNumString(dField.extra[1].size()), Resize(808, 208, 900, 233, offset, 0, 0, 0), Resize(0, 1, 2, 1), 0xffffff00, 0xff000000, true, false, 0);
+		DrawShadowText(numFont, dataManager.GetNumString(dField.extra_p_count[1], true), Resize(828, 208, 920, 233), Resize(0, 1, 2, 1), 0xffffff00, 0xff000000, true, false, 0);
+	}
+	if(dField.deck[1].size()) {
+		DrawShadowText(numFont, dataManager.GetNumString(dField.deck[1].size()), Resize(465, 208, 483, 233), Resize(0, 1, 2, 1), 0xffffff00, 0xff000000, true, false, 0);
+	}
+	if (rule == 0) {
+		if (dField.grave[1].size()) {
+			DrawShadowText(numFont, dataManager.GetNumString(dField.grave[1].size()), Resize(420, 311, 464, 282), Resize(0, 1, 2, 1), 0xffffff00, 0xff000000, true, false, 0);
+		}
+		if (dField.remove[1].size()) {
+			DrawShadowText(numFont, dataManager.GetNumString(dField.remove[1].size()), Resize(300, 311, 445, 341), Resize(0, 1, 2, 1), 0xffffff00, 0xff000000, true, false, 0);
+		}
+	} else {
+		if (dField.grave[1].size()) {
+			DrawShadowText(numFont, dataManager.GetNumString(dField.grave[1].size()), Resize(455, 250, 464, 300), Resize(0, 1, 2, 1), 0xffffff00, 0xff000000, true, false, 0);
+		}
+		if (dField.remove[1].size()) {
+			DrawShadowText(numFont, dataManager.GetNumString(dField.remove[1].size()), Resize(420, 311, 464, 282), Resize(0, 1, 2, 1), 0xffffff00, 0xff000000, true, false, 0);
+		}
+	}
+}
+void Game::DrawStatus(ClientCard* pcard, int x1, int y1, int x2, int y2) {
+	DrawShadowText(adFont, L"/", Resize(x1 - 3, y1 + 1, x1 + 5, y1 + 21), Resize(1, 1, 1, 1), 0xffffffff, 0xff000000, true, false, 0);
+	int w = adFont->getDimension(pcard->atkstring).Width;
+	DrawShadowText(adFont, pcard->atkstring, Resize(x1 - 4, y1 + 1, x1 - 4, y1 + 21, -w, 0, 0, 0), Resize(1, 1, 1, 1),
+		pcard->attack > pcard->base_attack ? 0xffffff00 : pcard->attack < pcard->base_attack ? 0xffff2090 : 0xffffffff, 0xff000000);
+	if(pcard->type & TYPE_LINK) {
+		w = adFont->getDimension(pcard->linkstring).Width;
+		DrawShadowText(adFont, pcard->linkstring, Resize(x1 + 5, y1 + 1, x1 + 5, y1 + 21, 0, 0, w, 0), Resize(1, 1, 1, 1), 0xff99ffff);
+	} else {
+		w = adFont->getDimension(pcard->defstring).Width;
+		DrawShadowText(adFont, pcard->defstring, Resize(x1 + 5, y1 + 1, x1 + 5, y1 + 21, 0, 0, w, 0), Resize(1, 1, 1, 1),
+			pcard->defense > pcard->base_defense ? 0xffffff00 : pcard->defense < pcard->base_defense ? 0xffff2090 : 0xffffffff);
+		DrawShadowText(adFont, pcard->lvstring, Resize(x2 + 1, y2, x2 + 3, y2 + 21), Resize(1, 1, 1, 1),
+			(pcard->type & TYPE_XYZ) ? 0xffff80ff : (pcard->type & TYPE_TUNER) ? 0xffffff00 : 0xffffffff);
+	}
+}
+void Game::DrawGUI() {
+	while(btnImagePending.size()) {
+		auto mit = btnImagePending.cbegin();
+		auto button = mit->first;
+		int code = mit->second.first;
+		bool rotated = mit->second.second;
+		button->setImage(imageManager.GetTextureButton(code, rotated));
+		btnCardImgInfo[button] = {code, rotated};
+		btnFacedownImgInfo.erase(button);
+		btnImagePending.erase(mit);
+	}
+	for(auto fit = fadingList.begin(); fit != fadingList.end();) {
+		auto fthis = fit++;
+		FadingUnit& fu = *fthis;
+		if(fu.fadingFrame) {
+			fu.guiFading->setVisible(true);
+			if(fu.isFadein) {
+				if(fu.fadingFrame > 5) {
+					fu.fadingUL.X -= fu.fadingDiff.X;
+					fu.fadingLR.X += fu.fadingDiff.X;
+					fu.fadingFrame--;
+					fu.guiFading->setRelativePosition(irr::core::recti(fu.fadingUL, fu.fadingLR));
+				} else {
+					fu.fadingUL.Y -= fu.fadingDiff.Y;
+					fu.fadingLR.Y += fu.fadingDiff.Y;
+					fu.fadingFrame--;
+					if(!fu.fadingFrame) {
+						fu.guiFading->setRelativePosition(fu.fadingSize);
+						SetImageButtonDrawing(fu.guiFading, true);
+						env->setFocus(fu.guiFading);
+					} else
+						fu.guiFading->setRelativePosition(irr::core::recti(fu.fadingUL, fu.fadingLR));
+				}
+			} else {
+				if(fu.fadingFrame > 5) {
+					fu.fadingUL.Y += fu.fadingDiff.Y;
+					fu.fadingLR.Y -= fu.fadingDiff.Y;
+					fu.fadingFrame--;
+					fu.guiFading->setRelativePosition(irr::core::recti(fu.fadingUL, fu.fadingLR));
+				} else {
+					fu.fadingUL.X += fu.fadingDiff.X;
+					fu.fadingLR.X -= fu.fadingDiff.X;
+					fu.fadingFrame--;
+					if(!fu.fadingFrame) {
+						fu.guiFading->setVisible(false);
+						fu.guiFading->setRelativePosition(fu.fadingSize);
+						SetImageButtonDrawing(fu.guiFading, false);
+					} else
+						fu.guiFading->setRelativePosition(irr::core::recti(fu.fadingUL, fu.fadingLR));
+				}
+				if(fu.signalAction && !fu.fadingFrame) {
+					DuelClient::SendResponse();
+					fu.signalAction = false;
+				}
+			}
+		} else if(fu.autoFadeoutFrame) {
+			fu.autoFadeoutFrame--;
+			if(!fu.autoFadeoutFrame)
+				HideElement(fu.guiFading);
+		} else
+			fadingList.erase(fthis);
+	}
+	env->drawAll();
+}
+void Game::DrawSpec() {
+	irr::s32 midx = 574 + (CARD_IMG_WIDTH * 0.5);
+	irr::s32 midy = 150 + (CARD_IMG_HEIGHT * 0.5);
+	if(showcard) {
+		switch(showcard) {
+		case 1: {
+			driver->draw2DImage(imageManager.GetTexture(showcardcode, true), ResizeCardHint(574, 150), true);
+			driver->draw2DImage(imageManager.tMask, ResizeCardMid(574, 150, 574 + (showcarddif > CARD_IMG_WIDTH ? CARD_IMG_WIDTH : showcarddif), 150 + CARD_IMG_HEIGHT, midx, midy),
+								irr::core::recti(CARD_IMG_HEIGHT - showcarddif, 0, CARD_IMG_HEIGHT - (showcarddif > CARD_IMG_WIDTH ? showcarddif - CARD_IMG_WIDTH : 0), CARD_IMG_HEIGHT), 0, 0, true);
+			showcarddif += 15;
+			if(showcarddif >= CARD_IMG_HEIGHT) {
+				showcard = 2;
+				showcarddif = 0;
+			}
+			break;
+		}
+		case 2: {
+			driver->draw2DImage(imageManager.GetTexture(showcardcode, true), ResizeCardHint(574, 150), true);
+			driver->draw2DImage(imageManager.tMask, ResizeCardMid(574 + showcarddif, 150, 574 + CARD_IMG_WIDTH, 150 + CARD_IMG_HEIGHT, midx, midy),
+								irr::core::recti(0, 0, CARD_IMG_WIDTH - showcarddif, CARD_IMG_HEIGHT), 0, 0, true);
+			showcarddif += 15;
+			if(showcarddif >= CARD_IMG_WIDTH) {
+				showcard = 0;
+			}
+			break;
+		}
+		case 3: {
+			driver->draw2DImage(imageManager.GetTexture(showcardcode, true), ResizeCardHint(574, 150), true);
+			driver->draw2DImage(imageManager.tNegated, ResizeCardMid(536 + showcarddif, 141 + showcarddif, 792 - showcarddif, 397 - showcarddif, midx, midy), irr::core::recti(0, 0, 128, 128), 0, 0, true);
+			if(showcarddif < 64)
+				showcarddif += 4;
+			break;
+		}
+		case 4: {
+			irr::u32 acolor = ((irr::u32)showcarddif << 24) | 0xffffff;
+			matManager.c2d[0] = acolor;
+			matManager.c2d[1] = acolor;
+			matManager.c2d[2] = acolor;
+			matManager.c2d[3] = acolor;
+			driver->draw2DImage(imageManager.GetTexture(showcardcode, true), ResizeCardHint(574, 150, 574 + CARD_IMG_WIDTH, 150 + CARD_IMG_HEIGHT),
+								ResizeFit(0, 0, CARD_IMG_WIDTH, CARD_IMG_HEIGHT), 0, matManager.c2d, true);
+			if(showcarddif < 255)
+				showcarddif += 17;
+			break;
+		}
+		case 5: {
+			irr::u32 acolor = ((irr::u32)showcarddif << 25) | 0xffffff;
+			matManager.c2d[0] = acolor;
+			matManager.c2d[1] = acolor;
+			matManager.c2d[2] = acolor;
+			matManager.c2d[3] = acolor;
+			driver->draw2DImage(imageManager.GetTexture(showcardcode, true), ResizeCardMid(662 - showcarddif * 0.69685f, 277 - showcarddif, 662 + showcarddif * 0.69685f, 277 + showcarddif, midx, midy),
+								ResizeFit(0, 0, CARD_IMG_WIDTH, CARD_IMG_HEIGHT), 0, matManager.c2d, true);
+			if(showcarddif < 127)
+				showcarddif += 9;
+			break;
+		}
+		case 6: {
+			driver->draw2DImage(imageManager.GetTexture(showcardcode, true), ResizeCardHint(574, 150), true);
+			driver->draw2DImage(imageManager.tNumber, ResizeCardMid(536 + showcarddif, 141 + showcarddif, 792 - showcarddif, 397 - showcarddif, midx, midy),
+			                    irr::core::recti((showcardp % 5) * 64, (showcardp / 5) * 64, (showcardp % 5 + 1) * 64, (showcardp / 5 + 1) * 64), 0, 0, true);
+			if(showcarddif < 64)
+				showcarddif += 4;
+			break;
+		}
+		case 7: {
+			float mul = xScale;
+			if(xScale > yScale)
+				mul = yScale;
+			irr::core::vector2d<irr::s32> corner[4];
+			float y = sin(showcarddif * 3.1415926f / 180.0f) * CARD_IMG_HEIGHT * mul;
+			irr::s32 winx = midx * xScale + (574 - midx) * mul;
+			irr::s32 winx2 = midx * xScale + (751 - midx) * mul;
+			irr::s32 winy = midy * yScale + (404 - midy) * mul;
+			corner[0] = irr::core::vector2d<irr::s32>(winx - (CARD_IMG_HEIGHT * mul - y) * 0.3f, winy - y);
+			corner[1] = irr::core::vector2d<irr::s32>(winx2 + (CARD_IMG_HEIGHT * mul - y) * 0.3f, winy - y);
+			corner[2] = irr::core::vector2d<irr::s32>(winx, winy);
+			corner[3] = irr::core::vector2d<irr::s32>(winx2, winy);
+			Draw2DImageQuad(driver, imageManager.GetTexture(showcardcode, true), ResizeFit(0, 0, CARD_IMG_WIDTH, CARD_IMG_HEIGHT), corner);
+			showcardp++;
+			showcarddif += 9;
+			if(showcarddif >= 90)
+				showcarddif = 90;
+			if(showcardp == 60) {
+				showcardp = 0;
+				showcarddif = 0;
+			}
+			break;
+		}
+		case 100: {
+			if(showcardp < 60) {
+				driver->draw2DImage(imageManager.tHand[(showcardcode >> 16) & 0x3], irr::core::vector2di((615 + 44.5) * xScale - 44.5, (showcarddif + 64) * yScale - 64), true);
+				driver->draw2DImage(imageManager.tHand[showcardcode & 0x3], irr::core::vector2di((615 + 44.5) * xScale - 44.5, (540 - showcarddif + 64) * yScale - 64), true);
+				float dy = -0.333333f * showcardp + 10;
+				showcardp++;
+				if(showcardp < 30)
+					showcarddif += (int)dy;
+			} else
+				showcard = 0;
+			break;
+		}
+		case 101: {
+			const wchar_t* lstr = L"";
+			switch(showcardcode) {
+			case 1:
+				lstr = L"You Win!";
+				break;
+			case 2:
+				lstr = L"You Lose!";
+				break;
+			case 3:
+				lstr = L"Draw Game";
+				break;
+			case 4:
+				lstr = L"Draw Phase";
+				break;
+			case 5:
+				lstr = L"Standby Phase";
+				break;
+			case 6:
+				lstr = L"Main Phase 1";
+				break;
+			case 7:
+				lstr = L"Battle Phase";
+				break;
+			case 8:
+				lstr = L"Main Phase 2";
+				break;
+			case 9:
+				lstr = L"End Phase";
+				break;
+			case 10:
+				lstr = L"Next Players Turn";
+				break;
+			case 11:
+				lstr = L"Duel Start";
+				break;
+			case 12:
+				lstr = L"Duel1 Start";
+				break;
+			case 13:
+				lstr = L"Duel2 Start";
+				break;
+			case 14:
+				lstr = L"Duel3 Start";
+				break;
+			}
+			auto pos = lpcFont->getDimension(lstr);
+			if(showcardp < 10) {
+				irr::u32 alpha = (irr::u32)(showcardp * 25) << 24;
+				DrawShadowText(lpcFont, lstr, ResizePhaseHint(660 - (9 - showcardp) * 40, 290, 960, 370, pos.Width), Resize(-1, -1, 0, 0), alpha | 0xffffff, alpha);
+			} else if(showcardp < showcarddif) {
+				DrawShadowText(lpcFont, lstr, ResizePhaseHint(660, 290, 960, 370, pos.Width), Resize(-1, -1, 0, 0), 0xffffffff);
+				if(dInfo.vic_string.size() && (showcardcode == 1 || showcardcode == 2)) {
+					int w = guiFont->getDimension(dInfo.vic_string).Width;
+					if(w < 200)
+						w = 200;
+					driver->draw2DRectangle(0xa0000000, ResizeWin(640 - w / 2, 320, 690 + w / 2, 340));
+					DrawShadowText(guiFont, dInfo.vic_string, ResizeWin(640 - w / 2, 320, 690 + w / 2, 340), Resize(-2, -1, 0, 0), 0xffffffff, 0xff000000, true, true, 0);
+				}
+			} else if(showcardp < showcarddif + 10) {
+				irr::u32 alpha = (irr::u32)((showcarddif + 10 - showcardp) * 25) << 24;
+				DrawShadowText(lpcFont, lstr, ResizePhaseHint(660 + (showcardp - showcarddif) * 40, 290, 960, 370, pos.Width), Resize(-1, -1, 0, 0), alpha | 0xffffff, alpha);
+			}
+			showcardp++;
+			break;
+		}
+		}
+	}
+	if(is_attacking) {
+		irr::core::matrix4 matk;
+		matk.setTranslation(atk_t);
+		matk.setRotationRadians(atk_r);
+		driver->setTransform(irr::video::ETS_WORLD, matk);
+		driver->setMaterial(matManager.mATK);
+		driver->drawVertexPrimitiveList(&matManager.vArrow[attack_sv], 12, matManager.iArrow, 10, irr::video::EVT_STANDARD, irr::scene::EPT_TRIANGLE_STRIP);
+		attack_sv += 4;
+		if (attack_sv > 28)
+			attack_sv = 0;
+	}
+	bool showChat = true;
+	if(hideChat) {
+	    showChat = false;
+	    hideChatTimer = 10;
+	} else if(hideChatTimer > 0) {
+	    showChat = false;
+	    hideChatTimer--;
+	}
+	int chatRectY = 0;
+	for(int i = 0; i < 8; ++i) {
+		static unsigned int chatColor[] = {0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xff8080ff, 0xffff4040, 0xffff4040,
+		                                   0xffff4040, 0xff40ff40, 0xff4040ff, 0xff40ffff, 0xffff40ff, 0xffffff40, 0xffffffff, 0xff808080, 0xff404040};
+		if(chatTiming[i]) {
+			chatTiming[i]--;
+			if(!is_building) {
+				if(dInfo.isStarted && i >= 5)
+					continue;
+				if(!showChat && i > 2)
+					continue;
+			}
+
+			int x = wChat->getRelativePosition().UpperLeftCorner.X;
+			int y = window_size.Height - 25;
+			int maxwidth = 705 * xScale;
+			if(is_building) {
+				x = 810 * xScale;
+				maxwidth = 205 * xScale;
+			}
+
+			std::wstring msg = SetStaticText(nullptr, maxwidth, guiFont, chatMsg[i].c_str());
+			int w = guiFont->getDimension(msg).Width;
+			int h = guiFont->getDimension(msg).Height + 2;
+
+			irr::core::recti rectloc(x, y - chatRectY - h, x + 2 + w, y - chatRectY);
+			irr::core::recti msgloc(x, y - chatRectY - h, x - 4, y - chatRectY);
+			irr::core::recti shadowloc = msgloc + irr::core::vector2di(1, 1);
+
+			driver->draw2DRectangle(rectloc, 0xa0000000, 0xa0000000, 0xa0000000, 0xa0000000);
+			guiFont->drawUstring(msg, msgloc, 0xff000000, false, false);
+			guiFont->drawUstring(msg, shadowloc, chatColor[chatType[i]], false, false);
+
+			chatRectY += h;
+		}
+	}
+}
+void Game::DrawBackImage(irr::video::ITexture* texture) {
+	if(!texture)
+		return;
+	driver->draw2DImage(texture, Resize(0, 0, GAME_WINDOW_WIDTH, GAME_WINDOW_HEIGHT), irr::core::recti(0, 0, texture->getOriginalSize().Width, texture->getOriginalSize().Height));
+}
+void Game::ShowElement(irr::gui::IGUIElement * win, int autoframe) {
+	FadingUnit fu;
+	fu.fadingSize = win->getRelativePosition();
+	for(auto fit = fadingList.begin(); fit != fadingList.end(); ++fit)
+		if(win == fit->guiFading && win != wOptions && win != wANNumber) // the size of wOptions is always setted by ClientField::ShowSelectOption before showing it
+			fu.fadingSize = fit->fadingSize;
+	irr::core::vector2di center = fu.fadingSize.getCenter();
+	fu.fadingDiff.X = fu.fadingSize.getWidth() / 10;
+	fu.fadingDiff.Y = (fu.fadingSize.getHeight() - 4) / 10;
+	fu.fadingUL = center;
+	fu.fadingLR = center;
+	fu.fadingUL.Y -= 2;
+	fu.fadingLR.Y += 2;
+	fu.guiFading = win;
+	fu.isFadein = true;
+	fu.fadingFrame = 10;
+	fu.autoFadeoutFrame = autoframe;
+	fu.signalAction = 0;
+	SetImageButtonDrawing(win, false);
+	win->setRelativePosition(irr::core::recti(center.X, center.Y, 0, 0));
+	win->setVisible(true);
+	fadingList.push_back(fu);
+}
+void Game::HideElement(irr::gui::IGUIElement * win, bool set_action) {
+	if(!win->isVisible() && !set_action)
+		return;
+	FadingUnit fu;
+	fu.fadingSize = win->getRelativePosition();
+	for(auto fit = fadingList.begin(); fit != fadingList.end(); ++fit)
+		if(win == fit->guiFading)
+			fu.fadingSize = fit->fadingSize;
+	fu.fadingDiff.X = fu.fadingSize.getWidth() / 10;
+	fu.fadingDiff.Y = (fu.fadingSize.getHeight() - 4) / 10;
+	fu.fadingUL = fu.fadingSize.UpperLeftCorner;
+	fu.fadingLR = fu.fadingSize.LowerRightCorner;
+	fu.guiFading = win;
+	fu.isFadein = false;
+	fu.fadingFrame = 10;
+	fu.autoFadeoutFrame = 0;
+	fu.signalAction = set_action;
+	SetImageButtonDrawing(win, false);
+	if(win == wCardSelect) {
+		stCardListTip->setVisible(false);
+		for(auto& pcard : dField.selectable_cards)
+			dField.SetShowMark(pcard, false);
+	}
+	if(win == wCardDisplay) {
+		stCardListTip->setVisible(false);
+		for(auto& pcard : dField.display_cards)
+			dField.SetShowMark(pcard, false);
+	}
+	fadingList.push_back(fu);
+}
+void Game::PopupElement(irr::gui::IGUIElement * element, int hideframe) {
+	soundManager.PlayDialogSound(element);
+	element->getParent()->bringToFront(element);
+	if(!is_building)
+		dField.panel = element;
+	env->setFocus(element);
+	if(!hideframe)
+		ShowElement(element);
+	else ShowElement(element, hideframe);
+}
+void Game::SetImageButtonDrawing(irr::gui::IGUIElement* element, bool draw) {
+// YGOPro was hiding the image of buttons during fading (animation), but this feature is not meaningful, and the official CGUIButton don't support to setDrawImage.
+#if false
+	if(element == wPosSelect) {
+		btnPSAU->setDrawImage(draw);
+		btnPSAD->setDrawImage(draw);
+		btnPSDU->setDrawImage(draw);
+		btnPSDD->setDrawImage(draw);
+	}
+	if(element == wCardSelect) {
+		for(int i = 0; i < 5; ++i)
+			btnCardSelect[i]->setDrawImage(draw);
+	}
+	if(element == wCardDisplay) {
+		for(int i = 0; i < 5; ++i)
+			btnCardDisplay[i]->setDrawImage(draw);
+	}
+#endif
+}
+void Game::WaitFrameSignal(int frame) {
+	frameSignal.Reset();
+	signalFrame = (gameConf.quick_animation && frame >= 12) ? 12 : frame;
+	frameSignal.Wait();
+}
+void Game::DrawThumb(const CardDataC* cp, irr::core::vector2di pos, const LFList* lflist, bool drag) {
+	if(!cp)
+		return;
+	auto code = cp->code;
+	auto lcode = cp->get_duel_code();
+	irr::video::ITexture* img = imageManager.GetTextureThumb(code);
+	if(img == nullptr)
+		return; //nullptr->getSize() will cause a crash
+	irr::core::dimension2d<irr::u32> size = img->getOriginalSize();
+	irr::core::recti dragloc = Resize(pos.X, pos.Y, pos.X + CARD_THUMB_WIDTH, pos.Y + CARD_THUMB_HEIGHT);
+	irr::core::recti limitloc = Resize(pos.X, pos.Y, pos.X + 20, pos.Y + 20);
+	irr::core::recti otloc = Resize(pos.X + 7, pos.Y + 50, pos.X + 37, pos.Y + 65);
+	if(drag) {
+		dragloc = irr::core::recti(pos.X, pos.Y, pos.X + CARD_THUMB_WIDTH * xScale, pos.Y + CARD_THUMB_HEIGHT * yScale);
+		limitloc = irr::core::recti(pos.X, pos.Y, pos.X + 20 * xScale, pos.Y + 20 * yScale);
+		otloc = irr::core::recti(pos.X + 7, pos.Y + 50 * yScale, pos.X + 37 * xScale, pos.Y + 65 * yScale);
+	}
+	driver->draw2DImage(img, dragloc, irr::core::rect<irr::s32>(0, 0, size.Width, size.Height), 0, 0, true);
+	auto lfit = lflist->content.find(lcode);
+	if (lfit != lflist->content.end()) {
+		switch(lfit->second) {
+		case 0:
+			driver->draw2DImage(imageManager.tLim, limitloc, irr::core::recti(0, 0, 64, 64), 0, 0, true);
+			break;
+		case 1:
+			driver->draw2DImage(imageManager.tLim, limitloc, irr::core::recti(64, 0, 128, 64), 0, 0, true);
+			break;
+		case 2:
+			driver->draw2DImage(imageManager.tLim, limitloc, irr::core::recti(0, 64, 64, 128), 0, 0, true);
+			break;
+		}
+	}
+	bool showAvail = false;
+	bool showNotAvail = false;
+	int filter_lm = cbLimit->getSelected();
+	bool avail = !((filter_lm == 4 && !(cp->ot & AVAIL_OCG))
+				|| (filter_lm == 5 && !(cp->ot & AVAIL_TCG))
+				|| (filter_lm == 6 && !(cp->ot & AVAIL_SC))
+				|| (filter_lm == 7 && !(cp->ot & AVAIL_CUSTOM))
+				|| (filter_lm == 8 && !(cp->ot & AVAIL_OCG))
+				|| (filter_lm == 9 && !(cp->ot & AVAIL_TCG))
+				|| (filter_lm == 10 && (cp->ot & AVAIL_OCGTCG) != AVAIL_OCGTCG));
+	if(filter_lm >= 4) {
+		showAvail = avail;
+		showNotAvail = !avail;
+	} else if(!(cp->ot & gameConf.defaultOT)) {
+		showNotAvail = true;
+	}
+	if(showAvail) {
+		if((cp->ot & AVAIL_OCG) && !(cp->ot & AVAIL_TCG))
+			driver->draw2DImage(imageManager.tOT, otloc, irr::core::recti(0, 128, 128, 192), 0, 0, true);
+		else if((cp->ot & AVAIL_TCG) && !(cp->ot & AVAIL_OCG))
+			driver->draw2DImage(imageManager.tOT, otloc, irr::core::recti(0, 192, 128, 256), 0, 0, true);
+	} else if(showNotAvail) {
+		if(cp->ot & AVAIL_OCG)
+			driver->draw2DImage(imageManager.tOT, otloc, irr::core::recti(0, 0, 128, 64), 0, 0, true);
+		else if(cp->ot & AVAIL_TCG)
+			driver->draw2DImage(imageManager.tOT, otloc, irr::core::recti(0, 64, 128, 128), 0, 0, true);
+		else if(!avail)
+			driver->draw2DImage(imageManager.tLim, otloc, irr::core::recti(0, 0, 64, 64), 0, 0, true);
+	}
+}
+void Game::DrawDeckBd() {
+	wchar_t textBuffer[64];
+	//main deck
+	int mainsize = deckManager.current_deck.main.size();
+	driver->draw2DRectangle(Resize(310, 137, 410, 157), 0x400000ff, 0x400000ff, 0x40000000, 0x40000000);
+	driver->draw2DRectangleOutline(Resize(309, 136, 410, 157));
+	DrawShadowText(textFont, dataManager.GetSysString(deckBuilder.showing_pack ? 1477 : 1330), Resize(315, 137, 410, 157), Resize(1, 1, 1, 1), 0xffffffff, 0xff000000, false, true);
+	DrawShadowText(numFont, dataManager.GetNumString(mainsize), Resize(380, 138, 440, 158), Resize(1, 1, 1, 1), 0xffffffff, 0xff000000, false, true);
+	driver->draw2DRectangle(Resize(310, 160, 797, deckBuilder.showing_pack ? 630 : 436), 0x400000ff, 0x400000ff, 0x40000000, 0x40000000);
+	driver->draw2DRectangleOutline(Resize(309, 159, 797, deckBuilder.showing_pack ? 630 : 436));
+	int lx;
+	int dy = 68;
+	float dx;
+	if(mainsize <= 40) {
+		dx = 436.0f / 9;
+		lx = 10;
+	} else if(deckBuilder.showing_pack) {
+		lx = 10;
+		if(mainsize > 10 * 7)
+			lx = 11;
+		if(mainsize > 11 * 7)
+			lx = 12;
+		dx = (scrPackCards->isVisible() ? 414.0f : 436.0f) / (lx - 1);
+		if(mainsize > 60)
+			dy = 66;
+	} else {
+		lx = (mainsize - 41) / 4 + 11;
+		dx = 436.0f / (lx - 1);
+	}
+	int padding = scrPackCards->getPos() * lx;
+	for(int i = 0; i < mainsize - padding && i < 7 * lx; ++i) {
+		int j = i + padding;
+		DrawThumb(deckManager.current_deck.main[j], irr::core::vector2di(314 + (i % lx) * dx, 164 + (i / lx) * dy), deckBuilder.filterList);
+		if(deckBuilder.hovered_pos == 1 && deckBuilder.hovered_seq == j)
+			driver->draw2DRectangleOutline(Resize(313 + (i % lx) * dx, 163 + (i / lx) * dy, 359 + (i % lx) * dx, 228 + (i / lx) * dy));
+	}
+	if(!deckBuilder.showing_pack) {
+		//extra deck
+		driver->draw2DRectangle(Resize(310, 440, 410, 460), 0x400000ff, 0x400000ff, 0x40000000, 0x40000000);
+		driver->draw2DRectangleOutline(Resize(309, 439, 410, 460));
+		DrawShadowText(textFont, dataManager.GetSysString(1331), Resize(315, 440, 410, 460), Resize(1, 1, 1, 1), 0xffffffff, 0xff000000, false, true);
+		DrawShadowText(numFont, dataManager.GetNumString(deckManager.current_deck.extra.size()), Resize(380, 441, 440, 461), Resize(1, 1, 1, 1), 0xffffffff, 0xff000000, false, true);
+		driver->draw2DRectangle(Resize(310, 463, 797, 533), 0x400000ff, 0x400000ff, 0x40000000, 0x40000000);
+		driver->draw2DRectangleOutline(Resize(309, 462, 797, 533));
+		if(deckManager.current_deck.extra.size() <= 10)
+			dx = 436.0f / 9;
+		else dx = 436.0f / (deckManager.current_deck.extra.size() - 1);
+		for(size_t i = 0; i < deckManager.current_deck.extra.size(); ++i) {
+			DrawThumb(deckManager.current_deck.extra[i], irr::core::vector2di(314 + i * dx, 466), deckBuilder.filterList);
+			if(deckBuilder.hovered_pos == 2 && deckBuilder.hovered_seq == (int)i)
+				driver->draw2DRectangleOutline(Resize(313 + i * dx, 465, 359 + i * dx, 531));
+		}
+		//side deck
+		driver->draw2DRectangle(Resize(310, 537, 410, 557), 0x400000ff, 0x400000ff, 0x40000000, 0x40000000);
+		driver->draw2DRectangleOutline(Resize(309, 536, 410, 557));
+		DrawShadowText(textFont, dataManager.GetSysString(1332), Resize(315, 537, 410, 557), Resize(1, 1, 1, 1), 0xffffffff, 0xff000000, false, true);
+		DrawShadowText(numFont, dataManager.GetNumString(deckManager.current_deck.side.size()), Resize(380, 538, 440, 558), Resize(1, 1, 1, 1), 0xffffffff, 0xff000000, false, true);
+		driver->draw2DRectangle(Resize(310, 560, 797, 630), 0x400000ff, 0x400000ff, 0x40000000, 0x40000000);
+		driver->draw2DRectangleOutline(Resize(309, 559, 797, 630));
+		if(deckManager.current_deck.side.size() <= 10)
+			dx = 436.0f / 9;
+		else dx = 436.0f / (deckManager.current_deck.side.size() - 1);
+		for(size_t i = 0; i < deckManager.current_deck.side.size(); ++i) {
+			DrawThumb(deckManager.current_deck.side[i], irr::core::vector2di(314 + i * dx, 564), deckBuilder.filterList);
+			if(deckBuilder.hovered_pos == 3 && deckBuilder.hovered_seq == (int)i)
+				driver->draw2DRectangleOutline(Resize(313 + i * dx, 563, 359 + i * dx, 629));
+		}
+	}
+	if(is_siding) {
+		// side chat background
+		driver->draw2DRectangle(Resize(805, 10, 1020, 630), 0x400000ff, 0x400000ff, 0x40000000, 0x40000000);
+		driver->draw2DRectangleOutline(Resize(804, 9, 1020, 630));
+	} else {
+		//search result
+		driver->draw2DRectangle(Resize(805, 137, 926, 157), 0x400000ff, 0x400000ff, 0x40000000, 0x40000000);
+		driver->draw2DRectangleOutline(Resize(804, 136, 926, 157));
+		DrawShadowText(textFont, dataManager.GetSysString(1333), Resize(810, 137, 915, 157), Resize(1, 1, 1, 1), 0xffffffff, 0xff000000, false, true);
+		DrawShadowText(numFont, deckBuilder.result_string, Resize(875, 137, 935, 157), Resize(1, 1, 1, 1), 0xffffffff, 0xff000000, false, true);
+		driver->draw2DRectangle(Resize(805, 160, 1020, 630), 0x400000ff, 0x400000ff, 0x40000000, 0x40000000);
+		driver->draw2DRectangleOutline(Resize(804, 159, 1020, 630));
+	}
+	int max_result = gameConf.use_image_load_background_thread ? 9 : 7;
+	for(int i = 0; i < max_result && i + scrFilter->getPos() < (int)deckBuilder.results.size(); ++i) {
+		auto ptr = deckBuilder.results[i + scrFilter->getPos()];
+		if(i >= 7) {
+			imageManager.GetTextureThumb(ptr->code);
+			break;
+		}
+		if(deckBuilder.hovered_pos == 4 && deckBuilder.hovered_seq == (int)i)
+			driver->draw2DRectangle(0x80000000, Resize(806, 164 + i * 66, 1019, 230 + i * 66));
+		DrawThumb(ptr, irr::core::vector2di(810, 165 + i * 66), deckBuilder.filterList);
+		const wchar_t* availBuffer = L"";
+		if ((ptr->ot & AVAIL_OCGTCG) == AVAIL_OCG)
+			availBuffer = L" [OCG]";
+		else if ((ptr->ot & AVAIL_OCGTCG) == AVAIL_TCG)
+			availBuffer = L" [TCG]";
+		else if ((ptr->ot & AVAIL_CUSTOM) == AVAIL_CUSTOM)
+			availBuffer = L" [Custom]";
+		if(ptr->type & TYPE_MONSTER) {
+			myswprintf(textBuffer, L"%ls", dataManager.GetName(ptr->code));
+			DrawShadowText(textFont, textBuffer, Resize(860, 165 + i * 66, 955, 185 + i * 66), Resize(1, 1, 0, 0));
+			const wchar_t* form = L"\u2605";
+			wchar_t adBuffer[32]{};
+			wchar_t scaleBuffer[16]{};
+			if(!(ptr->type & TYPE_LINK)) {
+				if(ptr->type & TYPE_XYZ)
+					form = L"\u2606";
+				if(ptr->attack < 0 && ptr->defense < 0)
+					myswprintf(adBuffer, L"?/?");
+				else if(ptr->attack < 0)
+					myswprintf(adBuffer, L"?/%d", ptr->defense);
+				else if(ptr->defense < 0)
+					myswprintf(adBuffer, L"%d/?", ptr->attack);
+				else
+					myswprintf(adBuffer, L"%d/%d", ptr->attack, ptr->defense);
+			} else {
+				form = L"LINK-";
+				if(ptr->attack < 0)
+					myswprintf(adBuffer, L"?/-");
+				else
+					myswprintf(adBuffer, L"%d/-", ptr->attack);
+			}
+			myswprintf(textBuffer, L"%ls/%ls %ls%d", dataManager.FormatAttribute(ptr->attribute).c_str(), dataManager.FormatRace(ptr->race).c_str(),
+				form, ptr->level);
+			DrawShadowText(textFont, textBuffer, Resize(860, 187 + i * 66, 955, 207 + i * 66), Resize(1, 1, 0, 0));
+			if(ptr->type & TYPE_PENDULUM) {
+				myswprintf(scaleBuffer, L" %d/%d", ptr->lscale, ptr->rscale);
+			}
+			myswprintf(textBuffer, L"%ls%ls%ls", adBuffer, scaleBuffer, availBuffer);
+			DrawShadowText(textFont, textBuffer, Resize(860, 209 + i * 66, 955, 229 + i * 66), Resize(1, 1, 0, 0));
+		} else {
+			myswprintf(textBuffer, L"%ls", dataManager.GetName(ptr->code));
+			DrawShadowText(textFont, textBuffer, Resize(860, 165 + i * 66, 955, 185 + i * 66), Resize(1, 1, 0, 0));
+			myswprintf(textBuffer, L"%ls", dataManager.FormatType(ptr->type).c_str());
+			DrawShadowText(textFont, textBuffer, Resize(860, 187 + i * 66, 955, 207 + i * 66), Resize(1, 1, 0, 0));
+			myswprintf(textBuffer, L"%ls", availBuffer);
+			DrawShadowText(textFont, textBuffer, Resize(860, 209 + i * 66, 955, 229 + i * 66), Resize(1, 1, 0, 0));
+		}
+	}
+	if(deckBuilder.is_draging) {
+		DrawThumb(deckBuilder.draging_pointer, irr::core::vector2di(deckBuilder.dragx - CARD_THUMB_WIDTH / 2 * xScale, deckBuilder.dragy - CARD_THUMB_HEIGHT / 2 * yScale), deckBuilder.filterList, true);
+	}
+}
+}

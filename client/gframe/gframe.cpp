@@ -1,0 +1,221 @@
+#include "config.h"
+#include "game.h"
+#include "data_manager.h"
+#include <event2/thread.h>
+#include <clocale>
+#include <cstdlib>
+#include <memory>
+#ifdef _WIN32
+#include <WinSock2.h>
+#include <windows.h>
+#include <shellapi.h>
+#else
+#include <signal.h>
+#endif
+
+#if defined(_WIN32) && (!defined(WDK_NTDDI_VERSION) || (WDK_NTDDI_VERSION < 0x0A000005)) // Redstone 4, Version 1803, Build 17134.
+#error "This program requires the Windows 10 SDK version 1803 or above to compile on Windows. Otherwise, non-ASCII characters will not be displayed or processed correctly."
+#endif
+
+
+void ClickButton(irr::gui::IGUIElement* btn) {
+	irr::SEvent event;
+	event.EventType = irr::EET_GUI_EVENT;
+	event.GUIEvent.EventType = irr::gui::EGET_BUTTON_CLICKED;
+	event.GUIEvent.Caller = btn;
+	ygo::mainGame->device->postEventFromUser(event);
+}
+
+static int mymain(int wargc, const wchar_t* const wargv[]) {
+#ifdef __APPLE__
+	ygo::Game::FixMacOSBundleWorkingDirectory();
+#endif //__APPLE__
+#ifdef _WIN32
+	if (wargc == 2 && (ygo::IsExtension(wargv[1], L".ydk") || ygo::IsExtension(wargv[1], L".yrp"))) { // open file from explorer
+		wchar_t exepath[MAX_PATH];
+		GetModuleFileNameW(nullptr, exepath, MAX_PATH);
+		wchar_t* p = std::wcsrchr(exepath, L'\\');
+		if (p) {
+			*p = 0;
+			SetCurrentDirectoryW(exepath);
+		}
+	}
+#endif //_WIN32
+#ifdef _WIN32
+	WORD wVersionRequested;
+	WSADATA wsaData;
+	wVersionRequested = MAKEWORD(2, 2);
+	WSAStartup(wVersionRequested, &wsaData);
+	evthread_use_windows_threads();
+#else
+	evthread_use_pthreads();
+	signal(SIGCHLD, SIG_IGN);
+#endif //_WIN32
+	ygo::Game _game;
+	ygo::mainGame = &_game;
+	if(!ygo::mainGame->Initialize())
+		return EXIT_FAILURE;
+
+	bool keep_on_return = false;
+	bool deckCategorySpecified = false;
+	for(int i = 1; i < wargc; ++i) {
+		if (wargc == 2) {
+			if (ygo::IsExtension(wargv[1], L".ydk")) {
+				ygo::mainGame->open_file = true;
+				BufferIO::CopyWideString(wargv[1], ygo::mainGame->open_file_name);
+				ygo::mainGame->exit_on_return = true;
+				ClickButton(ygo::mainGame->btnDeckEdit);
+				break;
+			}
+			if (ygo::IsExtension(wargv[1], L".yrp")) {
+				ygo::mainGame->open_file = true;
+				BufferIO::CopyWideString(wargv[1], ygo::mainGame->open_file_name);
+				ygo::mainGame->exit_on_return = true;
+				ClickButton(ygo::mainGame->btnReplayMode);
+				ClickButton(ygo::mainGame->btnLoadReplay);
+				break;
+			}
+		}
+		if(wargv[i][0] == L'-' && wargv[i][1] == L'e' && wargv[i][2] != L'\0') {
+			char file[1024];
+			BufferIO::EncodeUTF8(wargv[i] + 2, file);
+			ygo::dataManager.LoadDB(file);
+			continue;
+		}
+		if(!std::wcscmp(wargv[i], L"-e")) { // extra database
+			++i;
+			if(i < wargc) {
+				char file[1024];
+				BufferIO::EncodeUTF8(wargv[i], file);
+				ygo::dataManager.LoadDB(file);
+			}
+			continue;
+		} else if(!std::wcscmp(wargv[i], L"-n")) { // nickName
+			++i;
+			if(i < wargc)
+				ygo::mainGame->ebNickName->setText(wargv[i]);
+			continue;
+		} else if(!std::wcscmp(wargv[i], L"-h")) { // Host address
+			++i;
+			if(i < wargc)
+				ygo::mainGame->ebJoinHost->setText(wargv[i]);
+			continue;
+		} else if(!std::wcscmp(wargv[i], L"-p")) { // host Port
+			++i;
+			if(i < wargc)
+				ygo::mainGame->ebJoinPort->setText(wargv[i]);
+			continue;
+		} else if(!std::wcscmp(wargv[i], L"-w")) { // host passWord
+			++i;
+			if(i < wargc)
+				ygo::mainGame->ebJoinPass->setText(wargv[i]);
+			continue;
+		} else if(!std::wcscmp(wargv[i], L"-k")) { // Keep on return
+			ygo::mainGame->exit_on_return = false;
+			keep_on_return = true;
+		} else if(!std::wcscmp(wargv[i], L"--deck-category")) {
+			++i;
+			if(i < wargc) {
+				deckCategorySpecified = true;
+				BufferIO::CopyWideString(wargv[i], ygo::mainGame->gameConf.lastcategory);
+			}
+		} else if(!std::wcscmp(wargv[i], L"-d")) { // Deck
+			++i;
+			if(!deckCategorySpecified)
+				ygo::mainGame->gameConf.lastcategory[0] = 0;
+			if(i + 1 < wargc) { // select deck
+				BufferIO::CopyWideString(wargv[i], ygo::mainGame->gameConf.lastdeck);
+				continue;
+			} else { // open deck
+				ygo::mainGame->exit_on_return = !keep_on_return;
+				if(i < wargc) {
+					ygo::mainGame->open_file = true;
+					if(deckCategorySpecified) {
+#ifdef _WIN32
+						myswprintf(ygo::mainGame->open_file_name, L"%ls\\%ls", ygo::mainGame->gameConf.lastcategory, wargv[i]);
+#else
+						myswprintf(ygo::mainGame->open_file_name, L"%ls/%ls", ygo::mainGame->gameConf.lastcategory, wargv[i]);
+#endif
+					} else {
+						BufferIO::CopyWideString(wargv[i], ygo::mainGame->open_file_name);
+					}
+				}
+				ClickButton(ygo::mainGame->btnDeckEdit);
+				break;
+			}
+		} else if(!std::wcscmp(wargv[i], L"-c")) { // Create host
+			ygo::mainGame->exit_on_return = !keep_on_return;
+			ygo::mainGame->HideElement(ygo::mainGame->wMainMenu);
+			ClickButton(ygo::mainGame->btnHostConfirm);
+			break;
+		} else if(!std::wcscmp(wargv[i], L"-j")) { // Join host
+			ygo::mainGame->exit_on_return = !keep_on_return;
+			ygo::mainGame->HideElement(ygo::mainGame->wMainMenu);
+			ClickButton(ygo::mainGame->btnJoinHost);
+			break;
+		} else if(!std::wcscmp(wargv[i], L"-r")) { // Replay
+			ygo::mainGame->exit_on_return = !keep_on_return;
+			++i;
+			if(i < wargc) {
+				ygo::mainGame->open_file = true;
+				BufferIO::CopyWideString(wargv[i], ygo::mainGame->open_file_name);
+			}
+			ClickButton(ygo::mainGame->btnReplayMode);
+			if(ygo::mainGame->open_file)
+				ClickButton(ygo::mainGame->btnLoadReplay);
+			break;
+		} else if(!std::wcscmp(wargv[i], L"-s")) { // Single
+			ygo::mainGame->exit_on_return = !keep_on_return;
+			++i;
+			if(i < wargc) {
+				ygo::mainGame->open_file = true;
+				BufferIO::CopyWideString(wargv[i], ygo::mainGame->open_file_name);
+			}
+			ClickButton(ygo::mainGame->btnSingleMode);
+			if(ygo::mainGame->open_file)
+				ClickButton(ygo::mainGame->btnLoadSinglePlay);
+			break;
+		}
+	}
+	ygo::mainGame->MainLoop();
+#ifdef _WIN32
+	WSACleanup();
+#else
+
+#endif //_WIN32
+	return EXIT_SUCCESS;
+}
+
+#ifdef _WIN32
+
+int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
+	std::setlocale(LC_CTYPE, ".UTF-8");
+	int wargc = 0;
+	std::unique_ptr<wchar_t*[], void(*)(wchar_t**)> wargv(CommandLineToArgvW(GetCommandLineW(), &wargc), [](wchar_t** raw_ptr) {
+		LocalFree(raw_ptr);
+	});
+	if(!wargv)
+		return EXIT_FAILURE;
+	return mymain(wargc, wargv.get());
+}
+
+#else
+
+int main(int argc, char* argv[]) {
+#ifdef __APPLE__
+	std::setlocale(LC_CTYPE, "UTF-8");
+#else
+	std::setlocale(LC_CTYPE, "");
+#endif
+	std::vector<std::wstring> wide_arguments;
+	wide_arguments.reserve(argc);
+	for(int i = 0; i < argc; ++i)
+		wide_arguments.emplace_back(BufferIO::DecodeUTF8String(argv[i]));
+	std::vector<const wchar_t*> wargv;
+	wargv.reserve(argc);
+	for(const auto& argument : wide_arguments)
+		wargv.emplace_back(argument.c_str());
+	return mymain(argc, wargv.data());
+}
+
+#endif //_WIN32

@@ -10,9 +10,12 @@ tests/results/
 **/deck/
 **/expansions/
 **/pack/
-**/Decks/
-**/Dialogs/
+/bot/Decks/
+/bot/Dialogs/
 **/cards.cdb
 **/system.conf
 **/system-undo.conf
 **/bots.json
+/client/script/
+/client/sound/
+/client/textures/
