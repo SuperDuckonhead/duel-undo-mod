@@ -1,0 +1,20 @@
+cmake_minimum_required(VERSION 3.20)
+project(ygopro_undo_tests LANGUAGES CXX)
+
+enable_testing()
+
+function(add_undo_test name source)
+    add_executable(${name} ${source})
+    target_compile_features(${name} PRIVATE cxx_std_17)
+    target_include_directories(${name} PRIVATE tests client/gframe)
+    if(MINGW)
+        target_link_options(${name} PRIVATE -static)
+    endif()
+    add_test(NAME ${name} COMMAND ${name})
+endfunction()
+
+add_undo_test(harness_smoke tests/harness_smoke.cpp)
+add_test(NAME harness_check_failure COMMAND harness_smoke --intentional-failure)
+set_tests_properties(harness_check_failure PROPERTIES WILL_FAIL TRUE)
+add_undo_test(editor_history_tests tests/editor_history_tests.cpp)
+target_sources(editor_history_tests PRIVATE client/gframe/undo/editor_history.cpp)

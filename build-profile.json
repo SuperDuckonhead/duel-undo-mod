@@ -1,0 +1,180 @@
+{
+  "compiler": {
+    "name": "LLVM-MinGW Clang",
+    "version": "20260908 UCRT x86_64",
+    "path": ".cache/tools/llvm-mingw-20260908-ucrt-x86_64/bin/clang++.exe"
+  },
+  "architecture": "x86_64-w64-mingw32",
+  "framework": {
+    "bot": ".NET Framework 4.8",
+    "tests": "C++17"
+  },
+  "dependencies": {
+    "cmake": ".cache/tools/cmake-4.4.3-windows-x86_64/bin/cmake.exe",
+    "ctest": ".cache/tools/cmake-4.4.3-windows-x86_64/bin/ctest.exe",
+    "make": ".cache/tools/llvm-mingw-20260908-ucrt-x86_64/bin/mingw32-make.exe",
+    "dotnet": ".cache/tools/dotnet/dotnet.exe"
+  },
+  "commands": [
+    {
+      "program": "powershell.exe",
+      "workingDirectory": ".",
+      "arguments": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools/Build-Client.ps1",
+        "-Configuration",
+        "Debug"
+      ],
+      "targets": [
+        "Client"
+      ],
+      "configuration": "Debug"
+    },
+    {
+      "program": "powershell.exe",
+      "workingDirectory": ".",
+      "arguments": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools/Build-Bot.ps1",
+        "-Configuration",
+        "Debug",
+        "-OutputDirectory",
+        "out/bot/Debug"
+      ],
+      "targets": [
+        "Bot"
+      ],
+      "configuration": "Debug"
+    },
+    {
+      "program": ".cache/tools/cmake-4.4.3-windows-x86_64/bin/cmake.exe",
+      "workingDirectory": ".",
+      "arguments": [
+        "-S",
+        ".",
+        "-B",
+        "out/tests/Debug",
+        "-G",
+        "MinGW Makefiles",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DCMAKE_CXX_COMPILER={repoRoot}/.cache/tools/llvm-mingw-20260908-ucrt-x86_64/bin/clang++.exe",
+        "-DCMAKE_MAKE_PROGRAM={repoRoot}/.cache/tools/llvm-mingw-20260908-ucrt-x86_64/bin/mingw32-make.exe"
+      ],
+      "targets": [
+        "Tests"
+      ],
+      "configuration": "Debug"
+    },
+    {
+      "program": ".cache/tools/cmake-4.4.3-windows-x86_64/bin/cmake.exe",
+      "workingDirectory": ".",
+      "arguments": [
+        "--build",
+        "out/tests/Debug"
+      ],
+      "targets": [
+        "Tests"
+      ],
+      "configuration": "Debug"
+    },
+    {
+      "program": ".cache/tools/cmake-4.4.3-windows-x86_64/bin/ctest.exe",
+      "workingDirectory": ".",
+      "arguments": [
+        "--test-dir",
+        "out/tests/Debug",
+        "--output-on-failure"
+      ],
+      "targets": [
+        "Tests"
+      ],
+      "configuration": "Debug"
+    },
+    {
+      "program": "powershell.exe",
+      "workingDirectory": ".",
+      "arguments": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools/Build-Client.ps1",
+        "-Configuration",
+        "Release"
+      ],
+      "targets": [
+        "Client"
+      ],
+      "configuration": "Release"
+    },
+    {
+      "program": "powershell.exe",
+      "workingDirectory": ".",
+      "arguments": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools/Build-Bot.ps1",
+        "-Configuration",
+        "Release",
+        "-OutputDirectory",
+        "out/bot/Release"
+      ],
+      "targets": [
+        "Bot"
+      ],
+      "configuration": "Release"
+    },
+    {
+      "program": ".cache/tools/cmake-4.4.3-windows-x86_64/bin/cmake.exe",
+      "workingDirectory": ".",
+      "arguments": [
+        "-S",
+        ".",
+        "-B",
+        "out/tests/Release",
+        "-G",
+        "MinGW Makefiles",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_CXX_COMPILER={repoRoot}/.cache/tools/llvm-mingw-20260908-ucrt-x86_64/bin/clang++.exe",
+        "-DCMAKE_MAKE_PROGRAM={repoRoot}/.cache/tools/llvm-mingw-20260908-ucrt-x86_64/bin/mingw32-make.exe"
+      ],
+      "targets": [
+        "Tests"
+      ],
+      "configuration": "Release"
+    },
+    {
+      "program": ".cache/tools/cmake-4.4.3-windows-x86_64/bin/cmake.exe",
+      "workingDirectory": ".",
+      "arguments": [
+        "--build",
+        "out/tests/Release"
+      ],
+      "targets": [
+        "Tests"
+      ],
+      "configuration": "Release"
+    },
+    {
+      "program": ".cache/tools/cmake-4.4.3-windows-x86_64/bin/ctest.exe",
+      "workingDirectory": ".",
+      "arguments": [
+        "--test-dir",
+        "out/tests/Release",
+        "--output-on-failure"
+      ],
+      "targets": [
+        "Tests"
+      ],
+      "configuration": "Release"
+    }
+  ]
+}
