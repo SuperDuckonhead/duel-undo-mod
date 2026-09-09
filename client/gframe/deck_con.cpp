@@ -1183,16 +1183,22 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 					break;
 				}
 				int decksel = mainGame->lstDecks->getSelected();
-				mainGame->cbDBDecks->setSelected(decksel);
-				if(decksel == -1)
+				if(decksel == -1) {
+					mainGame->lstDecks->setSelected(prev_deck);
+					mainGame->cbDBDecks->setSelected(prev_deck);
 					break;
+				}
 				wchar_t filepath[256];
 				wchar_t catepath[256];
 				DeckManager::GetCategoryPath(catepath, mainGame->lstCategories->getSelected(), mainGame->lstCategories->getListItem(mainGame->lstCategories->getSelected()));
 				myswprintf(filepath, L"%ls/%ls.ydk", catepath, mainGame->lstDecks->getListItem(decksel));
-				LoadEditorDeck(filepath, showing_pack);
-				RefreshPackListScroll();
-				prev_deck = decksel;
+				if(LoadEditorDeck(filepath, showing_pack)) {
+					mainGame->cbDBDecks->setSelected(decksel);
+					prev_deck = decksel;
+				} else {
+					mainGame->lstDecks->setSelected(prev_deck);
+					mainGame->cbDBDecks->setSelected(prev_deck);
+				}
 				break;
 			}
 			}
@@ -1849,6 +1855,7 @@ void DeckBuilder::RefreshPackListScroll() {
 	}
 }
 void DeckBuilder::ChangeCategory(int catesel) {
+	CancelEditorDrag();
 	mainGame->RefreshDeck(mainGame->cbDBCategory, mainGame->cbDBDecks);
 	mainGame->cbDBDecks->setSelected(0);
 	RefreshReadonly(catesel);

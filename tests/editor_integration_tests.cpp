@@ -213,6 +213,45 @@ int main(int argc, char** argv) {
         mouse(irr::EMIE_MOUSE_MOVED,320,180); mouse(irr::EMIE_RMOUSE_LEFT_UP,320,180);
         game.ebDeckname->setText(L"undo-editor-integration-copy"); button(game.btnSaveDeckAs);
         CHECK(!editor.editorHistory.CanUndo()); CHECK(!editor.is_modified); CHECK(std::wstring(game.cbDBDecks->getText())==L"undo-editor-integration-copy");
+        // Failed management-list loads must preserve A's selection/save target, even when B exists but cannot load.
+        seed();
+        game.cbDBCategory->setSelected(2); editor.prev_category=2;
+        game.cbDBDecks->clear(); game.cbDBDecks->addItem(L"undo-editor-management-a"); game.cbDBDecks->addItem(L"undo-editor-management-b");
+        game.cbDBDecks->setSelected(0); editor.prev_deck=0;
+        game.lstCategories->clear(); game.lstCategories->addItem(L"pack"); game.lstCategories->addItem(L"bot"); game.lstCategories->addItem(L"deck"); game.lstCategories->setSelected(2);
+        game.lstDecks->clear(); game.lstDecks->addItem(L"undo-editor-management-a"); game.lstDecks->addItem(L"undo-editor-management-b"); game.lstDecks->setSelected(0);
+        button(game.btnSaveDeck); const auto managementA=bytes("deck/undo-editor-management-a.ydk");
+        { std::ofstream file("deck/undo-editor-management-b.ydk",std::ios::binary); file << std::string(DeckManager::MAX_YDK_SIZE,'#'); }
+        const auto managementB=bytes("deck/undo-editor-management-b.ydk");
+        mouse(irr::EMIE_MOUSE_MOVED,320,180); mouse(irr::EMIE_RMOUSE_LEFT_UP,320,180); const auto managementEdited=editor.CaptureEditorDeck();
+        game.wDeckManage->setVisible(true); game.lstDecks->setSelected(1);
+        irr::SEvent listEvent{}; listEvent.EventType=irr::EET_GUI_EVENT;
+        listEvent.GUIEvent.Caller=game.lstDecks; listEvent.GUIEvent.EventType=irr::gui::EGET_LISTBOX_CHANGED;
+        editor.OnEvent(listEvent);
+        CHECK(editor.CaptureEditorDeck()==managementEdited); CHECK(editor.editorHistory.CanUndo()); CHECK(editor.is_modified);
+        game.wDeckManage->setVisible(false); button(game.btnSaveDeck);
+        CHECK(bytes("deck/undo-editor-management-b.ydk")==managementB);
+        CHECK(bytes("deck/undo-editor-management-a.ydk")!=managementA);
+        CHECK(game.lstDecks->getSelected()==0); CHECK(game.cbDBDecks->getSelected()==0); CHECK(editor.prev_deck==0);
+        CHECK(editor.editorHistory.CanUndo()); CHECK(!editor.is_modified);
+        // Empty-category boundaries cancel both pending press and active drag before resetting the session.
+        std::filesystem::create_directory("deck/undo-editor-empty");
+        CHECK(std::filesystem::is_empty("deck/undo-editor-empty"));
+        for(bool active : {true,false}) {
+            seed();
+            game.cbDBCategory->clear(); game.cbDBCategory->addItem(L"pack"); game.cbDBCategory->addItem(L"bot"); game.cbDBCategory->addItem(L"deck");
+            game.cbDBCategory->addItem(L"separator"); game.cbDBCategory->addItem(L"undo-editor-empty"); game.cbDBCategory->setSelected(2); editor.prev_category=2;
+            mouse(irr::EMIE_MOUSE_MOVED,368,180); mouse(irr::EMIE_LMOUSE_PRESSED_DOWN,368,180);
+            CHECK(editor.is_starting_dragging);
+            if(active) { mouse(irr::EMIE_MOUSE_MOVED,300,640); CHECK(editor.is_draging); }
+            game.cbDBCategory->setSelected(4); change(game.cbDBCategory);
+            CHECK(!editor.is_draging); CHECK(!editor.is_starting_dragging);
+            mouse(irr::EMIE_MOUSE_MOVED,320,180); mouse(irr::EMIE_LMOUSE_LEFT_UP,320,180);
+            CHECK(editor.CaptureEditorDeck()==undo::DeckSnapshot{});
+            CHECK(!editor.is_draging); CHECK(!editor.is_starting_dragging); CHECK(editor.draging_pointer==nullptr);
+            CHECK(!editor.editorEditStart); CHECK(!editor.editorHistory.CanUndo()); CHECK(!editor.is_modified);
+        }
+        game.cbDBCategory->setSelected(2); change(game.cbDBCategory);
         seed(); mouse(irr::EMIE_MOUSE_MOVED,320,180); mouse(irr::EMIE_RMOUSE_LEFT_UP,320,180);
         button(game.btnLeaveGame); button(game.btnNo); game.wQuery->setVisible(false); CHECK(editor.editorHistory.CanUndo()); CHECK(game.is_building);
         button(game.btnLeaveGame); button(game.btnYes); CHECK(!game.is_building); CHECK(!editor.editorHistory.CanUndo());

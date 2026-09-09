@@ -57,3 +57,8 @@ The computer-use kernel failed before app interaction in this environment. No vi
 5. Navigate editor → main menu → single duel → editor and confirm editor undo remains separate from the future duel undo interface. Editor exit/reentry/database reset is automated; the single-duel navigation is pending the duel feature and visual gate.
 
 File-management delete/move/rename undo and redo remain outside the requested editor feature.
+## Review round 1 boundary regressions
+
+The initialized-client suite now additionally verifies failed management-list load → Save retains deck A's save target and history, writes A only on that explicit save, and leaves the rejected deck B's existing file bytes unchanged. It also verifies switching to a dedicated empty category during either pending or active dragging cancels the old gesture before the new empty session; subsequent move/release leaves that deck empty, clean, and without history or drag state.
+
+All three original failures were observed through real OnEvent calls (`out/editor-review-management-red.log`, `out/editor-review-empty-category-red.log`, `out/editor-review-active-drag-red.log`). The final full Release build, complete actual-event/two-process integration, and targeted Debug editor units passed (`out/editor-review-client-release.log`, `out/editor-review-integration-green.log`, `out/editor-review-units.log`). Manual visual/window-interaction gates above remain pending.
