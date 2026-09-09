@@ -1,0 +1,5 @@
+add_undo_test(core_wait_tests tests/core_wait_tests.cpp)
+target_sources(core_wait_tests PRIVATE tests/core_test_globals.cpp)
+target_link_libraries(core_wait_tests PRIVATE undo_driver)
+target_link_options(core_wait_tests PRIVATE -Wl,--gc-sections)
+set_tests_properties(core_wait_tests PROPERTIES TIMEOUT 60)

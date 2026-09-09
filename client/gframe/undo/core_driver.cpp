@@ -197,7 +197,8 @@ Boundary CoreDriver::Advance(const LiveOutput& output) {
    // No Binding or API mutex remains while a live client animates or waits.
    if(output)for(const auto& m:messages)if(!m.prompt)output(m.bytes);
    if(prompt || finished || (status&PROCESSOR_END))return boundary_;
-   if(status&PROCESSOR_WAITING)throw std::runtime_error("Core waiting without decoded prompt");
+   // Confirmation/display operations also yield PROCESSOR_WAITING without a response.
+   // Continue the bounded loop; only decoded response prompts stop this boundary.
   }
   throw std::runtime_error("Core boundary processing limit exceeded");
  }catch(const std::exception& e){Binding binding(this);boundary_.kind=BoundaryKind::Failed;boundary_.failure=e.what();waiting_=false;submitted_=false;return boundary_;}
