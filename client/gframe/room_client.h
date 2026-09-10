@@ -25,6 +25,7 @@ public:
   undo::InputToken Token() const;
   bool InputPaused() const;
   bool PresentationFrozen() const;
+  bool DuelEnded() const;
   bool CanUndo() const;
   bool NeedsConsent() const;
   std::wstring StatusText() const;

@@ -892,7 +892,10 @@ void DuelClient::HandleLegacySTOC(unsigned char* data, size_t len) {
 		if (data_size > MAX_COMP_SIZE)
 			data_size = MAX_COMP_SIZE;
 		time_t starttime;
-		if (new_replay.pheader.base.flag & REPLAY_UNIFORM)
+		// Undo replay headers reserve start_time as zero; name the saved file now.
+		if (undoReplay)
+			starttime = std::time(nullptr);
+		else if (new_replay.pheader.base.flag & REPLAY_UNIFORM)
 			starttime = new_replay.pheader.base.start_time;
 		else
 			starttime = new_replay.pheader.base.seed;

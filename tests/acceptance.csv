@@ -47,3 +47,4 @@
 "恢复事务保持双方一致","原生同意拒绝及跨事务抬起","双人确认窗口","修正并验证真实鼠标同意/拒绝，以及按下/抬起跨协商时不会批准另一事务。","docs/INTEGRATION-STAGES.md","pending"
 "撤回后原界面保持可用","再次召唤和悬停卡牌列表","实际 Game::MainLoop 与已安装 AI","实际鼠标召唤撤回、二次召唤和CtrlZ撤回、两个列表原生悬停提示和正常退出。","tests/post-undo-ui.md","pass"
 "对局可通过Ctrl+Z撤回","文本焦点、暂停、按键重复与模式隔离","Room / SingleMode / 编辑器","原生AutoRepeat、漏keyup后新按键、普通YES/NO、文本与恢复保护、实际单机两次撤回和编辑器原快捷键。","tests/post-undo-ui.md","pass"
+"终局录像界面保持可用","保存/取消/编辑文件名/自动保存/最终确认","实际 Game::MainLoop 与已安装 AI","四条原生鼠标键盘流程、有效录像重开、取消不写录像、当前日期命名及正常返回菜单均通过。","tests/replay-save-ui.md","pass"

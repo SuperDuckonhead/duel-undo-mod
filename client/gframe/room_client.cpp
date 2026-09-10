@@ -144,10 +144,10 @@ struct RoomClient::Impl {
       }
       active.reset();
       fragments.reset();
-      terminal = true;
       failed = true;
       {
         std::lock_guard<std::mutex> lock(mutex);
+        terminal = true;
         paused = true;
         canUndo = false;
         consent = false;
@@ -530,6 +530,10 @@ bool RoomClient::InputPaused() const {
 bool RoomClient::PresentationFrozen() const {
   std::lock_guard<std::mutex> lock(impl_->mutex);
   return impl_->freezePresentation;
+}
+bool RoomClient::DuelEnded() const {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  return impl_->terminal;
 }
 bool RoomClient::CanUndo() const {
   std::lock_guard<std::mutex> lock(impl_->mutex);
