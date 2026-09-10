@@ -162,6 +162,13 @@ struct RoomClient::Impl {
     }
     need(!active && !failed, "Gameplay arrived during transaction");
     const bool game = bytes[0] == STOC_GAME_MSG;
+    if (bytes[0] == STOC_TIME_LIMIT) {
+      // WaitforResponse sends this packet before the selecting player's game
+      // message. Bind its automatic acknowledgement to the packet's prompt,
+      // while keeping the old visible prompt closed to gameplay submissions.
+      prompt = packet->prompt;
+      publish(true);
+    }
     if (game) {
       need(bytes.size() > 1, "Empty game message");
       if (bytes[1] == MSG_START) {
@@ -543,6 +550,14 @@ bool RoomClient::NeedsConsent() const {
   std::lock_guard<std::mutex> lock(impl_->mutex);
   return impl_->consent;
 }
+std::optional<undo::TxKey> RoomClient::ConsentTarget(std::wstring *description) const {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  if (!impl_->consent)
+    return std::nullopt;
+  if (description)
+    *description = impl_->text;
+  return impl_->consentKey;
+}
 std::wstring RoomClient::StatusText() const {
   std::lock_guard<std::mutex> lock(impl_->mutex);
   return impl_->requestNotice.empty()
@@ -602,10 +617,10 @@ bool RoomClient::RequestUndo() {
   r.canUndo = false;
   return true;
 }
-bool RoomClient::Consent(bool yes) {
+bool RoomClient::Consent(bool yes, const undo::TxKey &expected) {
   auto &r = *impl_;
   std::lock_guard<std::mutex> lock(r.mutex);
-  if (!r.consent)
+  if (!r.consent || !undo::SameKey(expected, r.consentKey))
     return false;
   Impl::Command c;
   c.kind = Impl::Command::Consent;

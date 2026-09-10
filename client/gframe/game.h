@@ -469,6 +469,7 @@ public:
  irr::gui::IGUICheckBox* chkUndoLoopback{};
  irr::gui::IGUICheckBox* chkBotUndoLoopback{};
  irr::gui::IGUIButton* btnUndoApprove{};
+ std::optional<undo::TxKey> displayedUndoConsent;
  irr::gui::IGUIButton* btnUndoDecline{};
 	irr::gui::IGUIButton* btnHostConfirm{};
 	irr::gui::IGUIButton* btnHostCancel{};

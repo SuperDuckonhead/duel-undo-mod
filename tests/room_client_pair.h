@@ -2,7 +2,7 @@
 // owns a separate process, Game, RoomClient, resource capture and GUI
 // environment.
 static int pairGame(bool host, const std::filesystem::path &shared,
-                    bool freePair = false) {
+                    bool freePair = false, bool timedPair = false) {
   WSADATA winsock{};
   CHECK(WSAStartup(MAKEWORD(2, 2), &winsock) == 0);
   evthread_use_windows_threads();
@@ -12,7 +12,7 @@ static int pairGame(bool host, const std::filesystem::path &shared,
   game.chkMAutoPos->setChecked(true);
   game.chkNoCheckDeck->setChecked(true);
   game.chkNoShuffleDeck->setChecked(true);
-  game.ebTimeLimit->setText(L"0");
+  game.ebTimeLimit->setText(timedPair?L"180":L"0");
   ShowWindow(
       static_cast<HWND>(game.driver->getExposedVideoData().OpenGLWin32.HWnd),
       SW_HIDE);
@@ -23,6 +23,17 @@ static int pairGame(bool host, const std::filesystem::path &shared,
     return std::filesystem::exists(shared / name);
   };
   auto click = [&](irr::gui::IGUIElement *widget) {
+    if(widget==game.btnUndoApprove || widget==game.btnUndoDecline) {
+      const auto p=widget->getAbsolutePosition().getCenter();
+      irr::SEvent mouse{};mouse.EventType=irr::EET_MOUSE_INPUT_EVENT;
+      mouse.MouseInput.X=p.X;mouse.MouseInput.Y=p.Y;
+      mouse.MouseInput.Event=irr::EMIE_LMOUSE_PRESSED_DOWN;
+      mouse.MouseInput.ButtonStates=irr::EMBSM_LEFT;
+      game.device->postEventFromUser(mouse);
+      mouse.MouseInput.Event=irr::EMIE_LMOUSE_LEFT_UP;mouse.MouseInput.ButtonStates=0;
+      game.device->postEventFromUser(mouse);
+      return;
+    }
     irr::SEvent e{};
     e.EventType = irr::EET_GUI_EVENT;
     e.GUIEvent.Caller = widget;
@@ -190,6 +201,7 @@ static int pairGame(bool host, const std::filesystem::path &shared,
       bool idle = room && !room->InputPaused() &&
                   game.dInfo.curMsg == MSG_SELECT_IDLECMD &&
                   game.fadingList.empty();
+      if(idle)CHECK(game.dInfo.time_limit==(timedPair?180:0));
       if (host && idle && !a1) {
         originalPrompt = room->Token().prompt;
         click(game.btnEP);

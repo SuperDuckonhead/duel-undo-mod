@@ -3,6 +3,7 @@
 #include "undo/single_undo.h"
 #include <functional>
 #include <memory>
+#include <optional>
 namespace ygo {
 class Game;
 // Receive/Poll/destruction belong to the client transport thread. UI entry
@@ -21,13 +22,14 @@ public:
   bool Submit(const undo::InputSubmission &);
   bool QueueLegacy(const undo::Bytes &);
   bool RequestUndo();
-  bool Consent(bool);
+  bool Consent(bool, const undo::TxKey &);
   undo::InputToken Token() const;
   bool InputPaused() const;
   bool PresentationFrozen() const;
   bool DuelEnded() const;
   bool CanUndo() const;
   bool NeedsConsent() const;
+  std::optional<undo::TxKey> ConsentTarget(std::wstring *description = nullptr) const;
   std::wstring StatusText() const;
 
 private:

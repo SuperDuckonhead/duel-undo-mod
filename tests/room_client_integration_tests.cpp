@@ -57,19 +57,30 @@ static void put(Bytes &b, uint64_t n, unsigned width) {
 }
 #include "room_client_ai.h"
 #include "room_client_pair.h"
+#include "room_client_timer.h"
 int main(int argc, char **argv) {
   try {
     mainGame = &game;
     CHECK(game.Initialize(std::filesystem::current_path()));
     game.frameSignal.SetNoWait(true);
     game.actionSignal.SetNoWait(true);
+    if (std::getenv("N2_ROOM_TIME_BEFORE_PROMPT"))
+      return timerConfirmationTests();
     if (argc == 3 && std::string(argv[1]) == "--ai")
       return aiGame();
-    if (argc == 4 && std::string(argv[3]) == "--free")
-      return pairGame(std::string(argv[1]) == "--pair-host", std::filesystem::u8path(argv[2]), true);
-    if (argc == 3)
+    if (argc >= 3 && argc <= 5) {
+      bool freePair = false, timedPair = false;
+      for (int i = 3; i < argc; ++i) {
+        if (std::string(argv[i]) == "--free")
+          freePair = true;
+        else {
+          CHECK(std::string(argv[i]) == "--timed");
+          timedPair = true;
+        }
+      }
       return pairGame(std::string(argv[1]) == "--pair-host",
-                      std::filesystem::u8path(argv[2]));
+                      std::filesystem::u8path(argv[2]), freePair, timedPair);
+    }
     if (std::getenv("N2_ROOM_POLICY_ONLY") ||
         std::getenv("N2_ROOM_MATCH_ONLY")) {
       std::cerr << "policy initialized" << std::endl;

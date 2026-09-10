@@ -7,6 +7,7 @@
 using namespace ygo;
 using namespace undo;
 static Game game;
+#include "duel_undo_consent.h"
 static void put(Bytes& b,uint64_t v,unsigned n){while(n--){b.push_back(uint8_t(v));v>>=8;}}
 static bool key(bool down,bool control=true,bool shift=false,bool repeat=false) {
  irr::SEvent event{};event.EventType=irr::EET_KEY_INPUT_EVENT;
@@ -100,6 +101,7 @@ int main(){
   // A focused native modal dialog must retain keyboard ownership.
   auto* dialog=game.env->addMessageBox(L"Test",L"Modal");
   game.env->setFocus(dialog);unchanged();dialog->remove();game.env->setFocus(nullptr);
+  consentMouse(room,session,sent);
   room->Close();std::atomic_store(&ygo::roomClient,std::shared_ptr<RoomClient>{});
   std::cout<<"Room shortcut gating, held-key and original button PASS\n";
   singleShortcut();editorShortcut();game.device->closeDevice();

@@ -2215,6 +2215,8 @@ void Game::OnResize() {
 
 	btnLeaveGame->setRelativePosition(Resize(205, 5, 295, 80));
  btnUndoDuel->setRelativePosition(Resize(205,45,295,70));stUndoDuel->setRelativePosition(Resize(205,75,295,115));
+ btnUndoApprove->setRelativePosition(Resize(300,45,375,75));
+ btnUndoDecline->setRelativePosition(Resize(380,45,455,75));
 	wReplayControl->setRelativePosition(Resize(205, 143, 295, 273));
 	btnReplayStart->setRelativePosition(Resize(5, 5, 85, 25));
 	btnReplayPause->setRelativePosition(Resize(5, 5, 85, 25));
@@ -2544,7 +2546,9 @@ void Game::UpdateDuelUndoStatus(){
  if(!btnUndoDuel || !stUndoDuel)return;
  auto room=DuelClient::Room();
  bool visible=(dInfo.isSingleMode||room) && !dInfo.isReplay && dInfo.isStarted;
- bool ask=visible&&!dInfo.isFinished&&room&&room->NeedsConsent();btnUndoApprove->setVisible(ask);btnUndoDecline->setVisible(ask);
+ std::wstring consentText;
+ displayedUndoConsent=visible&&!dInfo.isFinished&&room?room->ConsentTarget(&consentText):std::nullopt;
+ bool ask=bool(displayedUndoConsent);btnUndoApprove->setVisible(ask);btnUndoDecline->setVisible(ask);
  btnUndoDuel->setVisible(visible);stUndoDuel->setVisible(visible);
  stUndoDuel->setRelativePosition(room?Resize(300,80,800,150):Resize(205,75,295,115));
  btnLeaveGame->setRelativePosition(Resize(205,5,295,visible?40:80));
@@ -2552,7 +2556,7 @@ void Game::UpdateDuelUndoStatus(){
  btnChainAlways->setRelativePosition(Resize(205,visible?150:140,295,175));
  btnChainWhenAvail->setRelativePosition(Resize(205,180,295,visible?205:215));
  if(!visible)return;
- if(room&&!dInfo.isSingleMode){btnUndoDuel->setEnabled(!dInfo.isFinished&&room->CanUndo());stUndoDuel->setText(dInfo.isFinished?L"本局已结束":room->StatusText().c_str());return;}
+ if(room&&!dInfo.isSingleMode){btnUndoDuel->setEnabled(!dInfo.isFinished&&room->CanUndo());stUndoDuel->setText(dInfo.isFinished?L"本局已结束":ask?consentText.c_str():room->StatusText().c_str());return;}
  btnUndoDuel->setEnabled(!dInfo.isFinished && SingleMode::CanUndo(0));
  if(dInfo.isFinished)stUndoDuel->setText(L"本局已结束");
  else if(SingleMode::InputPaused())stUndoDuel->setText(L"正在恢复");

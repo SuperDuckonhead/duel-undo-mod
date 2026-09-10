@@ -1,6 +1,7 @@
-param([ValidateSet('Debug','Release')][string]$Configuration = 'Release', [string]$RuntimeRoot, [switch]$Pair, [switch]$Ai, [switch]$FreePair)
+param([ValidateSet('Debug','Release')][string]$Configuration = 'Release', [string]$RuntimeRoot, [switch]$Pair, [switch]$Ai, [switch]$FreePair, [switch]$TimedPair)
 $ErrorActionPreference = 'Stop'
 if($FreePair -and $Ai){throw 'FreePair and Ai are distinct test modes.'}
+if($TimedPair -and $Ai){throw 'TimedPair and Ai are distinct test modes.'}
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $compiler = Join-Path $root '.cache/tools/llvm-mingw-20260908-ucrt-x86_64/bin/clang++.exe'
 $build = Join-Path $root 'client/build'
@@ -34,7 +35,7 @@ foreach($name in @('Decks','Dialogs')){if(!(Test-Path -LiteralPath (Join-Path $b
 if(!(Test-Path -LiteralPath (Join-Path $botFixture 'bots.json'))){New-Item -ItemType HardLink -Path (Join-Path $botFixture 'bots.json') -Target (Join-Path $original 'WindBot/bots.json') | Out-Null}
 $privateBot=Join-Path $testDir 'WindBot'
 if(!(Test-Path -LiteralPath $privateBot)){New-Item -ItemType Junction -Path $privateBot -Target (Join-Path $root "out/bot/$Configuration") | Out-Null}
-if($Pair -or $Ai -or $FreePair) {
+if($Pair -or $Ai -or $FreePair -or $TimedPair) {
  $pairRoot=Join-Path $root ('out/room-pair-'+[Guid]::NewGuid().ToString('N'))
  New-Item -ItemType Directory -Path $pairRoot | Out-Null
  $roles=if($Ai){@('ai')}else{@('host','guest')}
@@ -57,6 +58,7 @@ if($Pair -or $Ai -or $FreePair) {
   exit 0
  }
  $pairModeArgs=if($FreePair){@('--free')}else{@()}
+ if($TimedPair){$pairModeArgs+=@('--timed')}
  $hostProcess=Start-Process -FilePath $exe -ArgumentList (@('--pair-host',('"'+$pairRoot+'"')) + $pairModeArgs) -WorkingDirectory (Join-Path $pairRoot 'host') -WindowStyle Hidden -RedirectStandardOutput (Join-Path $pairRoot 'host.log') -RedirectStandardError (Join-Path $pairRoot 'host-error.log') -PassThru
  $guestProcess=Start-Process -FilePath $exe -ArgumentList (@('--pair-guest',('"'+$pairRoot+'"')) + $pairModeArgs) -WorkingDirectory (Join-Path $pairRoot 'guest') -WindowStyle Hidden -RedirectStandardOutput (Join-Path $pairRoot 'guest.log') -RedirectStandardError (Join-Path $pairRoot 'guest-error.log') -PassThru
  $null=$hostProcess.Handle; $null=$guestProcess.Handle
@@ -67,7 +69,7 @@ if($Pair -or $Ai -or $FreePair) {
  Write-Host "Pair exit codes host=$($hostProcess.ExitCode) guest=$($guestProcess.ExitCode)"
  Get-Content -LiteralPath (Join-Path $pairRoot 'host.log'),(Join-Path $pairRoot 'host-error.log'),(Join-Path $pairRoot 'guest.log'),(Join-Path $pairRoot 'guest-error.log')
  if($hostProcess.ExitCode -ne 0 -or $guestProcess.ExitCode -ne 0){throw "Paired Game failed: $pairRoot"}
- Write-Host "PASS paired actual Game processes (FreePair=$FreePair): $pairRoot"
+ Write-Host "PASS paired actual Game processes (FreePair=$FreePair, TimedPair=$TimedPair): $pairRoot"
  exit 0
 }
 Push-Location $runtime

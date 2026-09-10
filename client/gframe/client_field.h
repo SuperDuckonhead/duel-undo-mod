@@ -8,6 +8,7 @@
 #include <memory>
 #include <IEventReceiver.h>
 #include <vector3d.h>
+#include "undo/protocol.h"
 
 namespace irr {
 	namespace gui {
@@ -174,6 +175,9 @@ public:
 	void CancelOrFinish();
 
 private:
+	std::optional<undo::TxKey> undo_consent_press_;
+	irr::s32 undo_consent_button_{};
+	bool undo_consent_dispatch_{};
 	void ConsumeModelWork();
 	std::size_t model_work_budget_{static_cast<std::size_t>(-1)};
 	std::vector<std::unique_ptr<ClientCard>> cards_;

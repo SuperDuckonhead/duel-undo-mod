@@ -16,6 +16,59 @@
 namespace ygo {
 
 bool ClientField::OnEvent(const irr::SEvent& event) {
+ auto consentRoom=DuelClient::Room();
+ auto consentTarget=consentRoom?consentRoom->ConsentTarget():std::nullopt;
+ auto consentButton=[&](irr::s32 id) {
+  return id==BUTTON_UNDO_APPROVE?mainGame->btnUndoApprove:mainGame->btnUndoDecline;
+ };
+ auto clearConsentPress=[&] {
+  mainGame->btnUndoApprove->setPressed(false);
+  mainGame->btnUndoDecline->setPressed(false);
+  undo_consent_press_.reset();
+ };
+ // Bind a complete mouse gesture to the displayed transaction. Keep the old
+ // press until release even if it expires, so release cannot reach the field.
+ if(undo_consent_press_ && (!consentTarget || !undo::SameKey(*undo_consent_press_,*consentTarget))) {
+  mainGame->btnUndoApprove->setPressed(false);
+  mainGame->btnUndoDecline->setPressed(false);
+ }
+ if(event.EventType==irr::EET_MOUSE_INPUT_EVENT) {
+  if(event.MouseInput.Event==irr::EMIE_LMOUSE_PRESSED_DOWN) {
+   clearConsentPress();
+   if(consentTarget) {
+    auto* hit=mainGame->env->getRootGUIElement()->getElementFromPoint({event.MouseInput.X,event.MouseInput.Y});
+    const auto& displayed=mainGame->displayedUndoConsent;
+    if(displayed && undo::SameKey(*displayed,*consentTarget) &&
+       (hit==mainGame->btnUndoApprove || hit==mainGame->btnUndoDecline) && hit->isTrulyVisible() && hit->isEnabled()) {
+     undo_consent_press_=displayed;undo_consent_button_=hit->getID();
+     // Route only the consent control through its native button handler.
+     // The paused gameplay widget retains its existing focus and selection.
+     hit->OnEvent(event);
+    }
+    return true;
+   }
+  } else if(event.MouseInput.Event==irr::EMIE_LMOUSE_LEFT_UP && undo_consent_press_) {
+   if(consentTarget && undo::SameKey(*undo_consent_press_,*consentTarget)) {
+    auto* button=consentButton(undo_consent_button_);
+    auto* hit=mainGame->env->getRootGUIElement()->getElementFromPoint({event.MouseInput.X,event.MouseInput.Y});
+    if(hit==button && button->isTrulyVisible() && button->isEnabled()) {
+     undo_consent_dispatch_=true;
+     button->OnEvent(event);
+     undo_consent_dispatch_=false;
+    }
+   }
+   clearConsentPress();
+   return true;
+  }
+ }
+ if(event.EventType==irr::EET_GUI_EVENT && event.GUIEvent.EventType==irr::gui::EGET_BUTTON_CLICKED &&
+    (event.GUIEvent.Caller==mainGame->btnUndoApprove || event.GUIEvent.Caller==mainGame->btnUndoDecline)) {
+  if(!undo_consent_dispatch_)return true;
+  if(consentRoom && undo_consent_press_ && event.GUIEvent.Caller==consentButton(undo_consent_button_))
+   consentRoom->Consent(undo_consent_button_==BUTTON_UNDO_APPROVE,*undo_consent_press_);
+  clearConsentPress();
+  return true;
+ }
  auto requestUndo=[] {if(auto room=DuelClient::Room())return room->RequestUndo();return SingleMode::RequestUndo(0);};
  // Use Irrlicht's native repeat flag; focus changes can lose a key-up event.
  if(event.EventType==irr::EET_KEY_INPUT_EVENT && event.KeyInput.Key==irr::KEY_KEY_Z &&
@@ -40,7 +93,6 @@ bool ClientField::OnEvent(const irr::SEvent& event) {
  if(event.EventType==irr::EET_GUI_EVENT && event.GUIEvent.EventType==irr::gui::EGET_BUTTON_CLICKED && event.GUIEvent.Caller->getID()==BUTTON_DUEL_UNDO){requestUndo();return true;}
 
  if(auto room=DuelClient::Room()){
-  if(event.EventType==irr::EET_GUI_EVENT&&event.GUIEvent.EventType==irr::gui::EGET_BUTTON_CLICKED){auto id=event.GUIEvent.Caller->getID();if(id==BUTTON_UNDO_APPROVE||id==BUTTON_UNDO_DECLINE){room->Consent(id==BUTTON_UNDO_APPROVE);return true;}}
   // InputPaused gates core submissions; it is not a general GUI pause.
   // Opening and terminal dialogs retain Irrlicht's original input dispatch.
   // Terminal gameplay stays paused; only the normal UI flow is restored.
