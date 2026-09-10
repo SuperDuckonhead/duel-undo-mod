@@ -42,3 +42,6 @@
 "原版并存和新版配置隔离","双开同时退出","同目录安装 / 原版并存","精确 ZIP 两个实际 Game 进程在同一受控目录初始化，先同时投递正常关闭再等待；配置与完整顺序保存基准逐字节相同，随后再启动成功。","tests/candidate-release.md","pass"
 "源码与增量发行包可追溯","发行包用于现有安装","同目录安装 / 原版并存","精确 ZIP 在真实原目录仅创建37个清单文件，启动后按固定receipt/hash逐项卸载，保留新配置；原版字节副本再运行，最后原目录重新安装同一ZIP。","tests/candidate-release.md","pass"
 "源码与增量发行包可追溯","发行来源可核对","同目录安装 / 原版并存","干净构建提交1cd153ea0cc67c6d9de02a4e3b687edbacbf6fe0、整树来源清单、37条ZIP/hash、固定提交git archive源码ZIP和外部SHA清单逐项对应。","tests/candidate-release.md","pass"
+"保留原生菜单和正常对战输入","猜拳先手、平局重猜、后手与未锁定手势","实际 Game::MainLoop 与 Win32 鼠标输入","tools/Test-RoomMainLoop.ps1 -Scenario first/tie/second/unchecked；仅鼠标猜拳/先后手与真实动画到首个人工 idle；菜单准备仍为程序调用。","tests/rps-opening.md","pass"
+"保留原生菜单和正常对战输入","实战阻塞消息和终局确认","正常主循环与真实用户输入","修正并覆盖 MSG_RETRY、HINT_MESSAGE、CONFIRM_CARDS 及终局；当前已识别同源门禁问题，不能由直接GUI事件测试代替。","docs/INTEGRATION-STAGES.md","pending"
+"恢复事务保持双方一致","原生同意拒绝及跨事务抬起","双人确认窗口","修正并验证真实鼠标同意/拒绝，以及按下/抬起跨协商时不会批准另一事务。","docs/INTEGRATION-STAGES.md","pending"

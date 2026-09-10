@@ -1,5 +1,8 @@
 # 本地集成验收记录
 
+2026-09-10 用户实际操作发现猜拳界面按钮出现后无法操作。已用正常 Game::MainLoop 和原始鼠标消息复现；过去直接触发 GUI 按钮与 SetNoWait 的测试漏掉了原生输入链。本候选包含此缺陷，不能据下面的历史测试宣称实际交互可用。开局修复与新回归见 [rps-opening.md](rps-opening.md)，分阶段边界见 [INTEGRATION-STAGES.md](../docs/INTEGRATION-STAGES.md)。Consent 及部分实战消息确认仍需单独修正和验证。
+
+
 状态：已实现的本地流程与回归证据汇总；第二台电脑局域网及人工视觉验收仍待执行。tests/acceptance.csv 的两设备及四模式完整场景保留 pending，不能由本页局部通过自动替换为 pass。
 
 ## 已通过的范围

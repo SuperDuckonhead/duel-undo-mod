@@ -20,10 +20,12 @@ bool ClientField::OnEvent(const irr::SEvent& event) {
 
  if(auto room=DuelClient::Room()){
   if(event.EventType==irr::EET_GUI_EVENT&&event.GUIEvent.EventType==irr::gui::EGET_BUTTON_CLICKED){auto id=event.GUIEvent.Caller->getID();if(id==BUTTON_UNDO_APPROVE||id==BUTTON_UNDO_DECLINE){room->Consent(id==BUTTON_UNDO_APPROVE);return true;}}
-  bool lobbyChoice=false;
-  if(event.EventType==irr::EET_GUI_EVENT&&event.GUIEvent.EventType==irr::gui::EGET_BUTTON_CLICKED&&!room->Token().prompt){auto id=event.GUIEvent.Caller->getID();lobbyChoice=(id>=BUTTON_HAND1&&id<=BUTTON_HAND3)||id==BUTTON_FIRST||id==BUTTON_SECOND;}
+  // InputPaused gates core submissions; it is not a general GUI pause.
+  // Before the first prompt, normal lobby/RPS/turn selection must retain
+  // Irrlicht's original mouse -> GUI event dispatch.
+  const bool opening = !room->Token().prompt && !room->PresentationFrozen();
   bool acknowledgment=event.EventType==irr::EET_GUI_EVENT&&event.GUIEvent.EventType==irr::gui::EGET_BUTTON_CLICKED&&(event.GUIEvent.Caller->getID()==BUTTON_MSG_OK||event.GUIEvent.Caller->getID()==BUTTON_REPLAY_SAVE||event.GUIEvent.Caller->getID()==BUTTON_REPLAY_CANCEL);
-  if(room->InputPaused()&&!acknowledgment&&!lobbyChoice)return true;
+  if(!opening&&room->InputPaused()&&!acknowledgment)return true;
  }
 	if(OnCommonEvent(event))
 		return false;
