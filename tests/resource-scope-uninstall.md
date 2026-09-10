@@ -70,3 +70,31 @@ corrected and re-reviewed with no remaining blockers.
 
 Two physical-device LAN/Tailscale acceptance is still pending. These local
 results do not close existing AI cold-start or room-creation investigations.
+
+## Built package and local installation
+
+The Windows x64 candidate was built from a clean local checkout at
+`79a7e967576d0556760cad320e66075cdcfc9807` using the documented Windows
+PowerShell 5.1 build entry. The fresh build passed all **22/22 CTest tests**;
+the separate read-only build-provenance check passed as well. Build and
+provenance logs are under the local release checkout's `out/logs/`.
+
+- ZIP: `ygopro-undo-79a7e96-win-x64.zip` (7,469,266 bytes, 39 files).
+- ZIP SHA-256: `352d7f7e355dea0b4deb21cdd571484b150cd9fda5be695781fb2e876342ded8`.
+- Client SHA-256: `36d38606ea44f12f52bd446d39d58768c0528b070502dfd79dbe02f92a827fc6`.
+- A fixture installed all 39 files from this exact ZIP, removed all 39 with
+  the packaged uninstaller, checked 15 original-file sentinels, then restored
+  all 39 from the generated uninstall backup and checked their hashes. The
+  restored tool's read-only preview recognized all 39 files with none preserved
+  as mismatches. Results: `out/logs/package-roundtrip.json` in the release checkout.
+- The actual local runtime was updated from the independently verified
+  alpha.1 package after backing up its 37 managed files and personal config.
+  Seven managed files changed and two uninstall files were added; all 39
+  installed hashes match the candidate and protected original/config hashes
+  remained unchanged. Installed uninstall preview recognizes 39 files and
+  removes none. Evidence: `out/scope-uninstall-validation/actual-install.json`
+  and `installed-new-verification.json` in the source checkout.
+
+The source commit above identifies the compiled payload; later documentation
+commits record verification only. This new candidate has not been uploaded to
+GitHub. Both test machines must install this same ZIP before remote acceptance.
