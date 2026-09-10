@@ -45,3 +45,5 @@
 "保留原生菜单和正常对战输入","猜拳先手、平局重猜、后手与未锁定手势","实际 Game::MainLoop 与 Win32 鼠标输入","tools/Test-RoomMainLoop.ps1 -Scenario first/tie/second/unchecked；仅鼠标猜拳/先后手与真实动画到首个人工 idle；菜单准备仍为程序调用。","tests/rps-opening.md","pass"
 "保留原生菜单和正常对战输入","实战阻塞消息和终局确认","正常主循环与真实用户输入","修正并覆盖 MSG_RETRY、HINT_MESSAGE、CONFIRM_CARDS 及终局；当前已识别同源门禁问题，不能由直接GUI事件测试代替。","docs/INTEGRATION-STAGES.md","pending"
 "恢复事务保持双方一致","原生同意拒绝及跨事务抬起","双人确认窗口","修正并验证真实鼠标同意/拒绝，以及按下/抬起跨协商时不会批准另一事务。","docs/INTEGRATION-STAGES.md","pending"
+"撤回后原界面保持可用","再次召唤和悬停卡牌列表","实际 Game::MainLoop 与已安装 AI","实际鼠标召唤撤回、二次召唤和CtrlZ撤回、两个列表原生悬停提示和正常退出。","tests/post-undo-ui.md","pass"
+"对局可通过Ctrl+Z撤回","文本焦点、暂停、按键重复与模式隔离","Room / SingleMode / 编辑器","原生AutoRepeat、漏keyup后新按键、普通YES/NO、文本与恢复保护、实际单机两次撤回和编辑器原快捷键。","tests/post-undo-ui.md","pass"

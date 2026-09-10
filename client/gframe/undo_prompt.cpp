@@ -28,7 +28,7 @@ std::vector<Slot> slots(Game& g) {
     W(wOptions); W(stOptions); W(btnOptionp); W(btnOptionn); W(btnOptionOK); W(scrOption);
     for(auto& p:g.btnOption) slot(out,p);
     W(wPosSelect); W(btnPSAU); W(btnPSAD); W(btnPSDU); W(btnPSDD);
-    W(wCardSelect); W(scrCardList); W(btnSelectOK);
+    W(wCardSelect); W(scrCardList); W(btnSelectOK); W(stCardListTip);
     for(auto& p:g.btnCardSelect) slot(out,p);
     for(auto& p:g.stCardPos) slot(out,p);
     W(wCardDisplay); W(scrDisplayList); W(btnDisplayOK);
@@ -42,7 +42,7 @@ std::vector<Slot> slots(Game& g) {
     W(wHand); for(auto& p:g.btnHand) slot(out,p);
     W(stHintMsg); W(btnBP); W(btnM2); W(btnEP); W(btnShuffle); W(btnCancelOrFinish);
     W(wCmdMenu); W(btnActivate); W(btnSummon); W(btnSPSummon); W(btnMSet);
-    W(btnSSet); W(btnRepos); W(btnAttack); W(btnShowList); W(btnReset);
+    W(btnSSet); W(btnRepos); W(btnAttack); W(btnShowList); W(btnOperation); W(btnReset);
 #undef W
     return out;
 }

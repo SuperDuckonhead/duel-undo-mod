@@ -16,7 +16,28 @@
 namespace ygo {
 
 bool ClientField::OnEvent(const irr::SEvent& event) {
- if(event.EventType==irr::EET_GUI_EVENT && event.GUIEvent.EventType==irr::gui::EGET_BUTTON_CLICKED && event.GUIEvent.Caller->getID()==BUTTON_DUEL_UNDO){if(auto room=DuelClient::Room())room->RequestUndo();else SingleMode::RequestUndo(0);return true;}
+ auto requestUndo=[] {if(auto room=DuelClient::Room())return room->RequestUndo();return SingleMode::RequestUndo(0);};
+ // Use Irrlicht's native repeat flag; focus changes can lose a key-up event.
+ if(event.EventType==irr::EET_KEY_INPUT_EVENT && event.KeyInput.Key==irr::KEY_KEY_Z &&
+    event.KeyInput.PressedDown && event.KeyInput.Control && !event.KeyInput.Shift) {
+   bool textFocus=false,modalFocus=false;
+   for(auto focus=mainGame->env->getFocus();focus;focus=focus->getParent()) {
+    textFocus|=focus->getType()==irr::gui::EGUIET_EDIT_BOX;
+    modalFocus|=focus->getType()==irr::gui::EGUIET_MODAL_SCREEN;
+   }
+   if(!textFocus) {
+    if(event.KeyInput.AutoRepeat)return true;
+    const bool blocked=!mainGame->dInfo.isStarted || mainGame->dInfo.isReplay || mainGame->dInfo.isFinished ||
+     mainGame->is_building || modalFocus || !mainGame->fadingList.empty() ||
+     mainGame->wMessage->isVisible() || mainGame->wSurrender->isVisible() || mainGame->wReplaySave->isVisible();
+    auto room=DuelClient::Room();
+    const bool available=room ? !room->InputPaused() && room->CanUndo() :
+     mainGame->dInfo.isSingleMode && !SingleMode::InputPaused() && SingleMode::CanUndo(0);
+    if(!blocked && available) {requestUndo();return true;}
+   }
+   // Unhandled shortcuts retain the original text/paused GUI dispatch below.
+ }
+ if(event.EventType==irr::EET_GUI_EVENT && event.GUIEvent.EventType==irr::gui::EGET_BUTTON_CLICKED && event.GUIEvent.Caller->getID()==BUTTON_DUEL_UNDO){requestUndo();return true;}
 
  if(auto room=DuelClient::Room()){
   if(event.EventType==irr::EET_GUI_EVENT&&event.GUIEvent.EventType==irr::gui::EGET_BUTTON_CLICKED){auto id=event.GUIEvent.Caller->getID();if(id==BUTTON_UNDO_APPROVE||id==BUTTON_UNDO_DECLINE){room->Consent(id==BUTTON_UNDO_APPROVE);return true;}}
