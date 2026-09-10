@@ -33,3 +33,5 @@ Release 增量构建：out/replay-save-20260910/build.log，既有 game.cpp 格�
 四条原生流程回归 save.log、cancel.log、edit-save.log、auto-save.log 均退出 0；证据位于 out/replay-save-20260910。保存分支可重新打开合法的撤回录像，取消不写文件，自动保存无需保存弹窗且最终确认可操作，四条路径均正常返回菜单。shortcut.log 和 room.log 也退出 0，分别覆盖现有 Ctrl+Z / Single / 编辑器行为和恢复事务、旧响应、终局提交保护。独立复核未发现阻塞问题。
 
 这是单独记录的本地开发更新；未重写此前候选包或其构建清单。安装需在旧客户端关闭后执行，并保留前一版回退副本。
+
+安装已完成：源码提交 19938eafa22cb4409fa9bbdd9e0efbf7edc07401 对应上述客户端产物。out/local-fixes/replay-save-19938ea/installation.json 记录替换与回退，原目录 undo-mod/local-fix.json 已更新。实际安装 EXE 从无关工作目录启动，进程 170580 正常关闭并退出 0；installed-smoke.json 确认原程序、WindBot、数据库与配置等 12 个保留文件的哈希未改变。前一版 034d063f… 的 EXE 和覆盖记录已保留，可逐级回退。
