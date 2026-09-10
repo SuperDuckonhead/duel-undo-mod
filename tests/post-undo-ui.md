@@ -22,3 +22,5 @@ Ctrl+Z 在 event_handler.cpp 调用与“撤回选择”按钮相同的入口。
 ## 范围
 
 修正本次已定位的悬停闪退和同类菜单地址问题，并加入快捷键。不宣称所有卡组或全部交互零故障。此前标记的原生 Consent、部分阻塞确认、完整两设备 LAN 与最终发行验收仍未关闭；本轮是可追溯的本地开发更新，不改写历史候选包的干净构建证明。
+
+本地安装已完成：修正源码提交 cfbc01ea9ecb5c9a60f6870957f526879cd3764e；记录 out/local-fixes/post-undo-cfbc01e/installation.json 保留此前开局修复 EXE 和上一份本地覆盖说明，可逐级回退。实际原目录 EXE 从无关工作目录启动、正常关闭，进程 157868 退出 0（installed-smoke.json）；客户端哈希与上述最终产物一致。原程序、WindBot、数据库及配置校验保持不变，system-undo.conf 前后均为 664352a2f987ba29bb4e4c515c930071f28e36933541219a58bb05add66c000b。
