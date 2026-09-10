@@ -19,6 +19,7 @@
 #include <iostream>
 #include <thread>
 #include <winsock2.h>
+#include <windows.h>
 using namespace ygo;
 using namespace undo;
 static Game game;
@@ -59,6 +60,7 @@ static void put(Bytes &b, uint64_t n, unsigned width) {
 #include "room_client_pair.h"
 #include "room_client_timer.h"
 int main(int argc, char **argv) {
+  SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
   try {
     mainGame = &game;
     CHECK(game.Initialize(std::filesystem::current_path()));

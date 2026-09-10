@@ -7,12 +7,17 @@ namespace irr { namespace io { class IFileSystem; } }
 namespace ygo { class DataManager; }
 namespace undo {
 Digest Sha256(const Bytes& bytes);
+// Practice keeps the historical full snapshot, including scenario dependencies.
+// Duel never enumerates single/: unrelated practice files cannot block a room.
+enum class ResourceScope { Duel, Practice };
 // Immutable resolved executable resources. No read path ever falls back to disk.
 class ResourceView {
 public:
- static std::shared_ptr<const ResourceView> Capture(const std::string& runtimeRoot);
  static std::shared_ptr<const ResourceView> Capture(const std::string& runtimeRoot,
-   const ygo::DataManager& data, bool preferExpansionScript);
+   ResourceScope scope = ResourceScope::Practice);
+ static std::shared_ptr<const ResourceView> Capture(const std::string& runtimeRoot,
+   const ygo::DataManager& data, bool preferExpansionScript,
+   ResourceScope scope = ResourceScope::Practice);
  const Bytes& Read(const std::string& logicalPath) const;
  const card_data& Card(std::uint32_t code) const;
  Digest Fingerprint() const { return digest_; }

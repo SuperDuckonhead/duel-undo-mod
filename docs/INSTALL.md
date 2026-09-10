@@ -2,13 +2,15 @@
 
 这是沿用原游戏资源的独立撤回版。将候选 ZIP 解压到原 ygopro.exe 所在目录，再启动 ygopro-undo.exe。WindBot-undo.exe 由客户端自动启动。
 
-新增程序文件只有：
+新增程序和卸载工具：
 
 - ygopro-undo.exe
 - WindBot/WindBot-undo.exe
 - WindBot/WindBot-undo.exe.config
 - WindBot/undo-deps/x86/sqlite3.dll
 - WindBot/undo-deps/x64/sqlite3.dll
+- Uninstall-UndoMod.cmd
+- undo-mod/Uninstall-UndoMod.ps1
 
 undo-mod 目录附带说明、许可文本和构建清单。原 pics、deck、script、expansions、pack、cards.cdb、字体/材质/音效，以及 WindBot 的 Decks、Dialogs、bots.json、原配置继续从原位置读取，无需复制。保留原 ygopro.exe、Bot.exe、WindBot.exe 及原 DLL；不要改名覆盖它们。如果同名新增文件已存在，先核对旧 mod 清单和哈希，避免覆盖来历不明的文件。
 
@@ -24,13 +26,25 @@ undo-mod 目录附带说明、许可文本和构建清单。原 pics、deck、sc
 
 朋友局域网：双方使用相同候选构建和兼容决斗资源，房主不勾本机开关，朋友输入房主的局域网 IPv4 地址和端口加入。每次请求显示公开的目标步骤，对方同意后恢复；拒绝或 30 秒内未同意则取消。两端确认完成后才可继续出牌。
 
+普通双人局、本机双开和 AI 房间不要求 `single/` 练习脚本相同；该目录不参与这些房间的资源扫描。双方仍需使用相同客户端、相容的卡片数据、效果脚本、扩展加载设置与禁限卡表。卡组、卡图和音效可以不同。单人练习继续固定场景脚本及其依赖，录像按保存的场景信息选用资源范围。更新此修复时双方应同时使用同一个新包。
+
 建房和 AI 页面保留“不检查卡组”“不洗切卡组”，可分别或同时启用；本局撤回沿用开局设置。首版只开放两人单局，Match、Tag 和观战有明确拒绝提示。
 
 恢复失败但尚未提交时保留原局；若提交结果不确定，房间会暂停，此时结束该局重新开局。对局结束后的录像只保存最终保留分支。撤回不能消除玩家已经看到的信息，因此适用于练习及朋友约定的对局。
 
 ## 卸载
 
-关闭新版客户端及其 AI。按随包构建清单逐项删除上述五个程序文件和本次新增的 undo-mod 文档/许可/构建清单。不要递归删除 WindBot 或共享资源目录。system-undo.conf 和 undo-logs 可自愿保留或另行删除；卡组、原配置和原程序保留。之后继续启动原 ygopro.exe。
+1. 关闭 `ygopro-undo.exe` 和适配的 `WindBot-undo.exe`。
+2. 双击游戏目录中的 `Uninstall-UndoMod.cmd`，核对显示的游戏路径与待移除清单；默认取消，确认后才执行卸载。
+3. 工具先将待移除文件备份到游戏目录的 `undo-mod-backups/` 下，再逐项移除清单内且校验值相符的 mod 文件。若文件被占用、路径或清单异常，则停止并说明原因。
+
+卸载默认保留 `system-undo.conf`、`undo-logs/`、卡组、录像、卡图、脚本、数据库及原程序。自行修改的文件和清单外文件保留，工具会报告未移除项，不会递归删除整个 `WindBot` 或共享目录。卸载后启动原 `ygopro.exe` 即可。
+
+需要恢复时，关闭相关程序，将卸载备份中 `files/` 里面的内容按原相对路径复制回游戏目录。较旧安装包没有卸载入口，可使用新工具的只读预览核对旧构建清单；缺失或无效的清单不会被当作可以批量删除的依据。开发者预览示例：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Uninstall-UndoMod.ps1 -RuntimeRoot F:/MyCardLibrary/ygopro -Preview
+```
 
 ## 两台电脑候选验收
 

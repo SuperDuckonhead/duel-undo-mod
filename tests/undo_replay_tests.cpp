@@ -4,14 +4,20 @@
 #include "config.h"
 #include "deck_manager.h"
 #include "common.h"
+#include "data_manager.h"
+#include <IFileSystem.h>
+#include <windows.h>
 #include <iostream>
+namespace irr { namespace io { IFileSystem* createFileSystem(); } }
 using namespace undo;
 // This codec test never exports a deck; fail if the unrelated GUI export path is reached.
 namespace ygo { bool DeckManager::SaveDeckArray(const DeckArray&,const wchar_t*) { throw std::runtime_error("Unexpected deck export in replay codec test"); } }
 static void waiting(const Boundary& b){CHECK(b.kind==BoundaryKind::AwaitResponse&&!b.rejectedResponse);}
 int main(){try{
+ SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
  const std::string root=UNDO_REPLAY_FIXTURE;fixture::database(root);
  std::filesystem::remove(std::filesystem::u8path(root+"/script/changed.lua")); // Reset only this owned fault fixture.
+ std::filesystem::remove(std::filesystem::u8path(root+"/single/oversized.bin"));
  for(auto f:{"constant.lua","utility.lua","procedure.lua"})fixture::WriteFixtureFile(root+"/script/"+f,{});
  fixture::WriteFixtureFile(root+"/single/branch.lua",fixture::bytes(R"lua(
  local e=Effect.GlobalEffect()
@@ -83,6 +89,52 @@ int main(){try{
  auto oldChecksum=Sha256(Bytes(oldSingle.begin()+sizeof(oldHeader),oldSingle.end()-32));std::copy(oldChecksum.begin(),oldChecksum.end(),oldSingle.end()-32);
  ygo::Replay bodyV1;CHECK(bodyV1.LoadUndoReplay(oldSingle));CHECK(bodyV1.UndoInitial().seed==initial.seed);
  oldHeader.base.flag&=~REPLAY_SINGLE_MODE;std::memcpy(oldSingle.data(),&oldHeader,sizeof(oldHeader));CHECK(!bodyV1.LoadUndoReplay(oldSingle));
+
+ // A normal duel saved with the smaller resource scope must play while local
+ // practice files differ. Older full-snapshot duel replays still match exactly.
+ std::unique_ptr<irr::io::IFileSystem,void(*)(irr::io::IFileSystem*)> files(
+  irr::io::createFileSystem(),[](auto* p){if(p)p->drop();});CHECK(files);
+ ygo::DataManager data;data.IrrFileSystem=files.get();CHECK(data.LoadDB((root+"/cards.cdb").c_str()));
+ auto normalInitial=initial;normalInitial.scenarioName.clear();normalInitial.scenarioParameters.clear();
+ auto normalResources=ResourceView::Capture(root,data,false,ResourceScope::Duel);
+ normalInitial.resourceDigest=normalResources->Fingerprint();
+ ygo::Replay normal;normal.RecordUndoDuel(normalInitial,{},L"host",L"peer");
+ auto normalCaptured=normal.CaptureUndoResources(root,data,false);
+ auto normalCore=normal.CreateUndoDriver(normalCaptured);
+ waiting(normalCore->Advance());
+ auto oldNormalInitial=normalInitial;oldNormalInitial.resourceDigest=resources->Fingerprint();
+ ygo::Replay oldNormal;oldNormal.RecordUndoDuel(oldNormalInitial,{},L"host",L"peer");
+ auto oldCaptured=oldNormal.CaptureUndoResources(root,data,false);
+ CHECK(oldCaptured->Read("single/branch.lua")==resources->Read("single/branch.lua"));
+ waiting(oldNormal.CreateUndoDriver(oldCaptured)->Advance());
+ // Saved scenarioName controls scope even in a non-SINGLE network replay.
+ for(auto* practice:{&loaded,&bodyV1,&network}) {
+  auto captured=practice->CaptureUndoResources(root,data,false);
+  CHECK(captured->Read("single/branch.lua")==resources->Read("single/branch.lua"));
+  CHECK(SamePosition(practice->CreateUndoDriver(captured)->Advance().checkpoint,first.checkpoint));
+ }
+ const auto frozenScenario=resources->Read("single/branch.lua");
+ const auto frozenUtility=resources->Read("script/utility.lua");
+ fixture::WriteFixtureFile(root+"/single/branch.lua",fixture::bytes("error('changed practice scenario')"));
+ normalCaptured=normal.CaptureUndoResources(root,data,false);
+ waiting(normal.CreateUndoDriver(normalCaptured)->Advance());
+ rejected=false;try{loaded.CaptureUndoResources(root,data,false);}catch(const std::exception&){rejected=true;}CHECK(rejected);
+ rejected=false;try{oldNormal.CaptureUndoResources(root,data,false);}catch(const std::exception&){rejected=true;}CHECK(rejected);
+ fixture::WriteFixtureFile(root+"/script/utility.lua",fixture::bytes("error('changed framework dependency')"));
+ rejected=false;try{normal.CaptureUndoResources(root,data,false);}catch(const std::exception&){rejected=true;}CHECK(rejected);
+ // A retained practice session rebuilds from its original scenario and Lua
+ // dependencies even after both files have become unusable on disk.
+ auto frozenPractice=Rebuild(initial,resources,history.Records(),1,second.checkpoint);
+ CHECK(SamePosition(frozenPractice->Current().checkpoint,second.checkpoint));
+ CHECK(resources->Read("single/branch.lua")==frozenScenario);
+ CHECK(resources->Read("script/utility.lua")==frozenUtility);
+ fixture::WriteFixtureFile(root+"/single/branch.lua",frozenScenario);
+ fixture::WriteFixtureFile(root+"/script/utility.lua",frozenUtility);
+ fixture::WriteFixtureFile(root+"/single/oversized.bin",Bytes(0x100000,1));
+ normalCaptured=normal.CaptureUndoResources(root,data,false);
+ waiting(normal.CreateUndoDriver(normalCaptured)->Advance());
+ rejected=false;try{loaded.CaptureUndoResources(root,data,false);}catch(const std::exception&){rejected=true;}CHECK(rejected);
+ std::filesystem::remove(std::filesystem::u8path(root+"/single/oversized.bin"));
  // Decode every truncated file prefix, reject suffixes and both body/header tampering.
  std::ifstream fullFile("replay/branch.yrp",std::ios::binary);Bytes full((std::istreambuf_iterator<char>(fullFile)),{});fullFile.close();
  for(std::size_t cut=0;cut<full.size();++cut){fixture::WriteFixtureFile("replay/truncated.yrp",Bytes(full.begin(),full.begin()+cut));ygo::Replay broken;CHECK(!broken.OpenReplay(L"truncated.yrp"));}

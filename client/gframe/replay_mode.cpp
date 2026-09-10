@@ -196,7 +196,7 @@ bool ReplayMode::StartDuel() {
 	}
 	    if(rh.flag&REPLAY_UNDO_CORE) {
         try {
-            if(!undoReplayResources)undoReplayResources=undo::ResourceView::Capture(mainGame->runtime_root.u8string(),dataManager,mainGame->gameConf.prefer_expansion_script);
+            if(!undoReplayResources)undoReplayResources=cur_replay.CaptureUndoResources(mainGame->runtime_root.u8string(),dataManager,mainGame->gameConf.prefer_expansion_script);
             undoReplayDriver=cur_replay.CreateUndoDriver(undoReplayResources);
             const auto& initial=cur_replay.UndoInitial();
             mainGame->dInfo.duel_rule=initial.duelOptions>>16;

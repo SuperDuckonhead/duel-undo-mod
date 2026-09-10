@@ -127,7 +127,7 @@ CaptureRoomConfig(ygo::DataManager &data, const std::string &runtimeRoot,
   const auto root =
       std::filesystem::absolute(std::filesystem::u8path(runtimeRoot))
           .lexically_normal();
-  config->resources = data.CaptureResources(root.u8string(), prefer);
+  config->resources = data.CaptureResources(root.u8string(), prefer, ResourceScope::Duel);
   std::vector<wchar_t> exe(32768);
   auto count = GetModuleFileNameW(nullptr, exe.data(), DWORD(exe.size()));
   if (!count || count >= exe.size())

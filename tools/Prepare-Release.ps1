@@ -44,6 +44,8 @@ function Release-Plan {
   'WindBot/WindBot-undo.exe.config'='out/bot/Release/WindBot-undo.exe.config'
   'WindBot/undo-deps/x86/sqlite3.dll'='out/bot/Release/undo-deps/x86/sqlite3.dll'
   'WindBot/undo-deps/x64/sqlite3.dll'='out/bot/Release/undo-deps/x64/sqlite3.dll'
+  'Uninstall-UndoMod.cmd'='tools/Uninstall-UndoMod.cmd'
+  'undo-mod/Uninstall-UndoMod.ps1'='tools/Uninstall-UndoMod.ps1'
  }
  foreach($name in @('BUILD','INSTALL','COMPATIBILITY','RELEASE-NOTES','THIRD-PARTY')){$map.Add("undo-mod/$name.md","docs/$name.md")}
  $licenses=Join-Path $repo 'docs/licenses';Assert-PackagePath $licenses $repo

@@ -48,3 +48,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Package.ps1 -Manif
 ```
 
 Package 拒绝已存在的 ZIP，重跑需另取新文件名。release-files.json 是精确文件/哈希清单，不可用旧版字符串白名单替代。构建清单标注源码提交、依赖及产物哈希；ZIP 条目必须与清单严格一致。源码和测试脚本在本仓库维护；候选包与正式 Release 分别按实际构建和验收结果发布。
+
+发行计划同时收录 `tools/Uninstall-UndoMod.cmd` 与 `tools/Uninstall-UndoMod.ps1`，安装目标分别为游戏根目录及 `undo-mod/`。两者与其他产物一样写入构建清单并校验哈希。卸载回归只在 `out/` 下的临时安装目录执行：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/uninstall_tests.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/package_layout_tests.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/prepare_release_tests.ps1
+```

@@ -121,6 +121,20 @@ undo::Bytes Replay::ExportUndoReplay() const {
 const undo::InitialState& Replay::UndoInitial() const {
  require((pheader.base.flag&REPLAY_UNDO_CORE)!=0,"Legacy replay has no undo initialization");return undo_initial_;
 }
+std::shared_ptr<const undo::ResourceView> Replay::CaptureUndoResources(const std::string& root,const DataManager& data,bool prefer) const {
+ const auto& initial=UndoInitial();
+ const auto scope=initial.scenarioName.empty()?undo::ResourceScope::Duel:undo::ResourceScope::Practice;
+ auto resources=undo::ResourceView::Capture(root,data,prefer,scope);
+ if(resources->Fingerprint()==initial.resourceDigest)return resources;
+ // Old normal-duel recordings used the full practice snapshot. Accept that
+ // layout only when its complete original digest still matches; never weaken
+ // the fingerprint or use this fallback for a newly matching duel snapshot.
+ if(scope==undo::ResourceScope::Duel) {
+  resources=undo::ResourceView::Capture(root,data,prefer,undo::ResourceScope::Practice);
+  if(resources->Fingerprint()==initial.resourceDigest)return resources;
+ }
+ throw std::runtime_error("Undo replay resource digest mismatch");
+}
 std::unique_ptr<undo::CoreDriver> Replay::CreateUndoDriver(std::shared_ptr<const undo::ResourceView> resources) const {
  return undo::CoreDriver::Create(UndoInitial(),std::move(resources));
 }

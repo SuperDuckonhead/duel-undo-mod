@@ -65,6 +65,7 @@ public:
     undo::Bytes ExportUndoReplay() const;
     bool LoadUndoReplay(const undo::Bytes&);
     const undo::InitialState& UndoInitial() const;
+    std::shared_ptr<const undo::ResourceView> CaptureUndoResources(const std::string& root, const DataManager&, bool preferExpansionScript) const;
     std::unique_ptr<undo::CoreDriver> CreateUndoDriver(std::shared_ptr<const undo::ResourceView>) const;
     bool ReadUndoResponse(const undo::Checkpoint&, undo::Bytes&);
 	void WriteHeader(ExtendedReplayHeader& header);

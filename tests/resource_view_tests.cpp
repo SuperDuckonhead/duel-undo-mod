@@ -20,11 +20,20 @@ static void junction(const std::filesystem::path& link,const std::filesystem::pa
 }
 int main() {
  try {
+  SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
   const std::string root=UNDO_RESOURCE_FIXTURE;
   fixture::database(root);
   std::filesystem::remove(std::filesystem::u8path(root+"/script/created-after-capture.lua"));
   fixture::WriteFixtureFile(root+"/script/c900000001.lua",{1,2,3});
+  fixture::WriteFixtureFile(root+"/single/dependencies/helper.dat",fixture::bytes("practice dependency"));
   auto view=ResourceView::Capture(root);auto original=view->Read("script/c900000001.lua");
+  auto practice=ResourceView::Capture(root,ResourceScope::Practice);
+  CHECK(practice->Fingerprint()==view->Fingerprint());
+  CHECK(practice->Read("single/dependencies/helper.dat")==fixture::bytes("practice dependency"));
+  fixture::WriteFixtureFile(root+"/single/dependencies/helper.dat",fixture::bytes("changed practice dependency"));
+  CHECK(practice->Read("single/dependencies/helper.dat")==fixture::bytes("practice dependency"));
+  CHECK(practice->Fingerprint()!=ResourceView::Capture(root,ResourceScope::Practice)->Fingerprint());
+  fixture::WriteFixtureFile(root+"/single/dependencies/helper.dat",fixture::bytes("practice dependency"));
   fixture::WriteFixtureFile(root+"/pics/900000001.jpg",{9,8,7});
   CHECK(view->Fingerprint()==ResourceView::Capture(root)->Fingerprint());
   fixture::sql(root+"/cards.cdb","PRAGMA user_version=42; VACUUM;");

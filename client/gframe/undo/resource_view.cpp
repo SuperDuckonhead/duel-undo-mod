@@ -71,7 +71,7 @@ std::optional<Bytes> ResourceView::Resolve(const std::string& root,irr::io::IFil
  if(!prefer) if(auto b=loose(base/"expansions"/fs::u8path(n))) return b;
  return std::nullopt;
 }
-std::shared_ptr<const ResourceView> ResourceView::Capture(const std::string& root) {
+std::shared_ptr<const ResourceView> ResourceView::Capture(const std::string& root,ResourceScope scope) {
  std::unique_ptr<irr::io::IFileSystem,void(*)(irr::io::IFileSystem*)> files(irr::io::createFileSystem(),[](auto* p){if(p)p->drop();});
  if(!files) throw std::runtime_error("Irrlicht filesystem creation failed");
  ygo::DataManager data; data.IrrFileSystem=files.get();
@@ -93,14 +93,15 @@ std::shared_ptr<const ResourceView> ResourceView::Capture(const std::string& roo
   std::ifstream f(base/config); std::string line;
   while(std::getline(f,line)) { int v; if(std::sscanf(line.c_str(),"prefer_expansion_script = %d",&v)==1)prefer=v!=0; }
  }
- return Capture(root,data,prefer);
+ return Capture(root,data,prefer,scope);
 }
-std::shared_ptr<const ResourceView> ResourceView::Capture(const std::string& root,const ygo::DataManager& data,bool prefer) {
+std::shared_ptr<const ResourceView> ResourceView::Capture(const std::string& root,const ygo::DataManager& data,bool prefer,ResourceScope scope) {
  auto result=std::shared_ptr<ResourceView>(new ResourceView); std::set<std::string> names;
  const auto base=fs::absolute(fs::u8path(root)).lexically_normal(); auto* files=data.IrrFileSystem;
  result->source_root_=base.u8string();
  result->priority_.push_back(prefer ? "expansion,archives,loose" : "archives,loose,expansion");
  for(const char* folder:{"script","expansions/script","single"}) {
+  if(scope==ResourceScope::Duel && std::string(folder)=="single")continue;
   auto path=base/folder; if(!fs::exists(path))continue;
   for(auto& entry:fs::recursive_directory_iterator(path)) if(entry.is_regular_file()) {
    auto n=logical(entry.path().lexically_relative(base).generic_u8string());

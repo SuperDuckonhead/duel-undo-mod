@@ -32,6 +32,7 @@ function Assert-PackageRelative([string]$Path) {
 function Assert-PackageDestination([string]$Path) {
     Assert-PackageRelative $Path
     $fixed=@('ygopro-undo.exe','WindBot/WindBot-undo.exe','WindBot/WindBot-undo.exe.config','WindBot/undo-deps/x86/sqlite3.dll','WindBot/undo-deps/x64/sqlite3.dll',
+        'Uninstall-UndoMod.cmd','undo-mod/Uninstall-UndoMod.ps1',
         'undo-mod/BUILD.md','undo-mod/INSTALL.md','undo-mod/COMPATIBILITY.md','undo-mod/RELEASE-NOTES.md','undo-mod/THIRD-PARTY.md','undo-mod/build-manifest.json','undo-mod/release-files.json')
     if($fixed -cnotcontains $Path -and $Path -cnotmatch '^undo-mod/licenses/[A-Za-z0-9][A-Za-z0-9._-]{0,63}[.]txt$'){throw "Destination is not an allowed mod file: $Path"}
 }

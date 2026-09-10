@@ -505,7 +505,10 @@ unsigned char* DataManager::ScriptReaderEx(const char* script_path, int* slen) {
  } catch (const std::exception&) { return nullptr; }
 }
 std::shared_ptr<const undo::ResourceView> DataManager::CaptureResources(const std::string& root, bool prefer) const {
- return undo::ResourceView::Capture(root, *this, prefer);
+ return CaptureResources(root, prefer, undo::ResourceScope::Practice);
+}
+std::shared_ptr<const undo::ResourceView> DataManager::CaptureResources(const std::string& root, bool prefer, undo::ResourceScope scope) const {
+ return undo::ResourceView::Capture(root, *this, prefer, scope);
 }
 unsigned char* DataManager::ReadScriptFromIrrFS(const char* script_name, int* slen) {
 	auto reader = dataManager.IrrFileSystem->createAndOpenFile(script_name);

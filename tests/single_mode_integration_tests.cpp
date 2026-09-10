@@ -14,6 +14,7 @@
 #include <iomanip>
 #include <iostream>
 #include <thread>
+#include <windows.h>
 using namespace ygo;
 static Game game;
 // Actual GUI factory failure during hidden widget construction, after the
@@ -97,6 +98,7 @@ static bool idle(const std::shared_ptr<undo::SingleUndo> &s,
          !SingleMode::InputPaused() && game.btnEP->isVisible();
 }
 int main() {
+  SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
   try {
     auto started=std::chrono::steady_clock::now();std::ofstream evidence("c4-evidence.txt");
     mainGame = &game;

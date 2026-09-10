@@ -173,8 +173,8 @@ static int aiGame() {
         !(replay.pheader.base.flag & REPLAY_SINGLE_MODE));
   CHECK(replay.UndoInitial().noCheckDeck && replay.UndoInitial().noShuffleDeck);
   // The replay begins at the retained pre-A choice and keeps B's summon.
-  auto resources = dataManager.CaptureResources(
-      std::filesystem::current_path().u8string(), false);
+  auto resources = replay.CaptureUndoResources(
+      std::filesystem::current_path().u8string(), dataManager, false);
   auto core = replay.CreateUndoDriver(resources);
   auto boundary = core->Advance();
   Bytes response;

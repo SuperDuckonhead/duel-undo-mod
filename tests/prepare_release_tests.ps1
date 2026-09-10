@@ -25,6 +25,8 @@ bot-tests/obj/"
  Write-Fixture (Join-Path $root 'release-files.json') '{"oldGeneratedManifest":true}'
  foreach($doc in @('BUILD','INSTALL','COMPATIBILITY','RELEASE-NOTES','THIRD-PARTY')){Write-Fixture (Join-Path $root ('docs/'+$doc+'.md')) ('fixture '+$doc)}
  Write-Fixture (Join-Path $root 'docs/licenses/MIT.txt') 'fixture license text'
+ Write-Fixture (Join-Path $root 'tools/Uninstall-UndoMod.cmd') '@echo off'
+ Write-Fixture (Join-Path $root 'tools/Uninstall-UndoMod.ps1') 'Write-Output "controlled uninstall fixture"'
  $stub=@'
 param([string]$Target,[string]$Configuration)
 $ErrorActionPreference='Stop'
@@ -49,12 +51,14 @@ Check (Reject {& $prepare} '*-Build*') 'default must not attest an unproven buil
 Check (-not (Test-Path (Join-Path $ok 'out/release'))) 'default rejection does not create output'
 $result=& $prepare -Build
 $manifest=Read-PackageManifest (Join-Path $ok 'release-files.json') $ok
-Check ($manifest.Files.Count -eq 12) 'exact five artifacts, five docs, license and build manifest'
+Check ($manifest.Files.Count -eq 14) 'exact five artifacts, two uninstall tools, five docs, license and build manifest'
+Check ($manifest.Files.destination -contains 'Uninstall-UndoMod.cmd') 'release contains uninstall launcher'
+Check ($manifest.Files.destination -contains 'undo-mod/Uninstall-UndoMod.ps1') 'release contains standalone uninstall implementation'
 Check ($manifest.Files.source -notcontains 'WindBot/WindBot.exe') 'ordinary bot executable absent'
 $record=Read-PackageJson (Join-Path $ok 'out/release/undo-mod/build-manifest.json')
 Check ($record.sourceCommit -eq (& git -C $ok rev-parse HEAD)) 'manifest binds actual fixture commit'
 Check ($record.build.target -eq 'All' -and $record.build.configuration -eq 'Release') 'build arguments retained'
-Check ($record.artifacts.Count -eq 11) 'build manifest excludes its own digest'
+Check ($record.artifacts.Count -eq 13) 'build manifest includes both uninstall tools and excludes its own digest'
 $before=(Get-Item (Join-Path $ok 'release-files.json')).LastWriteTimeUtc.Ticks
 & $prepare|Out-Null
 Check ((Get-Item (Join-Path $ok 'release-files.json')).LastWriteTimeUtc.Ticks -eq $before) 'default verification is read-only'

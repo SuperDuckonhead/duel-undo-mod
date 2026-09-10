@@ -205,7 +205,7 @@ void SingleMode::SinglePlayThread() {
     auto runtime = std::make_shared<SingleRuntime>();
     auto resources = dataManager.CaptureResources(
         mainGame->runtime_root.u8string(),
-        mainGame->gameConf.prefer_expansion_script != 0);
+        mainGame->gameConf.prefer_expansion_script != 0, undo::ResourceScope::Practice);
     undo::InitialState initial;
     initial.seed.resize(SEED_COUNT);
     std::random_device random;

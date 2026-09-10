@@ -4,7 +4,7 @@
 #include <unordered_map>
 #include <vector>
 #include <memory>
-namespace undo { class ResourceView; }
+namespace undo { class ResourceView; enum class ResourceScope; }
 #include <string>
 #include "../ocgcore/card_data.h"
 
@@ -81,6 +81,7 @@ class DataManager {
 public:
 	DataManager();
  std::shared_ptr<const undo::ResourceView> CaptureResources(const std::string& root, bool preferExpansionScript) const;
+ std::shared_ptr<const undo::ResourceView> CaptureResources(const std::string& root, bool preferExpansionScript, undo::ResourceScope scope) const;
 	bool ReadDB(sqlite3* pDB);
 	bool LoadDB(const char* file);
 	bool LoadStrings(const char* file);

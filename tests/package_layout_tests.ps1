@@ -10,7 +10,7 @@ $script:checks=0
 function Check([bool]$Value,[string]$Name){if(-not $Value){throw $Name};++$script:checks}
 function Rejects([scriptblock]$Action,[string]$Pattern='*'){try{& $Action | Out-Null;return $false}catch{return $_.Exception.Message -like $Pattern}}
 function SaveJson($Value,[string]$Name='manifest.json'){$path=Join-Path $fixture $Name;[IO.File]::WriteAllText($path,($Value | ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false));return $path}
-$destinations=@('ygopro-undo.exe','WindBot/WindBot-undo.exe','WindBot/WindBot-undo.exe.config','WindBot/undo-deps/x86/sqlite3.dll','WindBot/undo-deps/x64/sqlite3.dll','undo-mod/THIRD-PARTY.md','undo-mod/licenses/SQLite.txt')
+$destinations=@('ygopro-undo.exe','WindBot/WindBot-undo.exe','WindBot/WindBot-undo.exe.config','WindBot/undo-deps/x86/sqlite3.dll','WindBot/undo-deps/x64/sqlite3.dll','Uninstall-UndoMod.cmd','undo-mod/Uninstall-UndoMod.ps1','undo-mod/THIRD-PARTY.md','undo-mod/licenses/SQLite.txt')
 $entries=@(foreach($destination in $destinations){$path=Join-Path $source $destination;[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path)) | Out-Null;[IO.File]::WriteAllText($path,('controlled package fixture '+$destination));[ordered]@{source=$id+'/'+$destination;destination=$destination;sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant();license='fixture-only'}})
 $manifest=SaveJson ([ordered]@{schemaVersion=1;files=$entries})
 $original=@('ygopro.exe','WindBot/WindBot.exe','system.conf','cards.cdb','pics/sentinel.jpg','deck/sentinel.ydk')
