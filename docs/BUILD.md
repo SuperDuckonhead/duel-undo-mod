@@ -21,6 +21,7 @@ Bootstrap 只下载并校验锁定的工具及库，不导入覆盖已修改的�
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Prepare-SmokeRuntime.ps1 -RuntimeRoot F:/MyCardLibrary/ygopro -OutputName baseline-runtime
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Test-SingleIntegration.ps1 -Configuration Release -RuntimeRoot F:/MyCardLibrary/ygopro
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Test-RoomClientIntegration.ps1 -Configuration Release -Pair
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Test-RoomClientIntegration.ps1 -Configuration Release -TimedPair
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Test-RoomClientIntegration.ps1 -Configuration Release -FreePair
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Test-RoomClientIntegration.ps1 -Configuration Release -Ai
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Test-UndoBotHost.ps1 -Configuration Release -RuntimeRoot F:/MyCardLibrary/ygopro
@@ -46,4 +47,4 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Test-InstallLayout
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Package.ps1 -Manifest release-files.json -OutFile out/packages/ygopro-undo-candidate.zip
 ```
 
-Package 拒绝已存在的 ZIP，重跑需另取新文件名。release-files.json 是精确文件/哈希清单，不可用旧版字符串白名单替代。构建清单标注源码提交、依赖及产物哈希；ZIP 条目必须与清单严格一致。当前工作只准备本地源码与候选 ZIP，不创建远程仓库或发布 Release。
+Package 拒绝已存在的 ZIP，重跑需另取新文件名。release-files.json 是精确文件/哈希清单，不可用旧版字符串白名单替代。构建清单标注源码提交、依赖及产物哈希；ZIP 条目必须与清单严格一致。源码和测试脚本在本仓库维护；候选包与正式 Release 分别按实际构建和验收结果发布。
