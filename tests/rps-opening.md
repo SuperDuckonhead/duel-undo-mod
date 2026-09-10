@@ -33,3 +33,5 @@ tools/Test-RoomMainLoop.ps1 用独立隐藏窗口、真实 Game::MainLoop、正�
 原候选 1cd153e 的 ZIP、源码包和安装收据作为历史证据保留。本轮只更新本机开发修复版，不将旧候选的构建清单改写成新程序的发行证明。安装前保留旧 EXE、配置哈希及来源记录；本地替换记录存放在 out/local-fixes。正常发行和两设备验收仍未完成。
 
 补充精确已安装 WindBot 的复核：使用 -BotDirectory F:/MyCardLibrary/ygopro/WindBot，first 与 unchecked 均退出 0（out/room-mainloop-installed-first-green.log、out/room-mainloop-installed-unchecked-green.log）。Bot SHA-256 为 6582a35a5a270c93854449ea135892f055ba731cbb370a2e26d80334e720ad61，与原安装相同。unchecked 这次实际经历两次平局后第三次分出胜负，正常进入首个人工回合。各自 GUID 证据目录中的 binding.json 记录测试与驱动源、相关生产源、测试 EXE、客户端 EXE 参考值、实际 Bot 及对象哈希；客户端 EXE 参考哈希不是声称测试进程就是发布 EXE。
+
+已安装源码修正提交 9437e47cfe0b1cdff53709a0507a1790ace4fc3c 对应的本地开发修复 EXE；安装记录为 out/local-fixes/rps-opening-9437e47/installation.json，旧候选 EXE 的回退副本在同目录。原安装 undo-mod/local-fix.json 明确说明该 EXE 覆盖与历史打包清单的区别。实际 F:/MyCardLibrary/ygopro/ygopro-undo.exe 从无关工作目录启动，进程 178124 正常关闭并退出 0；见同目录 installed-smoke.json。保留文件校验通过，system-undo.conf 前后 SHA-256 均为 664352a2f987ba29bb4e4c515c930071f28e36933541219a58bb05add66c000b。此启动检查不额外宣称完整真实菜单或原生对战验收通过。
