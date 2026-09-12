@@ -3136,7 +3136,10 @@ int32_t scriptlib::card_check_fusion_material(lua_State *L) {
 	uint8_t not_material = FALSE;
 	if(lua_gettop(L) > 4)
 		not_material = lua_toboolean(L, 5);
-	lua_pushboolean(L, pcard->fusion_check(pgroup, cg, chkf, not_material));
+	native_query_scope query(pcard->pduel, L, native_query_api::CheckFusion, pgroup ? &pgroup->container : nullptr, pcard);
+	int32_t result = pcard->fusion_check(pgroup, cg, chkf, not_material);
+	query.finish(pgroup ? &pgroup->container : nullptr, result);
+	lua_pushboolean(L, result);
 	return 1;
 }
 int32_t scriptlib::card_check_fusion_substitute(lua_State *L) {

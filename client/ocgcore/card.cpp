@@ -3037,7 +3037,9 @@ int32_t card::fusion_check(group* fusion_m, card* cg, uint32_t chkf, uint8_t not
 	pduel->game_field->core.reason_effect = peffect;
 	pduel->game_field->core.reason_player = peffect->get_handler_player();
 	pduel->game_field->core.not_material = not_material;
+	native_query_scope query(pduel, pduel->lua->current_state, native_query_api::FusionProcedure, matgroup ? &matgroup->container : nullptr, this);
 	int32_t res = pduel->lua->check_condition(peffect->condition, 4);
+	query.finish(matgroup ? &matgroup->container : nullptr, res);
 	pduel->game_field->core.reason_effect = oreason;
 	pduel->game_field->core.reason_player = op;
 	pduel->game_field->core.not_material = 0;

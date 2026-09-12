@@ -5,6 +5,7 @@
 #include "../../ocgcore/field.h"
 #include "../../ocgcore/interpreter.h"
 #include "../../ocgcore/ocgapi.h"
+#include "../../ocgcore/group.h"
 #include <algorithm>
 #include <stdexcept>
 
@@ -19,6 +20,11 @@ struct PoolQueryState {
  uint64_t invocation{};
  std::vector<ResponseRecord> records;
  std::shared_ptr<PoolQueryState> rollback;
+ bool observe{};
+ std::vector<PoolQueryObservation> observations;
+ std::vector<size_t> scopes;
+ std::map<Digest,uint64_t> scopeInvocations;
+ std::map<std::string,Digest> hashes;
 };
 namespace {
 void word(Bytes& out,uint64_t n) {for(unsigned i=0;i<8;++i)out.push_back(uint8_t(n>>(8*i)));}
@@ -37,7 +43,9 @@ bool same(const PoolQueryRequest& a,const PoolQueryRequest& b) {
   a.parameters==b.parameters && a.callState==b.callState && a.handler==b.handler &&
   a.effectRegistration==b.effectRegistration && a.invocation==b.invocation && a.effectCode==b.effectCode &&
   a.callsite==b.callsite && a.selfLocation==b.selfLocation && a.opponentLocation==b.opponentLocation &&
-  a.minimum==b.minimum && a.maximum==b.maximum && a.player==b.player && a.stage==b.stage && a.role==b.role && a.source==b.source;
+  a.minimum==b.minimum && a.maximum==b.maximum && a.player==b.player && a.stage==b.stage && a.role==b.role && a.source==b.source &&
+  a.api==b.api && a.semantic==b.semantic && a.helper==b.helper && a.scope==b.scope && a.parentScope==b.parentScope &&
+  a.target==b.target && a.procedureRegistration==b.procedureRegistration;
 }
 Digest registeredScript() {
  const char* hex="14432383c12ce67c8b171ff9e96326130714f676f505b3472b4c898969218141";
@@ -63,6 +71,32 @@ bool functionEquals(lua_State* L,int index,const char* name) {
  if(!lua_istable(L,-1)){lua_settop(L,top);return false;}
  lua_getfield(L,-1,name);bool same=lua_rawequal(L,index,-1);lua_settop(L,top);return same;
 }
+Digest fromHex(const char* hex) {
+ Digest out{};auto nibble=[](char c){return c<='9'?c-'0':c-'a'+10;};
+ for(size_t i=0;i<out.size();++i)out[i]=uint8_t(nibble(hex[2*i])*16+nibble(hex[2*i+1]));return out;
+}
+bool tableFunction(lua_State* L,int index,const char* table,const char* name) {
+ index=lua_absindex(L,index);const int top=lua_gettop(L);lua_getglobal(L,table);
+ if(!lua_istable(L,-1)){lua_settop(L,top);return false;}
+ lua_getfield(L,-1,name);bool equal=lua_rawequal(L,index,-1);lua_settop(L,top);return equal;
+}
+Digest functionIdentity(lua_State* L,int index) {
+ if(!lua_isfunction(L,index))return {};
+ lua_pushvalue(L,index);lua_Debug info{};lua_getinfo(L,">S",&info);
+ Bytes b;const std::string source=info.source?info.source:"";bytes(b,Bytes(source.begin(),source.end()));word(b,info.linedefined);word(b,info.lastlinedefined);
+ return Sha256(b);
+}
+std::vector<CardReference> references(const std::vector<card*>& cards) {
+ std::vector<CardReference> out;
+ for(auto* c:cards)out.push_back({CardReferenceKind::Existing,{c->cardid},c->data.code,c->owner,
+  c->current.controler==0 && c->current.location==LOCATION_DECK?CardSource::OwnMainDeck:
+  c->current.controler==0 && c->current.location==LOCATION_EXTRA && c->is_position(POS_FACEDOWN)?CardSource::OwnFacedownExtraDeck:CardSource::ExistingState,
+  CardLocation{c->current.controler,c->current.location,c->current.sequence,c->current.position}});
+ std::sort(out.begin(),out.end(),[](const auto& a,const auto& b){return a.instance.value<b.instance.value;});return out;
+}
+void membership(Bytes& b,const std::vector<CardReference>& cards) {
+ word(b,cards.size());for(auto& c:cards){word(b,c.instance.value);word(b,c.code);word(b,c.owner);word(b,uint8_t(c.source));word(b,c.location->controller);word(b,c.location->zone);word(b,c.location->sequence);word(b,c.location->position);}
+}
 }
 Digest PoolQueryGate::PrefixDigest(const std::vector<ResponseRecord>& prefix) {
  Bytes out;word(out,prefix.size());
@@ -72,6 +106,122 @@ Digest PoolQueryGate::PrefixDigest(const std::vector<ResponseRecord>& prefix) {
   for(auto t:r.before.clock.remainingMs)word(out,t);word(out,r.before.aiLogCursor);
  }
  return Sha256(out);
+}
+
+void PoolQueryGate::Observe(CoreDriver& driver,lua_State* L,native_query_api nativeApi,bool enter,
+ const std::vector<card*>& cards,card* target,int32_t result) {
+ auto& state=*driver.poolQuery_;const size_t absent=size_t(-1);
+ if(!enter) {
+  if(state.scopes.empty())throw std::runtime_error("Unbalanced native query scope");
+  const auto index=state.scopes.back();state.scopes.pop_back();if(index==absent)return;
+  auto& observation=state.observations.at(index);observation.members=references(cards);observation.result=result;
+  observation.afterCallState=Sha256(driver.DiagnosticState());observation.completed=true;return;
+ }
+ size_t parent=absent;for(auto it=state.scopes.rbegin();it!=state.scopes.rend();++it)if(*it!=absent){parent=*it;break;}
+ state.scopes.push_back(absent);
+ auto* pd=reinterpret_cast<duel*>(driver.handle_);auto& core=pd->game_field->core;
+ effect* e=pd->pool_target_check?pd->pool_target_check:core.reason_effect;
+ if(parent!=absent) {
+  const auto& identity=state.observations[parent].request;
+  e=nullptr;for(auto* candidate:pd->effects)if(candidate->handler && candidate->handler->cardid==identity.handler.value && candidate->registration_ordinal==identity.effectRegistration){e=candidate;break;}
+ }
+ if(!e || !e->handler || e->handler->current.controler!=0 || !(e->type&EFFECT_TYPE_ACTIVATE) || e->code!=EVENT_FREE_CHAIN)return;
+ uint32_t code=e->handler->data.code;if(code!=44362883 && code!=75500286)return;
+ auto resourceHash=[&](const std::string& path) {auto found=state.hashes.find(path);if(found!=state.hashes.end())return found->second;return state.hashes.emplace(path,Sha256(driver.Resources()->Read(path))).first->second;};
+ const auto script=resourceHash("script/c"+std::to_string(code)+".lua");
+ if(script!=fromHex(code==44362883?"df65c2875fe485cab0ba106f2f9a8926af85e5616f2c3aa9d20125becbf85469":"45789f7d9fea6da47b798b2d08ac1612521c0ad9d603e9120a8babcb2b867e04"))return;
+ Digest helper{};if(code==44362883){helper=resourceHash("script/procedure.lua");if(helper!=fromHex("df887c18619374f825fc14f5a5f05f6a090c910adbb52933bd8462c773973baa"))return;}
+ const auto api=PoolQueryApi(nativeApi);const int top=lua_gettop(L);
+ lua_Debug caller{};if(!lua_getstack(L,1,&caller) || !lua_getinfo(L,"flS",&caller))return;
+ const int callerIndex=lua_gettop(L);
+ const bool targetCaller=([&]{lua_rawgeti(L,LUA_REGISTRYINDEX,e->target);bool equal=lua_rawequal(L,callerIndex,-1);lua_pop(L,1);return equal;})();
+ const bool operationCaller=([&]{lua_rawgeti(L,LUA_REGISTRYINDEX,e->operation);bool equal=lua_rawequal(L,callerIndex,-1);lua_pop(L,1);return equal;})();
+ const bool materialsCaller=tableFunction(L,callerIndex,"FusionSpell","GetFusionMaterial");
+ const bool checkCaller=tableFunction(L,callerIndex,"FusionSpell","SummonTargetFilter");
+ lua_pop(L,1);
+ auto integerAt=[&](int n,int64_t value){return lua_isinteger(L,n) && lua_tointeger(L,n)==value;};
+ bool registered=false;PoolQuerySemantic semantic=PoolQuerySemantic::SingleTarget;
+ uint32_t self=0,opponent=0,min=0,max=0;
+ if(code==75500286) {
+  if(api==PoolQueryApi::ExistingMatching)registered=targetCaller && top==6 && tableFunction(L,1,"Card","IsAbleToRemove") && integerAt(2,0) && integerAt(3,LOCATION_DECK) && integerAt(4,0) && integerAt(5,1) && lua_isnil(L,6);
+  if(api==PoolQueryApi::SelectMatching)registered=operationCaller && top==8 && tableFunction(L,2,"Card","IsAbleToRemove") && integerAt(1,0) && integerAt(3,0) && integerAt(4,LOCATION_DECK) && integerAt(5,0) && integerAt(6,1) && integerAt(7,1) && lua_isnil(L,8);
+  self=LOCATION_DECK;min=max=1;
+ } else {
+  switch(api) {
+   case PoolQueryApi::ExistingMatching:
+    registered=targetCaller && top==6 && lua_isfunction(L,1) && integerAt(2,0) && integerAt(3,LOCATION_EXTRA) && integerAt(4,0) && integerAt(5,1) && lua_isnil(L,6);
+    semantic=PoolQuerySemantic::FusionTarget;self=LOCATION_EXTRA;min=max=1;break;
+   case PoolQueryApi::MatchingGroup:
+    if(operationCaller && top==5 && lua_isfunction(L,1) && integerAt(2,0) && integerAt(3,LOCATION_EXTRA) && integerAt(4,0) && lua_isnil(L,5)) {registered=true;semantic=PoolQuerySemantic::FusionTarget;self=LOCATION_EXTRA;}
+    else if(materialsCaller && top==6 && tableFunction(L,1,"Card","IsHasEffect") && integerAt(2,0) && lua_isnil(L,5) && integerAt(6,EFFECT_EXTRA_FUSION_MATERIAL) &&
+     ((integerAt(3,LOCATION_EXTRA)&&integerAt(4,0)) || (integerAt(3,0)&&integerAt(4,LOCATION_ONFIELD)))) {
+     registered=true;semantic=PoolQuerySemantic::ExtraMaterial;self=uint32_t(lua_tointeger(L,3));opponent=uint32_t(lua_tointeger(L,4));
+    }break;
+   case PoolQueryApi::FusionMaterials:
+    registered=materialsCaller && top==2 && integerAt(1,0) && lua_isinteger(L,2);
+    semantic=PoolQuerySemantic::MaterialUniverse;self=uint32_t(lua_tointeger(L,2));break;
+   case PoolQueryApi::CheckFusion:
+    registered=checkCaller && top==4 && target && lua_isnil(L,3) && integerAt(4,0);
+    semantic=PoolQuerySemantic::WholeFusion;break;
+   case PoolQueryApi::FusionProcedure:
+    registered=parent!=absent && state.observations[parent].request.api==PoolQueryApi::CheckFusion && target;
+    semantic=PoolQuerySemantic::WholeFusion;break;
+   case PoolQueryApi::SelectFusion:case PoolQueryApi::SelectedFusion:
+    registered=operationCaller && top==5 && integerAt(1,0) && target && lua_isnil(L,4) && integerAt(5,0);
+    semantic=PoolQuerySemantic::MaterialSelection;break;
+   default:break;
+  }
+ }
+ if(!registered)return;
+ if(code==44362883 && materialsCaller) {
+  // Read the typed target argument from the exact pinned helper's live frame.
+  // This runs separately in each Lua state. No registry ref, upvalue, closure,
+  // or userdata is retained, and sibling targets never depend on call order.
+  for(int depth=1;depth<32;++depth) {
+   lua_Debug frame{};if(!lua_getstack(L,depth,&frame))break;
+   if(!lua_getinfo(L,"f",&frame))break;
+   const bool helperFrame=tableFunction(L,-1,"FusionSpell","GetMaterialsGroupForTargetCard");lua_pop(L,1);
+   if(!helperFrame)continue;
+   const char* name=lua_getlocal(L,&frame,1);
+   if(name){if(std::string(name)=="tc" && lua_isuserdata(L,-1)){auto* c=*static_cast<card**>(lua_touserdata(L,-1));if(pd->cards.count(c))target=c;}lua_pop(L,1);}
+   break;
+  }
+  if(!target)return;
+ }
+ PoolQueryObservation observation;auto& request=observation.request;
+ request.context=state.context;request.acceptedPrefix=state.prefix;request.script=script;request.helper=helper;
+ request.handler={e->handler->cardid};request.effectRegistration=e->registration_ordinal;request.effectCode=e->code;
+ request.api=api;request.semantic=semantic;request.callsite=caller.currentline;request.selfLocation=self;request.opponentLocation=opponent;request.minimum=min;request.maximum=max;
+ request.stage=pd->pool_target_check?PoolQueryStage::TargetCheck:PoolQueryStage::ResolutionSelection;
+ if(parent!=absent){request.parentScope=state.observations[parent].request.scope;request.stage=state.observations[parent].request.stage;}
+ request.role=semantic==PoolQuerySemantic::SingleTarget || semantic==PoolQuerySemantic::FusionTarget?
+  (request.stage==PoolQueryStage::TargetCheck?SelectionRole::ActivationTarget:SelectionRole::ResolutionTarget):SelectionRole::ResolutionMaterial;
+ request.source=semantic==PoolQuerySemantic::FusionTarget?CardSource::OwnFacedownExtraDeck:
+  semantic==PoolQuerySemantic::ExtraMaterial?CardSource::ExistingState:CardSource::OwnMainDeck;
+ if(target){request.target={target->cardid};observation.targetScript=resourceHash("script/c"+std::to_string(target->data.code)+".lua");auto found=target->single_effect.find(EFFECT_FUSION_MATERIAL);if(found!=target->single_effect.end())request.procedureRegistration=found->second->registration_ordinal;}
+ if(core.reason_effect && core.reason_effect->handler){observation.reasonHandler={core.reason_effect->handler->cardid};observation.reasonRegistration=core.reason_effect->registration_ordinal;}
+ observation.input=references(cards);
+ Bytes parameters;word(parameters,uint8_t(api));word(parameters,top);word(parameters,self);word(parameters,opponent);word(parameters,min);word(parameters,max);
+ // Only the exact registered shapes above reach normalization. Userdata are
+ // represented by typed card/group identities, never addresses or registry IDs.
+ if(api!=PoolQueryApi::FusionProcedure)for(int i=1;i<=top;++i) {
+  word(parameters,lua_type(L,i));if(lua_isinteger(L,i))word(parameters,lua_tointeger(L,i));
+  else if(lua_isfunction(L,i))digest(parameters,functionIdentity(L,i));
+ }
+ word(parameters,request.target.value);word(parameters,request.procedureRegistration);membership(parameters,observation.input);
+ request.parameters=Sha256(parameters);request.callState=Sha256(driver.DiagnosticState());
+ Bytes scope;digest(scope,request.parentScope);word(scope,uint8_t(api));word(scope,uint8_t(semantic));word(scope,request.callsite);word(scope,request.handler.value);word(scope,request.effectRegistration);word(scope,request.target.value);request.scope=Sha256(scope);
+ request.invocation=++state.scopeInvocations[request.scope];
+ const int saved=lua_gettop(L);lua_getglobal(L,"aux");
+ if(lua_istable(L,-1)){
+  lua_getfield(L,-1,"FCheckAdditional");observation.additionalCheckPresent=lua_isfunction(L,-1);observation.additionalCheck=functionIdentity(L,-1);lua_pop(L,1);
+  lua_getfield(L,-1,"FGoalCheckAdditional");observation.additionalGoalPresent=lua_isfunction(L,-1);observation.additionalGoal=functionIdentity(L,-1);
+ }lua_settop(L,saved);
+ // Record the fixture's alternative-route context without invoking effect
+ // filters a second time. Frozen state also remains in callState.
+ for(auto* candidate:pd->effects)if(candidate->code==EFFECT_CHAIN_MATERIAL)++observation.chainMaterialEffects;
+ else if(candidate->code==EFFECT_EXTRA_FUSION_MATERIAL)++observation.extraMaterialEffects;
+ state.requests.push_back(request);state.scopes.back()=state.observations.size();state.observations.push_back(std::move(observation));
 }
 
 bool PoolQueryGate::Query(CoreDriver& driver,lua_State* L,bool selection,bool actual) {
@@ -97,6 +247,7 @@ bool PoolQueryGate::Query(CoreDriver& driver,lua_State* L,bool selection,bool ac
  request.effectCode=e->code;request.invocation=++state.invocation;request.callsite=ar.currentline;
  request.player=0;request.selfLocation=LOCATION_DECK;request.minimum=1;request.maximum=1;
  request.stage=selection?PoolQueryStage::ResolutionSelection:PoolQueryStage::TargetCheck;
+ request.api=selection?PoolQueryApi::SelectMatching:PoolQueryApi::ExistingMatching;
  Bytes parameters;word(parameters,total);word(parameters,selection);for(int index=selfIndex;index<total;++index)word(parameters,lua_tointeger(L,index));
  request.parameters=Sha256(parameters);request.callState=Sha256(driver.DiagnosticState());
  if(actual)return actual;
@@ -134,6 +285,10 @@ std::unique_ptr<CoreDriver> PoolQueryGate::Replay(const InitialState& initial,st
     driver->callbackFailure_=error.what();return actual;
    }
   };
+  if(state->observe)reinterpret_cast<duel*>(candidate->handle_)->pool_observe=[driver=candidate.get()](lua_State* L,native_query_api api,bool enter,const card_set* members,card* target,int32_t result) {
+   try {Observe(*driver,L,api,enter,members?std::vector<card*>(members->begin(),members->end()):std::vector<card*>{},target,result);}
+   catch(const std::exception& error){driver->callbackFailure_=error.what();}
+  };
  };
  if(prefix.empty())attach();auto boundary=candidate->Advance();
  for(size_t i=0;i<prefix.size();++i) {
@@ -151,11 +306,22 @@ std::unique_ptr<CoreDriver> PoolQueryGate::Replay(const InitialState& initial,st
 
 PoolQueryDiscovery PoolQueryGate::Discover(const CoreDriver& live,const std::vector<ResponseRecord>& prefix,const DeckTestContext& current) {
  validate(live,prefix,current);PoolQueryDiscovery result;result.context=current;result.acceptedPrefix=PrefixDigest(prefix);result.diagnostic=live.DiagnosticState();
- auto state=std::make_shared<PoolQueryState>();state->context=current;state->prefix=result.acceptedPrefix;
+ auto state=std::make_shared<PoolQueryState>();state->context=current;state->prefix=result.acceptedPrefix;state->observe=true;
  auto candidate=Replay(live.Initial(),live.Resources(),prefix,state);
  if(!position(candidate->Current().checkpoint,current.checkpoint) || candidate->DiagnosticState()!=result.diagnostic)
   throw std::runtime_error("Query discovery changed actual-only state");
- result.requests=state->requests;return result;
+ result.requests=state->requests;result.observations=state->observations;return result;
+}
+
+std::unique_ptr<CoreDriver> PoolQueryGate::Recreate(const CoreDriver& live,const std::vector<ResponseRecord>& prefix,const DeckTestContext& current) {
+ validate(live,prefix,current);auto state=std::make_shared<PoolQueryState>();state->context=current;state->prefix=PrefixDigest(prefix);state->observe=true;
+ auto candidate=Replay(live.Initial(),live.Resources(),prefix,state);
+ if(!position(candidate->Current().checkpoint,current.checkpoint) || candidate->DiagnosticState()!=live.DiagnosticState())
+  throw std::runtime_error("Actual query recreation diverged");
+ return candidate;
+}
+std::vector<PoolQueryObservation> PoolQueryGate::Observations(const CoreDriver& driver) {
+ std::lock_guard<std::recursive_mutex> lock(ocgapi_mutex());return driver.poolQuery_?driver.poolQuery_->observations:std::vector<PoolQueryObservation>{};
 }
 
 std::future<PoolQueryEvidence> PoolQueryGate::SearchAsync(const InitialState& initial,std::shared_ptr<const ResourceView> resources,
@@ -209,6 +375,7 @@ void PoolQueryGate::ResponseSubmitted(CoreDriver& driver,const Bytes& response,O
  state.records.push_back({driver.boundary_.checkpoint.player,origin,response,driver.boundary_.checkpoint});
  state.context.checkpoint=driver.boundary_.checkpoint;state.context.historyCursor=state.records.size();
  state.prefix=PrefixDigest(state.records);state.requests.clear();state.invocation=0;
+ state.scopeInvocations.clear();
  state.match.reset();state.evidence=false;
 }
 void PoolQueryGate::ResponseRejected(CoreDriver& driver) {

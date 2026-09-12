@@ -2620,8 +2620,10 @@ int32_t scriptlib::duel_get_matching_group(lua_State *L) {
 	uint32_t self = (uint32_t)lua_tointeger(L, 2);
 	uint32_t location1 = (uint32_t)lua_tointeger(L, 3);
 	uint32_t location2 = (uint32_t)lua_tointeger(L, 4);
+	native_query_scope query(pduel, L, native_query_api::MatchingGroup);
 	group* pgroup = pduel->new_group();
 	pduel->game_field->filter_matching_card(L, 1, (uint8_t)self, location1, location2, pgroup, pexception, pexgroup, extraargs);
+	query.finish(&pgroup->container, !pgroup->container.empty());
 	interpreter::group2value(L, pgroup);
 	return 1;
 }
@@ -2699,7 +2701,9 @@ int32_t scriptlib::duel_is_existing_matching_card(lua_State *L) {
 	uint32_t location1 = (uint32_t)lua_tointeger(L, 3);
 	uint32_t location2 = (uint32_t)lua_tointeger(L, 4);
 	uint32_t fcount = (uint32_t)lua_tointeger(L, 5);
+	native_query_scope query(pduel, L, native_query_api::ExistingMatching);
 	bool exists = pduel->game_field->filter_matching_card(L, 1, (uint8_t)self, location1, location2, 0, pexception, pexgroup, extraargs, nullptr, fcount);
+	query.finish(nullptr, exists);
 	if(pduel->pool_query)
 		exists = pduel->pool_query(L, false, exists);
 	lua_pushboolean(L, exists);
@@ -2731,8 +2735,10 @@ int32_t scriptlib::duel_select_matching_cards(lua_State *L) {
 	uint32_t location2 = (uint32_t)lua_tointeger(L, 5);
 	uint32_t min = (uint32_t)lua_tointeger(L, 6);
 	uint32_t max = (uint32_t)lua_tointeger(L, 7);
+	native_query_scope query(pduel, L, native_query_api::SelectMatching);
 	group* pgroup = pduel->new_group();
 	pduel->game_field->filter_matching_card(L, 2, (uint8_t)self, location1, location2, pgroup, pexception, pexgroup, extraargs);
+	query.finish(&pgroup->container, !pgroup->container.empty());
 	if(pduel->pool_query)
 		pduel->pool_query(L, true, !pgroup->container.empty());
 	pduel->game_field->core.select_cards.assign(pgroup->container.begin(), pgroup->container.end());
@@ -3208,8 +3214,10 @@ int32_t scriptlib::duel_select_fusion_material(lua_State *L) {
 		not_material = lua_toboolean(L, 6);
 	card* pcard = *(card**) lua_touserdata(L, 2);
 	group* pgroup = *(group**) lua_touserdata(L, 3);
+	native_query_scope query(pcard->pduel, L, native_query_api::SelectFusion, &pgroup->container, pcard);
 	pcard->fusion_select(playerid, pgroup, cg, chkf, not_material);
 	duel* pduel = pcard->pduel;
+	query.finish(&pgroup->container);
 	return lua_yieldk(L, 0, (lua_KContext)pduel, [](lua_State *L, int32_t status, lua_KContext ctx) {
 		duel* pduel = (duel*)ctx;
 		group* pgroup = pduel->new_group(pduel->game_field->core.fusion_materials);
@@ -3217,6 +3225,8 @@ int32_t scriptlib::duel_select_fusion_material(lua_State *L) {
 			card* cg = *(card**)lua_touserdata(L, 4);
 			pgroup->container.insert(cg);
 		}
+		native_query_scope selected(pduel, L, native_query_api::SelectedFusion, nullptr, *(card**)lua_touserdata(L, 2));
+		selected.finish(&pgroup->container, !pgroup->container.empty());
 		interpreter::group2value(L, pgroup);
 		return 1;
 	});
@@ -3420,9 +3430,11 @@ int32_t scriptlib::duel_get_fusion_material(lua_State *L) {
 	if(lua_gettop(L) >= 2)
 		location = (uint32_t)lua_tointeger(L, 2);
 	duel* pduel = interpreter::get_duel_info(L);
+	native_query_scope query(pduel, L, native_query_api::FusionMaterials);
 	group* pgroupall = pduel->new_group();
 	group* pgroupbase = pduel->new_group();
 	pduel->game_field->get_fusion_material(playerid, &pgroupall->container, &pgroupbase->container, location);
+	query.finish(&pgroupall->container, !pgroupall->container.empty());
 	interpreter::group2value(L, pgroupall);
 	interpreter::group2value(L, pgroupbase);
 	return 2;

@@ -26,6 +26,11 @@ struct tevent;
 
 using card_set = std::set<card*, card_sort>;
 
+enum class native_query_api : uint8_t {
+	ExistingMatching, MatchingGroup, SelectMatching, FusionMaterials,
+	CheckFusion, FusionProcedure, SelectFusion, SelectedFusion
+};
+
 class duel {
 public:
 	char strbuffer[256]{};
@@ -38,6 +43,8 @@ public:
 	// Host-private, per-duel semantic query bridge. Normal cores leave it absent.
 	// The Lua state is borrowed only for this synchronous invocation.
 	std::function<bool(lua_State*, bool, bool)> pool_query;
+	// Synchronous borrowed inputs, never a Lua suspension or a replacement Group.
+	std::function<void(lua_State*, native_query_api, bool, const card_set*, card*, int32_t)> pool_observe;
 	effect* pool_target_check{};
 	const tevent* pool_target_event{};
 	bool pool_selection_pending{};
@@ -78,6 +85,21 @@ public:
 	int32_t get_next_integer(int32_t l, int32_t h);
 private:
 	group* register_group(group* pgroup);
+};
+
+// Reentrant scope around actual native queries. End it before any lua_yieldk:
+// Lua yields do not unwind C++ destructors. Continuations get a fresh scope.
+class native_query_scope {
+	duel* pd; lua_State* state; native_query_api api; card* target; bool open;
+public:
+	native_query_scope(duel* d, lua_State* L, native_query_api a, const card_set* members = nullptr, card* c = nullptr)
+		: pd(d), state(L), api(a), target(c), open(bool(d->pool_observe)) {
+		if(open) pd->pool_observe(state, api, true, members, target, -1);
+	}
+	void finish(const card_set* members = nullptr, int32_t result = -1) {
+		if(open) { open = false; pd->pool_observe(state, api, false, members, target, result); }
+	}
+	~native_query_scope() { finish(); }
 };
 
 #endif /* DUEL_H_ */
