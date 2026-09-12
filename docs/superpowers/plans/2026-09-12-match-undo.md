@@ -70,8 +70,8 @@ Files: docs, spec/tasks and a new Match verification record; existing package to
 
 - [x] Independent review of round boundaries, original Match semantics, input identities, resource/card privacy and UI lifecycle; resolve blocking findings.
 - [x] Run applicable native/client/pair regressions with correct fixtures; validate OpenSpec and diff. Record known environment limitations without marking physical-device acceptance complete.
-- [ ] Commit tested source; fresh short-path clone, offline verified dependency bootstrap, complete Release build, provenance and runtime startup verification.
-- [ ] Validate exact ZIP install/uninstall/restore in an owned fixture. Back up installed 2187cb3 files from their independently verified package, install only the new manifest files when closed, verify original/shared/config files preserved. Deliver same ZIP for both computers and record exact source/hash.
+- [x] Commit tested source; fresh short-path clone, offline verified dependency bootstrap, complete Release build, provenance and runtime startup verification.
+- [x] Validate exact ZIP install/uninstall/restore in an owned fixture. Back up installed 2187cb3 files from their independently verified package, install only the new manifest files when closed, verify original/shared/config files preserved. Deliver same ZIP for both computers and record exact source/hash.
 
 ## Execution decisions
 

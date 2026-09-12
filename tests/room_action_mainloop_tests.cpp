@@ -80,7 +80,11 @@ static void CALLBACK tick(HWND,UINT,UINT_PTR,DWORD){
             if(actionStage==0){ initialEpoch=room->Token().epoch;handClick();actionStage=1; }
             else if(actionStage==1 && game.wCmdMenu->isVisible()){
                 CHECK(game.btnSummon->isVisible());mouse(game.btnSummon,"summon");actionStage=2;
-            } else if(actionStage==2 && game.dField.hand[0].size()==4 && room->CanUndo()){
+            } else if(actionStage==2 && game.dField.hand[0].size()==4 && room->CanUndo()
+                      && game.btnUndoDuel->isTrulyVisible() && game.btnUndoDuel->isEnabled()){
+                // The transport may publish CanUndo during device->run(),
+                // before this frame refreshes the native button. Wait for the
+                // actual clickable widget; the outer deadline stays active.
                 bool summoned=false;for(auto* c:game.dField.mzone[0])if(c&&c->code==48305365)summoned=true;
                 CHECK(summoned);std::cout<<"A real summon complete; requesting real undo"<<std::endl;
                 mouse(game.btnUndoDuel,"undo");actionStage=3;
