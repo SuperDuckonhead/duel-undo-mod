@@ -59,13 +59,27 @@ static void put(Bytes &b, uint64_t n, unsigned width) {
 #include "room_client_ai.h"
 #include "room_client_pair.h"
 #include "room_client_timer.h"
+#include "room_match_client.h"
+#include "room_match_pair.h"
 int main(int argc, char **argv) {
   SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
   try {
     mainGame = &game;
     CHECK(game.Initialize(std::filesystem::current_path()));
+    if (argc >= 3 && (std::string(argv[1]) == "--match-pair-host" ||
+                      std::string(argv[1]) == "--match-pair-guest")) {
+      bool three = false, free = false;
+      for (int i = 3; i < argc; ++i) {
+        if (std::string(argv[i]) == "--three") three = true;
+        else { CHECK(std::string(argv[i]) == "--free"); free = true; }
+      }
+      return matchPairGame(std::string(argv[1]) == "--match-pair-host",
+                           std::filesystem::u8path(argv[2]), three, free);
+    }
     game.frameSignal.SetNoWait(true);
     game.actionSignal.SetNoWait(true);
+    if (argc == 2 && std::string(argv[1]) == "--match-client-tests")
+      return runMatchClientLifecycleTests();
     if (std::getenv("N2_ROOM_TIME_BEFORE_PROMPT"))
       return timerConfirmationTests();
     if (argc == 3 && std::string(argv[1]) == "--ai")
@@ -107,17 +121,19 @@ int main(int argc, char **argv) {
             return false;
           };
       if (std::getenv("N2_ROOM_MATCH_ONLY")) {
+        WSADATA ws{};
+        CHECK(WSAStartup(MAKEWORD(2, 2), &ws) == 0);
+        CHECK(evthread_use_windows_threads() == 0);
         game.cbMatchMode->setSelected(1);
         irr::SEvent event{};
         event.EventType = irr::EET_GUI_EVENT;
         event.GUIEvent.Caller = game.btnHostConfirm;
         event.GUIEvent.EventType = irr::gui::EGET_BUTTON_CLICKED;
         game.menuHandler.OnEvent(event);
-        CHECK(!NetServer::IsRunning() && !DuelClient::Room());
-        CHECK(contains(game.env->getRootGUIElement(),
-                       L"撤回房间暂不支持 Match 对战。"));
-        std::cout << "PASS actual host menu rejects unsupported Match before "
-                     "room start\n";
+        CHECK(NetServer::IsRunning());
+        DuelClient::StopClient();
+        NetServer::StopServer();
+        std::cout << "PASS actual host menu admits native human Match\n";
         return 0;
       }
       std::cerr << "policy deliver observer" << std::endl;

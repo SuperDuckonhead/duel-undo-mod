@@ -30,7 +30,7 @@ public:
 private:
  const Bytes& b_; std::size_t at_{};
 };
-bool Valid(WireKind kind) { return kind>=WireKind::Hello && kind<=WireKind::RequestRejected; }
+bool Valid(WireKind kind) { return kind>=WireKind::Hello && kind<=WireKind::RoundStart; }
 bool Valid(RoomMode mode) { return mode==RoomMode::ConsentLan || mode==RoomMode::LoopbackFree; }
 constexpr std::size_t FragmentHeader=12, Chunk=MaxPayload-FragmentHeader;
 }

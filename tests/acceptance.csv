@@ -48,3 +48,6 @@
 "撤回后原界面保持可用","再次召唤和悬停卡牌列表","实际 Game::MainLoop 与已安装 AI","实际鼠标召唤撤回、二次召唤和CtrlZ撤回、两个列表原生悬停提示和正常退出。","tests/post-undo-ui.md","pass"
 "对局可通过Ctrl+Z撤回","文本焦点、暂停、按键重复与模式隔离","Room / SingleMode / 编辑器","原生AutoRepeat、漏keyup后新按键、普通YES/NO、文本与恢复保护、实际单机两次撤回和编辑器原快捷键。","tests/post-undo-ui.md","pass"
 "终局录像界面保持可用","保存/取消/编辑文件名/自动保存/最终确认","实际 Game::MainLoop 与已安装 AI","四条原生鼠标键盘流程、有效录像重开、取消不写录像、当前日期命名及正常返回菜单均通过。","tests/replay-save-ui.md","pass"
+"Match每小局独立撤回","2:0与2:1、换备纠正、下一局先后手、第二局撤回后新路线","两个实际 Game::MainLoop 与 TCP","原生保存/换备/确认等待、双方每局录像一致及最终分支重放；只撤回当前未结束小局。","tests/match-undo.md","pass"
+"Match局间输入与失败隔离","旧epoch输入、乱序提示/计时、未确认提交与部分换局送达失败","实际宿主与RoomClient","显式暂停旧/新状态端，不能用换局恢复不确定提交；不重用上局响应或模型。","tests/match-undo.md","pass"
+"Match两台设备联机","真实跨设备Match与双方人工操作","两台Windows设备","同版本包，确认2:0/2:1、合法换备、撤回同意/拒绝、下一局出牌及逐局录像。","tests/match-undo.md","pending"

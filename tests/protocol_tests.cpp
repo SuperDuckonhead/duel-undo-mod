@@ -19,13 +19,13 @@ int main() {
  auto bad=bytes; bad.push_back(0); CHECK(Rejects([&]{Decode(bad);}));
  for(auto offset : {0,1,2,75,78}) { bad=bytes; bad[offset]=255; CHECK(Rejects([&]{Decode(bad);})); }
  bad=bytes; bad[2]=0; CHECK(Rejects([&]{Decode(bad);}));
- for(int k=1;k<=14;++k) for(auto value : {std::uint64_t(0),UINT64_MAX}) {
+ for(int k=1;k<=15;++k) for(auto value : {std::uint64_t(0),UINT64_MAX}) {
   e.kind=static_cast<WireKind>(k); e.key.epoch=value; e.key.request=value; e.key.targetIndex=value; e.payload.clear();
   CHECK(SameKey(Decode(Encode(e)).key,e.key));
  }
  e.payload.assign(MaxPayload,7); CHECK(Decode(Encode(e)).payload.size()==MaxPayload);
  e.payload.push_back(1); CHECK(Rejects([&]{Encode(e);}));
- e.payload.clear(); e.kind=static_cast<WireKind>(15); CHECK(Rejects([&]{Encode(e);}));
+ e.payload.clear(); e.kind=static_cast<WireKind>(16); CHECK(Rejects([&]{Encode(e);}));
  CHECK(IsCurrent(key,key.session,key.epoch)); CHECK(!IsCurrent(key,key.session,0));
  auto other=key; ++other.session[1]; CHECK(!IsCurrent(other,key.session,key.epoch));
  other=key; ++other.targetIndex; CHECK(!SameKey(other,key));

@@ -35,6 +35,25 @@ std::vector<Envelope> EncodeGamePacket(const SessionId& session, std::uint64_t e
     for(auto& part:Fragment(packet)) result.push_back({WireKind::Game,key,std::move(part)});
     return result;
 }
+Envelope EncodeRoundStart(const SessionId& session, std::uint64_t previousEpoch,
+        std::uint64_t nextEpoch, std::uint8_t number) {
+    Bytes payload;
+    put(payload,nextEpoch,8);payload.push_back(number);
+    Envelope result{WireKind::RoundStart,{session,previousEpoch,0,0,{}},std::move(payload)};
+    DecodeRoundStart(result);
+    return result;
+}
+RoundTransition DecodeRoundStart(const Envelope& envelope) {
+    require(envelope.kind==WireKind::RoundStart && envelope.key.session!=SessionId{} &&
+        !envelope.key.request && !envelope.key.targetIndex && envelope.key.targetDigest==Digest{},
+        "Invalid round transition identity");
+    require(envelope.payload.size()==9, "Invalid round transition size");
+    RoundTransition result{get(envelope.payload,0,8),envelope.payload[8]};
+    require(envelope.key.epoch!=std::numeric_limits<std::uint64_t>::max() &&
+        result.epoch==envelope.key.epoch+1 && result.number>=2 && result.number<=3,
+        "Invalid round transition epoch or game number");
+    return result;
+}
 GamePacketStream::GamePacketStream(SessionId session, std::uint64_t epoch) { Reset(session,epoch); }
 void GamePacketStream::Reset(SessionId session, std::uint64_t epoch) {
     require(session!=SessionId{}, "Missing room session identity");

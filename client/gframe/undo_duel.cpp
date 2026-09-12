@@ -101,11 +101,12 @@ struct UndoDuel::Impl {
     bool botAdmission{}, botPolling{}, terminalAuthorized{}, replaySent{};
     std::optional<Envelope> botResume;
 
-    Impl(UndoDuel& o,std::shared_ptr<const RoomConfig> c,SessionId s,Send output)
+    Impl(UndoDuel& o,std::shared_ptr<const RoomConfig> c,SessionId s,Send output,std::uint64_t epoch=0)
       :owner(o),config(std::move(c)),session(s),send(std::move(output)),
-       coordinator(s,0,config && !config->bot && config->capability.mode==RoomMode::ConsentLan) {
+       coordinator(s,epoch,config && !config->bot && config->capability.mode==RoomMode::ConsentLan),installedEpoch(epoch) {
         require(config && config->resources,"Missing frozen undo room resources");
         require(session!=SessionId{},"Missing room session");
+        require(!owner.match_mode || !config->bot,"Private AI Match rooms are unsupported");
         if(config->bot) {
             require(!config->botExecutable.empty(),"Missing private bot executable");
             require(config->bot->resources==config->resources->Fingerprint(),"Bot/core resources differ");
@@ -585,9 +586,20 @@ void UndoDuel::JoinGame(DuelPlayer* dp,unsigned char* bytes,bool creator) {
     // admission callback before using it again in the real NetServer owner.
 }
 void UndoDuel::TPResult(DuelPlayer* dp,unsigned char tp) {
-    auto& r=*impl_;
-    if(!dp || dp->state!=CTOS_TP_RESULT || !players[0] || !players[1] || r.core)return;
+    if(!dp || dp->state!=CTOS_TP_RESULT || dp->type>1 || !players[0] || !players[1] ||
+       players[dp->type]!=dp || impl_->failed)return;
+    const bool nextRound=bool(impl_->core);
+    if(nextRound && (!match_mode || !impl_->finished || impl_->transaction ||
+       duel_stage!=DUEL_STAGE_FIRSTGO || !duel_count || duel_count>=3))return;
+    std::optional<std::uint64_t> announcedEpoch;
     try {
+        std::unique_ptr<Impl> next;
+        if(nextRound) {
+            require(impl_->installedEpoch!=std::numeric_limits<std::uint64_t>::max(),"Round epoch exhausted");
+            next=std::make_unique<Impl>(*this,impl_->config,impl_->session,impl_->send,impl_->installedEpoch+1);
+            next->participants=impl_->participants;next->departing=impl_->departing;
+        }
+        auto& r=next?*next:*impl_;
         duel_stage=DUEL_STAGE_DUELING;pplayer[0]=players[0];pplayer[1]=players[1];
         if((tp && dp->type==1) || (!tp && dp->type==0)) {
             std::swap(players[0],players[1]);players[0]->type=0;players[1]->type=1;
@@ -610,9 +622,18 @@ void UndoDuel::TPResult(DuelPlayer* dp,unsigned char tp) {
                     r.initial.cards.push_back({(*card)->code,std::uint8_t(p),std::uint8_t(p),location,0,POS_FACEDOWN_DEFENSE});
             };
             load(pdeck[p].main,LOCATION_DECK);load(pdeck[p].extra,LOCATION_EXTRA);
-            r.incoming[p]=std::make_unique<GamePacketStream>(r.session,0);
+            r.incoming[p]=std::make_unique<GamePacketStream>(r.session,r.installedEpoch);
         }
         r.core=CoreDriver::Create(r.initial,r.config->resources);
+        if(next) {
+            // Native siding and turn choice have already completed. Prepare the
+            // entire next core before advancing either endpoint to its new epoch.
+            // TCP ordering places this after the old replay/side packets and
+            // before MSG_START; every prior response/transaction stays fenced.
+            announcedEpoch=r.installedEpoch;
+            impl_->broadcast(EncodeRoundStart(impl_->session,impl_->installedEpoch,r.installedEpoch,duel_count+1));
+            impl_=std::move(next);
+        }
         Bytes start{MSG_START,0,host_info.duel_rule};
         BufferIO::VectorWrite<std::int32_t>(start,host_info.start_lp);BufferIO::VectorWrite<std::int32_t>(start,host_info.start_lp);
         for(int p=0;p<2;++p) {
@@ -623,7 +644,24 @@ void UndoDuel::TPResult(DuelPlayer* dp,unsigned char tp) {
         RefreshExtra(0);RefreshExtra(1);
         if(host_info.time_limit)NetServer::StartDuelTimer();
         Process();
-    } catch(const std::exception& e){r.fail(e.what());r.drain();}
+    } catch(const std::exception& e){
+        impl_->fail(e.what());
+        if(nextRound) {
+            // A failed transition may leave endpoints on different epochs. Send
+            // an input-free failure for each possible epoch; one broken delivery
+            // must not prevent the other endpoint from seeing its own failure.
+            auto status=impl_->status();status.prompt=0;status.promptPlayer=2;
+            status.timePlayer=2;status.eligibleMask=0;
+            const auto payload=EncodeRoomStatus(status);
+            const auto notify=[&](std::uint64_t epoch) {
+                const Envelope failure{WireKind::Status,{impl_->session,epoch,0,0,{}},payload};
+                for(int p=0;p<2;++p)try{impl_->emit(p,failure);}catch(...){}
+            };
+            notify(impl_->installedEpoch);
+            if(announcedEpoch && *announcedEpoch!=impl_->installedEpoch)notify(*announcedEpoch);
+        }
+        impl_->drain();
+    }
 }
 void UndoDuel::Process() {
     auto& r=*impl_;if(!r.core || r.advancing || r.finished)return;
@@ -809,11 +847,20 @@ void UndoDuel::EndDuel() {
         const auto bytes=replay.ExportUndoReplay();
         for(auto* player:players)if(player!=r.botPlayer.get())r.raw(player,STOC_REPLAY,bytes.data(),bytes.size());
     }
+    if(match_mode) {
+        // The completed branch has already been exported. Score and sided decks
+        // remain native Match state; no undo checkpoint survives the game boundary.
+        r.history=DuelHistory{};r.journal={};r.boundaries.clear();r.boundary={};
+    }
 }
 void UndoDuel::Surrender(DuelPlayer* dp) {
     auto& r=*impl_;if(!dp || dp->type>1 || !r.open())return;
     Bytes win{MSG_WIN,static_cast<std::uint8_t>(1-dp->type),0};
-    r.sendGame(0,win);r.sendGame(1,win);r.terminalAuthorized=true;EndDuel();DuelEndProc();r.publish(true);
+    r.terminalAuthorized=true;
+    // Native MSG_WIN owns match scoring and the loser's next turn choice,
+    // including the engine-seat swap made at the start of this game.
+    SingleDuel::Analyze(win.data(),static_cast<unsigned int>(win.size()));
+    DuelEndProc();r.publish(true);
 }
 void UndoDuel::LeaveGame(DuelPlayer* dp) {
     auto& r=*impl_;r.deferredHuman.reset();const auto seat=r.participant(dp);

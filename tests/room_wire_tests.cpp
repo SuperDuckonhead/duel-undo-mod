@@ -5,6 +5,32 @@ template<class F> bool rejects(F f) {try {f();} catch(const std::exception&) {re
 int main() {try {
  using namespace undo;
  SessionId session{};session[0]=42;
+ for(auto epoch:{uint64_t(0),uint64_t(8),UINT64_MAX-1}) for(uint8_t number:{2,3}) {
+  auto round=EncodeRoundStart(session,epoch,epoch+1,number);
+  auto parsed=DecodeRoundStart(Decode(Encode(round)));
+  CHECK(parsed.epoch==epoch+1 && parsed.number==number && round.payload.size()==9);
+  CHECK(round.key.epoch==epoch && !round.key.request && !round.key.targetIndex);
+ }
+ const auto round=EncodeRoundStart(session,7,8,2);
+ for(int fault=0;fault<12;++fault) {
+  auto bad=round;
+  if(fault==0)bad.kind=WireKind::Game;
+  if(fault==1)bad.key.session={};
+  if(fault==2)bad.key.request=1;
+  if(fault==3)bad.key.targetIndex=1;
+  if(fault==4)bad.key.targetDigest[0]=1;
+  if(fault==5)bad.payload.pop_back();
+  if(fault==6)bad.payload.push_back(0);
+  if(fault==7)bad.payload[8]=1;
+  if(fault==8)bad.payload[8]=4;
+  if(fault==9)bad.payload[0]=7;
+  if(fault==10)bad.payload[0]=9;
+  if(fault==11){bad.key.epoch=UINT64_MAX;std::fill_n(bad.payload.begin(),8,0);}
+  CHECK(rejects([&]{DecodeRoundStart(bad);}));
+ }
+ CHECK(rejects([&]{EncodeRoundStart(session,UINT64_MAX,0,2);}));
+ CHECK(rejects([&]{EncodeRoundStart(session,8,8,2);}));
+ CHECK(rejects([&]{EncodeRoundStart({},8,9,2);}));
  Bytes packet(150000,0x35);packet.front()=1;packet.back()=0xab;
  auto frames=EncodeGamePacket(session,7,19,1,packet);
  CHECK(frames.size()>1);

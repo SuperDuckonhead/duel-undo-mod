@@ -105,7 +105,6 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 			case BUTTON_HOST_CONFIRM: {
 				mainGame->bot_mode = false;
 				BufferIO::CopyWideString(mainGame->ebServerName->getText(), mainGame->gameConf.gamename);
-                if(mainGame->cbMatchMode->getSelected()==1){mainGame->env->addMessageBox(L"",L"撤回房间暂不支持 Match 对战。");break;}
 				if(mainGame->cbMatchMode->getSelected()==2){mainGame->env->addMessageBox(L"",L"撤回房间仅支持两名对战玩家");break;}
                 std::shared_ptr<const undo::RoomConfig> config;
                 try{config=undo::CaptureRoomConfig(dataManager,mainGame->runtime_root.u8string(),mainGame->gameConf.prefer_expansion_script!=0,mainGame->chkUndoLoopback->isChecked()?undo::RoomMode::LoopbackFree:undo::RoomMode::ConsentLan);}

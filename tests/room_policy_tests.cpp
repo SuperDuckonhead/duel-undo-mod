@@ -33,7 +33,7 @@ int main(){try {
     WSADATA winsock;CHECK(WSAStartup(MAKEWORD(2,2),&winsock)==0);
     Hello cap;cap.engine[0]=1;cap.rules[0]=2;cap.resources[0]=3;
     unsigned short port{};CHECK(NetServer::StartServer(0,0x7f000001,&port,false,&cap));
-    CTOS_CreateGame create{};create.info.duel_rule=5;
+    CTOS_CreateGame create{};create.info.duel_rule=5;create.info.mode=MODE_MATCH;
     CTOS_JoinGame join{};join.version=PRO_VERSION;
     Peer host(port);ClientRoomHandshake hh(cap,true);host.Envelope(hh.Offer());
     host.SendStruct(CTOS_CREATE_GAME,create);
@@ -52,13 +52,13 @@ int main(){try {
         auto reason=policy(third);CHECK(reason.code==(0x80000000u|3u));CHECK(third.Read().empty());
     }
     guest.Close();host.Close();stopped();
-    for(const int mode:{2,1}) {
+    for(const int mode:{2}) {
         CHECK(NetServer::StartServer(0,0x7f000001,&port,false,&cap));
         Peer unsupported(port);ClientRoomHandshake handshake(cap,true);unsupported.Envelope(handshake.Offer());
         create.info.mode=mode;unsupported.SendStruct(CTOS_CREATE_GAME,create);
-        auto reason=policy(unsupported);CHECK(reason.code==(0x80000000u|(mode==2?1u:7u)));CHECK(unsupported.Read().empty());
+        auto reason=policy(unsupported);CHECK(reason.code==(0x80000000u|1u));CHECK(unsupported.Read().empty());
         unsupported.Close();NetServer::StopServer();stopped();
     }
     WSACleanup();
-    std::cout<<"actual policy notice: nonfatal observer refusal, full slots and fatal Tag/Match reasons delivered before EOF"<<std::endl;
+    std::cout<<"actual Match admission: two peers accepted, nonfatal observer refusal, full slots and fatal Tag reason delivered before EOF"<<std::endl;
 }catch(const std::exception& e){std::cerr<<e.what()<<std::endl;return 1;}}

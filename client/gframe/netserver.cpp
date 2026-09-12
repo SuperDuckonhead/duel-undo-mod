@@ -496,7 +496,9 @@ void NetServer::HandleCTOSPacket(DuelPlayer* dp, unsigned char* data, size_t len
 		std::memcpy(&packet, pdata, sizeof packet);
 		auto pkt = &packet;
         if(room_admission && pkt->info.mode==MODE_TAG) { RejectUndoPeer(dp,undo::RoomPolicyReason::Tag);return; }
-        if(room_admission && pkt->info.mode==MODE_MATCH) { RejectUndoPeer(dp,undo::RoomPolicyReason::Match);return; }
+        if(room_admission && pkt->info.mode==MODE_MATCH && room_config && room_config->bot) {
+            RejectUndoPeer(dp,undo::RoomPolicyReason::Match);return;
+        }
 		if(pkt->info.rule > CURRENT_RULE)
 			pkt->info.rule = CURRENT_RULE;
 		if(pkt->info.mode > MODE_TAG)

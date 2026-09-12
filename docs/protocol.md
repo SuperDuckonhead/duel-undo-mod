@@ -181,11 +181,38 @@ undo admission until a new input boundary or the actual rejection/retry boundary
 
 Fixed legacy STOC_ErrorMsg uses discriminator 0x7e for explicit public policy
 notices. Code bit31 means fatal; low values are Tag1, Observer2, Full3,
-Incompatible4, MissingMod5, HandshakeTimeout6, Match7. These notices bypass the
+Incompatible4, MissingMod5, HandshakeTimeout6, unsupported AI Match7. These notices bypass the
 gameplay/AI callback journal and remain deliverable while a transaction is
 paused. Fatal replies drain before closing, bounded by a two-second deadline.
-First-release undo rooms accept exactly two duelists in single-duel mode;
-Match, Tag and observers are rejected before unsupported participation begins.
+Undo rooms accept exactly two duelists in Single or human Match mode;
+AI Match, Tag and observers are rejected before unsupported participation begins.
+
+## Match game boundaries
+
+Restore profile 2 adds host-to-client RoundStart (15); envelope framing v1 and
+the 99-byte Hello v2 layout are unchanged. A profile 1 peer fails the restore
+format compatibility check. RoundStart key is `{roomSession, previousEpoch, 0,
+0, zeroDigest}`; payload is little-endian u64 nextEpoch followed by u8 game
+number 2 or 3. nextEpoch must equal previousEpoch+1 without overflow. The first
+game starts implicitly at number 1, epoch 0. Epoch also advances on undo commits
+and never resets between games.
+
+Native Match scoring, side validation, readiness, loser turn choice and final
+termination remain in SingleDuel. Each finished game exports its final replay
+before clearing undo history. The old core/epoch continues to carry ordered
+replay and native siding/start/turn-choice packets. At the valid next TPResult,
+the host prepares a fresh per-game state, emits RoundStart at the old epoch,
+then installs the new state and emits MSG_START at the new epoch. The room
+session and participant identities persist; history, prompts and streams do not.
+
+The client requires a normal game end, CHANGE_SIDE and its native DUEL_START
+before accepting the exact next transition. Full STOC_DUEL_END is terminal.
+An uncertain restore cannot be reopened by a round transition. The client clears
+old models, prompts, commands and pending response identities, resets stream
+sequence to zero, and waits for the new authoritative prompt/status before
+enabling gameplay. Native side-deck and turn-choice responses keep their original
+dispatch. Old-epoch gameplay, consent and undo controls cannot affect the next
+game; no rollback crosses a finished-game boundary or changes side-deck edits.
 
 
 ## Responses already in flight when undo starts

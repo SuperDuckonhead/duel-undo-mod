@@ -96,6 +96,19 @@ int main() { try {
   CHECK(host->resources->Read("script/c900000001.lua")==fixture::bytes("-- same card script"));
  }
  auto host=CaptureRoomConfig(hostData,hostRoot,false,RoomMode::ConsentLan);
+ // Match round transitions change the restore lifecycle, while retaining the
+ // 99-byte Hello v2 layout. Prior single-only restore profile peers must fail
+ // the real handshake instead of joining a room they cannot continue.
+ auto restoreProfile=[](uint64_t version) {
+  const std::string domain="ygopro-undo-player-restore-status";
+  Bytes bytes(domain.begin(),domain.end());
+  for(auto value:{version,uint64_t(0)})for(unsigned i=0;i<8;++i)bytes.push_back(uint8_t(value>>(8*i)));
+  return Sha256(bytes);
+ };
+ CHECK(host->capability.rules==restoreProfile(2));
+ auto beforeMatch=host->capability;beforeMatch.rules=restoreProfile(1);
+ CHECK(Compatibility(host->capability,beforeMatch)=="restore format");
+ join(host->capability,beforeMatch,false);
  fixture::WriteFixtureFile(guestRoot+"/single/oversized.bin",Bytes(0x100000,1));
  auto guest=CaptureRoomConfig(guestData,guestRoot,false,RoomMode::ConsentLan);
  join(host->capability,guest->capability,true);

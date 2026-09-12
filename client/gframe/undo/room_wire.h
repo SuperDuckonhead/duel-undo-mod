@@ -13,6 +13,14 @@ struct GamePacket {
 std::vector<Envelope> EncodeGamePacket(const SessionId&, std::uint64_t epoch,
     std::uint64_t prompt, std::uint64_t sequence, const Bytes& packet);
 
+// Native Match lifecycle, authenticated by the existing host room session.
+// The previous epoch identifies the finished game; the next epoch also fences
+// old responses after any undo commits made in that game.
+struct RoundTransition { std::uint64_t epoch; std::uint8_t number; };
+Envelope EncodeRoundStart(const SessionId&, std::uint64_t previousEpoch,
+    std::uint64_t nextEpoch, std::uint8_t number);
+RoundTransition DecodeRoundStart(const Envelope&);
+
 // One recipient, one epoch, one TCP ordered stream. Reset only after an
 // authenticated room initialization or a committed epoch change.
 class GamePacketStream {

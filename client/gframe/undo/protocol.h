@@ -12,7 +12,7 @@ struct TxKey {
 };
 enum class WireKind : std::uint8_t {
  Hello=1, Response=2, Request=3, Consent=4, Prepare=5, Ready=6,
- Commit=7, CommitAck=8, Resume=9, Abort=10, AbortAck=11, Game=12, Status=13, RequestRejected=14
+ Commit=7, CommitAck=8, Resume=9, Abort=10, AbortAck=11, Game=12, Status=13, RequestRejected=14, RoundStart=15
 };
 struct Envelope { WireKind kind; TxKey key; Bytes payload; };
 constexpr std::size_t WireHeaderSize = 79;
@@ -28,7 +28,7 @@ enum class RoomMode : std::uint8_t { ConsentLan=1, LoopbackFree=2 };
 // with explicit compatible formats and the logical native-selection card data.
 constexpr std::uint16_t CapabilityVersion = 2;
 constexpr std::uint16_t GameMessageProfileVersion = 1;
-constexpr std::uint16_t RestoreProfileVersion = 1;
+constexpr std::uint16_t RestoreProfileVersion = 2;
 struct Hello {
  std::uint16_t version{CapabilityVersion};
  // Fixed wire slots retained to avoid changing the envelope/Hello layout:

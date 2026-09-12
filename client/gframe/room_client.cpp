@@ -55,6 +55,7 @@ struct RoomClient::Impl {
               packet[0] == CTOS_TIME_CONFIRM);
     }
   };
+  enum class RoundPhase { AwaitingStart, Playing, Ended, Siding, Starting, MatchEnded };
   Game &g;
   Send send;
   Apply apply;
@@ -72,6 +73,8 @@ struct RoomClient::Impl {
   std::unique_ptr<undo::FragmentAssembler> fragments;
   std::unique_ptr<Prepared> prepared;
   bool committed{}, failed{}, capturing{}, requested{}, terminal{}, closed{};
+  RoundPhase roundPhase{RoundPhase::AwaitingStart};
+  uint8_t roundNumber{1};
   uint64_t requestedId{};
   std::optional<undo::InputSubmission> automatic;
   mutable std::mutex mutex;
@@ -127,47 +130,191 @@ struct RoomClient::Impl {
     freezePresentation = true;
     canUndo = false;
     consent = false;
+    responseAllowed = false;
+    capturePublished = false;
+    automatic.reset();
     requestNotice.clear();
     text = L"恢复状态不确定，已暂停对战";
     commands.clear();
+  }
+  void endGame(bool matchEnded) {
+    // A terminal result may be displayed before the host confirms an installed
+    // restore. Ending that game must not turn its uncertain commit into a new
+    // permission to play; only Resume can settle an installed transaction.
+    if (committed)
+      failed = true;
+    {
+      std::lock_guard<std::mutex> lock(g.gMutex);
+      prepared.reset();
+      restore.reset();
+      snapshots.clear();
+      journal.clear();
+      DuelClient::ClearPendingResponse();
+    }
+    active.reset();
+    fragments.reset();
+    committed = false;
+    requested = false;
+    capturing = false;
+    if (matchEnded)
+      roundPhase = RoundPhase::MatchEnded;
+    else if (!failed)
+      roundPhase = RoundPhase::Ended;
+    std::lock_guard<std::mutex> lock(mutex);
+    terminal = true;
+    paused = true;
+    canUndo = false;
+    consent = false;
+    consentKey = {};
+    responseAllowed = false;
+    responseQueued = false;
+    capturePublished = false;
+    requestNotice.clear();
+    // Native win/replay/side/turn-choice windows must retain their original
+    // frame and action waits while gameplay and undo remain closed.
+    freezePresentation = false;
+    commands.clear();
+    automatic.reset();
+    requestPending = false;
+    text = matchEnded ? L"对战已结束" : L"本局已结束，等待下一局";
+  }
+  void receiptRoundStart(const undo::Envelope &e) {
+    if (!undo::IsCurrent(e.key, session, epoch))
+      return;
+    const auto next = undo::DecodeRoundStart(e);
+    need(!failed && roundPhase == RoundPhase::Starting &&
+             next.number == roundNumber + 1,
+         "Unexpected Match round transition");
+    auto nextStream = std::make_unique<undo::GamePacketStream>(session, next.epoch);
+    {
+      std::lock_guard<std::mutex> lock(g.gMutex);
+      prepared.reset();
+      restore.reset();
+      snapshots.clear();
+      journal.clear();
+      view = {};
+      DuelClient::RestorePromptContext({});
+      DuelClient::ClearPendingResponse();
+      for (auto &f : g.fadingList) {
+        f.guiFading->setRelativePosition(f.fadingSize);
+        f.guiFading->setVisible(false);
+      }
+      g.fadingList.clear();
+      g.wFTSelect->setVisible(false);
+      g.showcard = 0;
+      g.is_attacking = 0;
+      g.waitFrame = -1;
+      g.lpframe = 0;
+      g.lpcstring.clear();
+      g.dInfo.curMsg = 0;
+      g.dInfo.time_player = 2;
+      stream.swap(nextStream);
+      epoch = next.epoch;
+      roundNumber = next.number;
+      roundPhase = RoundPhase::AwaitingStart;
+      prompt = 0;
+      outboundSequence = 0;
+      highestRequest = 0;
+      requestedId = 0;
+      recipient = 2;
+      status = {};
+      active.reset();
+      fragments.reset();
+      committed = false;
+      requested = false;
+      capturing = false;
+      boundaryDirty = false;
+      std::lock_guard<std::mutex> publication(mutex);
+      published = {session, epoch, 0};
+      terminal = false;
+      paused = true;
+      canUndo = false;
+      consent = false;
+      consentKey = {};
+      responseQueued = false;
+      responseAllowed = false;
+      capturePublished = false;
+      freezePresentation = false;
+      requestPending = false;
+      requestPublished = 1;
+      automatic.reset();
+      commands.clear();
+      requestNotice.clear();
+      text = L"正在开始下一局";
+    }
   }
   void receiptGame(const undo::Envelope &e) {
     auto packet = stream->Add(e);
     if (!packet)
       return;
     const auto &bytes = packet->packet;
-    const bool ending =
-        bytes[0] == STOC_DUEL_END ||
-        (bytes.size() > 1 && bytes[0] == STOC_GAME_MSG && bytes[1] == MSG_WIN);
-    if (ending || (terminal && bytes[0] == STOC_REPLAY)) {
-      // Terminal display is authorized even after uncertain commit. It
-      // ends the room; it never resumes input or claims an abort rollback.
-      {
-        std::lock_guard<std::mutex> lock(g.gMutex);
-        prepared.reset();
-        restore.reset();
-      }
-      active.reset();
-      fragments.reset();
-      failed = true;
-      {
-        std::lock_guard<std::mutex> lock(mutex);
-        terminal = true;
-        paused = true;
-        canUndo = false;
-        consent = false;
-        requestNotice.clear();
-        freezePresentation = false;
-        commands.clear();
-        automatic.reset();
-        requestPending = false;
-      }
+    if (terminal && bytes[0] == STOC_REPLAY) {
+      // Final replay remains displayable even after an uncertain restore.
+      apply(bytes);
+      return;
+    }
+    if (roundPhase == RoundPhase::MatchEnded)
+      return;
+    if (bytes[0] == STOC_DUEL_END) {
+      need(bytes.size() == 1, "Invalid duel end");
+      endGame(true);
+      apply(bytes);
+      return;
+    }
+    if (bytes.size() > 1 && bytes[0] == STOC_GAME_MSG && bytes[1] == MSG_WIN) {
+      need(bytes.size() == 4 && bytes[2] <= 2, "Invalid game result");
+      // A failed restore may display a final result but never gain permission
+      // to begin another game. Only a live, normally ended game can do that.
+      need(failed || roundPhase == RoundPhase::Playing, "Unexpected game result");
+      endGame(false);
       apply(bytes);
       return;
     }
     need(!active && !failed, "Gameplay arrived during transaction");
+    switch (bytes[0]) {
+    case STOC_CHANGE_SIDE:
+      need(bytes.size() == 1 && roundPhase == RoundPhase::Ended,
+           "Unexpected side change");
+      roundPhase = RoundPhase::Siding;
+      apply(bytes);
+      return;
+    case STOC_WAITING_SIDE:
+      need(bytes.size() == 1 && roundPhase == RoundPhase::Siding,
+           "Unexpected side wait");
+      apply(bytes);
+      return;
+    case STOC_DUEL_START:
+      need(bytes.size() == 1 &&
+               (roundPhase == RoundPhase::Siding ||
+                (roundNumber == 1 && roundPhase == RoundPhase::AwaitingStart)),
+           "Unexpected native duel start");
+      if (roundPhase == RoundPhase::Siding)
+        roundPhase = RoundPhase::Starting;
+      apply(bytes);
+      return;
+    case STOC_SELECT_TP:
+      need(bytes.size() == 1 &&
+               (roundPhase == RoundPhase::Starting ||
+                (roundNumber == 1 && roundPhase == RoundPhase::AwaitingStart)),
+           "Unexpected turn choice");
+      apply(bytes);
+      return;
+    case STOC_ERROR_MSG:
+      if (roundPhase == RoundPhase::Siding) {
+        need(bytes.size() == 1 + sizeof(STOC_ErrorMsg), "Invalid side error");
+        STOC_ErrorMsg error{};
+        std::memcpy(&error, bytes.data() + 1, sizeof(error));
+        need(error.msg == ERRMSG_SIDEERROR || error.msg == ERRMSG_DECKERROR,
+             "Unexpected side error");
+        apply(bytes);
+        return;
+      }
+      break;
+    }
+    need(!terminal, "Gameplay arrived after game end");
     const bool game = bytes[0] == STOC_GAME_MSG;
     if (bytes[0] == STOC_TIME_LIMIT) {
+      need(roundPhase == RoundPhase::Playing, "Timer before game start");
       // WaitforResponse sends this packet before the selecting player's game
       // message. Bind its automatic acknowledgement to the packet's prompt,
       // while keeping the old visible prompt closed to gameplay submissions.
@@ -177,14 +324,17 @@ struct RoomClient::Impl {
     if (game) {
       need(bytes.size() > 1, "Empty game message");
       if (bytes[1] == MSG_START) {
+        need(roundPhase == RoundPhase::AwaitingStart, "Unexpected game start");
         need(bytes.size() > 2, "Truncated start");
         recipient = bytes[2];
         need(recipient < 2, "撤回房间仅支持两名对战玩家");
+        roundPhase = RoundPhase::Playing;
         restore = std::make_unique<undo::ClientRestore>(
             g.dField, view, recipient, session, epoch);
         journal.clear();
         snapshots.clear();
-      }
+      } else
+        need(roundPhase == RoundPhase::Playing, "Gameplay before game start");
       prompt = packet->prompt;
       capturing = true;
       if (bytes[1] == MSG_RETRY)
@@ -209,10 +359,23 @@ struct RoomClient::Impl {
   void receiptStatus(const undo::Envelope &e) {
     if (!undo::IsCurrent(e.key, session, epoch))
       return;
+    if (terminal) {
+      // A new core or round notification can fail while the native side/turn
+      // windows are open. Report that failure without allowing a status to
+      // revive the finished game or bypass the RoundStart barrier.
+      if (roundPhase == RoundPhase::MatchEnded || e.key.request ||
+          e.key.targetIndex || e.key.targetDigest != undo::Digest{})
+        return;
+      if (undo::DecodeRoomStatus(e.payload).state == undo::TxState::PausedFailed)
+        fail();
+      return;
+    }
     need(!e.key.request && !e.key.targetIndex &&
              e.key.targetDigest == undo::Digest{},
          "Invalid status identity");
     status = undo::DecodeRoomStatus(e.payload);
+    need(!status.prompt || roundPhase == RoundPhase::Playing,
+         "Boundary before game start");
     if (status.state == undo::TxState::PausedFailed) {
       fail();
       return;
@@ -486,12 +649,20 @@ RoomClient::~RoomClient() = default;
 void RoomClient::Close() { impl_->close(); }
 void RoomClient::Receive(const undo::Envelope &e) {
   auto &r = *impl_;
+  if (r.closed)
+    return;
   if (r.failed && e.kind != undo::WireKind::Game)
+    return;
+  if (r.terminal && e.kind != undo::WireKind::Game &&
+      e.kind != undo::WireKind::RoundStart && e.kind != undo::WireKind::Status)
     return;
   try {
     switch (e.kind) {
     case undo::WireKind::Game:
       r.receiptGame(e);
+      break;
+    case undo::WireKind::RoundStart:
+      r.receiptRoundStart(e);
       break;
     case undo::WireKind::Status:
       r.receiptStatus(e);
@@ -592,10 +763,12 @@ bool RoomClient::Submit(const undo::InputSubmission &i) {
 bool RoomClient::QueueLegacy(const undo::Bytes &b) {
   auto &r = *impl_;
   std::lock_guard<std::mutex> lock(r.mutex);
-  if (b.empty() ||
+  if (b.empty() || r.terminal ||
       (r.paused && (b[0] != CTOS_TIME_CONFIRM || r.freezePresentation)))
     return false;
   if (b[0] != CTOS_TIME_CONFIRM && b[0] != CTOS_SURRENDER)
+    return false;
+  if (b[0] == CTOS_TIME_CONFIRM && !r.published.prompt)
     return false;
   Impl::Command c;
   c.kind = Impl::Command::Legacy;
@@ -642,7 +815,7 @@ void RoomClient::Poll() {
   }
   try {
     for (auto &c : commands) {
-      if (r.failed)
+      if (r.failed || r.terminal)
         break;
       if (c.kind == Impl::Command::Request) {
         if (r.active) {

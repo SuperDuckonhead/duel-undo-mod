@@ -18,7 +18,7 @@ inline const wchar_t* PolicyMessage(std::uint32_t code) {
     case RoomPolicyReason::Incompatible: return L"双方的撤回版本或决斗资源不一致，无法开始对战。";
     case RoomPolicyReason::MissingMod: return L"此房间需要双方使用兼容的撤回版客户端。";
     case RoomPolicyReason::HandshakeTimeout: return L"撤回版本确认超时，请重新加入房间。";
-    case RoomPolicyReason::Match: return L"撤回版首版仅支持单局，暂不支持 Match（三局两胜与局间换副牌）。";
+    case RoomPolicyReason::Match: return L"AI 对战暂不支持 Match，请使用单局模式。";
     default: return nullptr;
     }
 }
