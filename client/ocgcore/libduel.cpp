@@ -2699,7 +2699,10 @@ int32_t scriptlib::duel_is_existing_matching_card(lua_State *L) {
 	uint32_t location1 = (uint32_t)lua_tointeger(L, 3);
 	uint32_t location2 = (uint32_t)lua_tointeger(L, 4);
 	uint32_t fcount = (uint32_t)lua_tointeger(L, 5);
-	lua_pushboolean(L, pduel->game_field->filter_matching_card(L, 1, (uint8_t)self, location1, location2, 0, pexception, pexgroup, extraargs, nullptr, fcount));
+	bool exists = pduel->game_field->filter_matching_card(L, 1, (uint8_t)self, location1, location2, 0, pexception, pexgroup, extraargs, nullptr, fcount);
+	if(pduel->pool_query)
+		exists = pduel->pool_query(L, false, exists);
+	lua_pushboolean(L, exists);
 	return 1;
 }
 /**
@@ -2730,6 +2733,8 @@ int32_t scriptlib::duel_select_matching_cards(lua_State *L) {
 	uint32_t max = (uint32_t)lua_tointeger(L, 7);
 	group* pgroup = pduel->new_group();
 	pduel->game_field->filter_matching_card(L, 2, (uint8_t)self, location1, location2, pgroup, pexception, pexgroup, extraargs);
+	if(pduel->pool_query)
+		pduel->pool_query(L, true, !pgroup->container.empty());
 	pduel->game_field->core.select_cards.assign(pgroup->container.begin(), pgroup->container.end());
 	pduel->game_field->add_process(PROCESSOR_SELECT_CARD, 0, 0, 0, playerid, min + (max << 16));
 	return lua_yieldk(L, 0, (lua_KContext)pduel, [](lua_State *L, int32_t status, lua_KContext ctx) {

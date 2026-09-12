@@ -1873,6 +1873,8 @@ int32_t card::add_effect(effect* peffect) {
 	effect* reason_effect = pduel->game_field->core.reason_effect;
 	indexer.emplace(peffect, eit);
 	peffect->handler = this;
+	if(!peffect->registration_ordinal)
+		peffect->registration_ordinal = ++effect_registration_count;
 	if (peffect->is_flag(EFFECT_FLAG_INITIAL))
 		initial_effect.insert(peffect);
 	else if (peffect->is_flag(EFFECT_FLAG_COPY))

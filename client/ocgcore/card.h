@@ -171,6 +171,7 @@ public:
 	uint8_t attack_all_target{};
 	uint8_t attack_controler{};
 	uint64_t cardid{};
+	uint64_t effect_registration_count{};
 	uint32_t fieldid{};
 	uint32_t fieldid_r{};	//real field id, updated when moving to new location
 	uint32_t activate_count_id{};	//updated when moving to new location or flipping

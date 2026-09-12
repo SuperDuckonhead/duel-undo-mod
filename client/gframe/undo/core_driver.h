@@ -2,6 +2,8 @@
 #include "resource_view.h"
 #include <functional>
 namespace undo {
+class PoolQueryGate;
+struct PoolQueryState;
 struct InitialCard {
  uint32_t code{}; uint8_t owner{},controller{},location{},sequence{},position{};
 };
@@ -17,7 +19,7 @@ struct InitialState {
  Bytes scenarioParameters;
  Digest resourceDigest{};
 };
-enum class BoundaryKind { AwaitResponse, Finished, Failed };
+enum class BoundaryKind { AwaitResponse, Finished, Failed, AwaitPoolQuery };
 struct Boundary {
  BoundaryKind kind{BoundaryKind::Failed}; Checkpoint checkpoint{};
  bool rejectedResponse{}; std::string failure;
@@ -38,11 +40,15 @@ public:
  Bytes QueryCard(uint8_t player,uint8_t location,uint8_t sequence,uint32_t flags) const;
  Boundary Current() const;
  void Submit(const Bytes&);
+ void Submit(const Bytes&,Origin);
  const InitialState& Initial() const { return initial_; }
  std::shared_ptr<const ResourceView> Resources() const { return resources_; }
  Bytes Transcript() const;
  std::vector<std::string> Logs() const;
+ // Private host diagnostic, deliberately separate from legacy checkpoints.
+ Bytes DiagnosticState() const;
 private:
+ friend class PoolQueryGate;
  class Binding;
  CoreDriver(const InitialState&,std::shared_ptr<const ResourceView>);
  static unsigned char* Script(const char*,int*);
@@ -58,5 +64,6 @@ private:
  Bytes transcript_;
  std::vector<std::string> logs_;
  std::string callbackFailure_;
+ std::shared_ptr<PoolQueryState> poolQuery_;
 };
 }

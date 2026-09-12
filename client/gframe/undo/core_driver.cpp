@@ -1,9 +1,11 @@
 #include "core_driver.h"
+#include "deck_test_query.h"
 #include "../../ocgcore/ocgapi.h"
 #include "../../ocgcore/duel.h"
 #include "../../ocgcore/field.h"
 #include "../../ocgcore/card.h"
 #include "../../ocgcore/interpreter.h"
+#include "../../ocgcore/effect.h"
 #include <algorithm>
 #include <cstring>
 #include <limits>
@@ -164,6 +166,7 @@ Boundary CoreDriver::Advance(const LiveOutput& output) {
  Boundary old;
  { Binding binding(this);
   if(waiting_ && !submitted_)return boundary_;
+  if(boundary_.kind==BoundaryKind::AwaitPoolQuery)return boundary_;
   if(started_ && (boundary_.kind==BoundaryKind::Finished || boundary_.kind==BoundaryKind::Failed))return boundary_;
   old=boundary_;waiting_=false;boundary_.rejectedResponse=false;
  }
@@ -177,7 +180,7 @@ Boundary CoreDriver::Advance(const LiveOutput& output) {
    {Binding binding(this);start_duel(handle_,initial_.duelOptions);started_=true;}
   }
   for(size_t step=0;step<100000;++step) {
-   std::vector<Message> messages;bool prompt=false,finished=false;uint32_t status{};
+   std::vector<Message> messages;bool prompt=false,finished=false,privateQuery=false;uint32_t status{};
    {
     Binding binding(this);status=process(handle_);Bytes message((status&PROCESSOR_BUFFER_LEN)+4096);auto n=get_message(handle_,message.data());message.resize(n);CheckFailure();messages=decode(message);
     bool retry=false;
@@ -190,11 +193,15 @@ Boundary CoreDriver::Advance(const LiveOutput& output) {
     if(retry){
      if(!submitted_)throw std::runtime_error("Core retry without submitted response");
      if(Canonical()!=old.checkpoint.canonicalState)throw std::runtime_error("Rejected response changed canonical core state");
+     PoolQueryGate::ResponseRejected(*this);
      boundary_=old;boundary_.rejectedResponse=true;waiting_=true;submitted_=false;return boundary_;
     }
-    if(prompt || finished || (status&PROCESSOR_END)){
+    privateQuery=reinterpret_cast<duel*>(handle_)->pool_selection_pending;
+    if(prompt || finished || privateQuery || (status&PROCESSOR_END)){
+     PoolQueryGate::ResponseAccepted(*this);
      transcript_.insert(transcript_.end(),accepted.begin(),accepted.end());
      boundary_.kind=finished || (status&PROCESSOR_END)?BoundaryKind::Finished:BoundaryKind::AwaitResponse;
+     if(privateQuery) {boundary_.kind=BoundaryKind::AwaitPoolQuery;boundary_.checkpoint.prompt.clear();}
      if(boundary_.kind==BoundaryKind::Finished)boundary_.checkpoint.prompt.clear();
      boundary_.checkpoint.canonicalState=Canonical();boundary_.checkpoint.transcriptDigest=Sha256(transcript_);
      boundary_.failure.clear();waiting_=boundary_.kind==BoundaryKind::AwaitResponse;submitted_=false;
@@ -202,7 +209,7 @@ Boundary CoreDriver::Advance(const LiveOutput& output) {
    }
    // No Binding or API mutex remains while a live client animates or waits.
    if(output)for(const auto& m:messages)if(!m.prompt)output(m.bytes);
-   if(prompt || finished || (status&PROCESSOR_END))return boundary_;
+   if(prompt || finished || privateQuery || (status&PROCESSOR_END))return boundary_;
    // Confirmation/display operations also yield PROCESSOR_WAITING without a response.
    // Continue the bounded loop; only decoded response prompts stop this boundary.
   }
@@ -219,9 +226,14 @@ Bytes CoreDriver::QueryCard(uint8_t player,uint8_t location,uint8_t sequence,uin
  if(player>1)throw std::invalid_argument("Invalid query player");Binding binding(const_cast<CoreDriver*>(this));Bytes b(16*1024*1024);auto n=query_card(handle_,player,location,sequence,flags,b.data(),0);b.resize(n);CheckFailure();return b;
 }
 void CoreDriver::Submit(const Bytes& response) {
+ Submit(response,Origin::Manual);
+}
+void CoreDriver::Submit(const Bytes& response,Origin origin) {
  Binding binding(this);
  if(!waiting_ || submitted_ || boundary_.kind!=BoundaryKind::AwaitResponse)throw std::logic_error("Response requires current waiting prompt");
  if(response.empty() || response.size()>SIZE_RETURN_VALUE)throw std::invalid_argument("Response exceeds fixed core response buffer");
+ if(uint8_t(origin)>uint8_t(Origin::Bot))throw std::invalid_argument("Invalid response origin");
+ PoolQueryGate::ResponseSubmitted(*this,response,origin);
  byte buffer[SIZE_RETURN_VALUE]{};std::copy(response.begin(),response.end(),buffer);set_responseb(handle_,buffer);submitted_=true;
 }
 Boundary CoreDriver::Current() const {
@@ -232,5 +244,37 @@ Boundary CoreDriver::Current() const {
  return current;
 }
 Bytes CoreDriver::Transcript() const {std::lock_guard<std::recursive_mutex> lock(ocgapi_mutex());return transcript_;}
+Bytes CoreDriver::DiagnosticState() const {
+ Binding binding(const_cast<CoreDriver*>(this));
+ auto* pd=reinterpret_cast<duel*>(handle_);auto* f=pd->game_field;Bytes result;
+ word(result,f->infos.card_id,8);word(result,f->infos.field_id);word(result,f->infos.copy_id);
+ word(result,f->infos.turn_id);word(result,f->infos.phase);word(result,f->infos.turn_player);
+ std::vector<card*> cards(pd->cards.begin(),pd->cards.end());
+ std::sort(cards.begin(),cards.end(),[](auto* a,auto* b){return a->cardid<b->cardid;});word(result,cards.size());
+ for(auto* c:cards) {
+  word(result,c->cardid,8);word(result,c->data.code);word(result,c->owner);
+  word(result,c->current.controler);word(result,c->current.location);word(result,c->current.sequence);word(result,c->current.position);
+  word(result,c->status);word(result,c->fieldid);word(result,c->fieldid_r);word(result,c->effect_registration_count,8);
+  word(result,c->xyz_materials.size());for(auto* x:c->xyz_materials)word(result,x->cardid,8);
+ }
+ for(auto& p:f->player) {
+  word(result,p.lp);
+  for(auto* zone:{&p.list_main,&p.list_hand,&p.list_mzone,&p.list_szone,&p.list_grave,&p.list_remove,&p.list_extra}) {
+   word(result,zone->size());for(auto* c:*zone)word(result,c?c->cardid:0,8);
+  }
+ }
+ const auto random=pd->random.diagnostic_state();blob(result,Bytes(random.begin(),random.end()));
+ word(result,pd->lua_seed[0],8);word(result,pd->lua_seed[1],8);
+ // Lua's math.random stores its current generator in a userdata upvalue.
+ auto* L=pd->lua->lua_state;const int top=lua_gettop(L);
+ lua_rawgeti(L,LUA_REGISTRYINDEX,LUA_RIDX_GLOBALS);lua_pushliteral(L,"math");lua_rawget(L,-2);
+ if(lua_istable(L,-1)){lua_pushliteral(L,"random");lua_rawget(L,-2);}else lua_pushnil(L);
+ if(lua_isfunction(L,-1) && lua_getupvalue(L,-1,1) && lua_isuserdata(L,-1)) {
+  const auto* bytes=static_cast<const uint8_t*>(lua_touserdata(L,-1));const auto size=lua_rawlen(L,-1);
+  blob(result,Bytes(bytes,bytes+size));
+ } else word(result,0);
+ lua_settop(L,top);
+ return result;
+}
 std::vector<std::string> CoreDriver::Logs() const {std::lock_guard<std::recursive_mutex> lock(ocgapi_mutex());return logs_;}
 }

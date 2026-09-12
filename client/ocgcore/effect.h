@@ -35,6 +35,7 @@ public:
 	uint32_t description{ 0 };
 	uint32_t code{ 0 };
 	uint32_t id{ 0 };
+	uint64_t registration_ordinal{};
 	uint32_t type{ 0 };
 	uint16_t copy_id{ 0 };
 	uint16_t range{ 0 };

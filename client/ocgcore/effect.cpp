@@ -433,6 +433,12 @@ int32_t effect::is_activate_ready(effect* reason_effect, uint8_t playerid, const
 		reason_effect->cost_checked = FALSE;
 	}
 	if(!neglect_target && target) {
+		struct QueryScope {
+			duel* pd; effect* previous; const tevent* previous_event;
+			~QueryScope() { pd->pool_target_check = previous; pd->pool_target_event = previous_event; }
+		} query_scope{pduel, pduel->pool_target_check, pduel->pool_target_event};
+		pduel->pool_target_check = reason_effect;
+		pduel->pool_target_event = &e;
 		pduel->lua->add_param(reason_effect, PARAM_TYPE_EFFECT);
 		pduel->lua->add_param(playerid, PARAM_TYPE_INT);
 		pduel->lua->add_param(e.event_cards, PARAM_TYPE_GROUP);
@@ -790,6 +796,7 @@ effect* effect::clone() {
 	effect* ceffect = pduel->new_effect();
 	int32_t ref = ceffect->ref_handle;
 	*ceffect = *this;
+	ceffect->registration_ordinal = 0;
 	ceffect->ref_handle = ref;
 	ceffect->handler = 0;
 	if(condition)

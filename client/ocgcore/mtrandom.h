@@ -12,6 +12,7 @@
 #include <random>
 #include <vector>
 #include <utility>
+#include <sstream>
 
 class mtrandom {
 public:
@@ -43,6 +44,12 @@ public:
 	}
 	uint_fast32_t rand() {
 		return rng();
+	}
+	// Read-only diagnostics; serializing the engine never draws a random value.
+	std::string diagnostic_state() const {
+		std::ostringstream out;
+		out << rng;
+		return out.str();
 	}
 	void discard(unsigned long long z) {
 		rng.discard(z);

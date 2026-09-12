@@ -14,12 +14,15 @@
 #include <set>
 #include <unordered_set>
 #include <vector>
+#include <functional>
 
 class card;
 class group;
 class effect;
 class field;
 class interpreter;
+struct lua_State;
+struct tevent;
 
 using card_set = std::set<card*, card_sort>;
 
@@ -32,6 +35,12 @@ public:
 	interpreter* lua;
 	field* game_field;
 	mtrandom random;
+	// Host-private, per-duel semantic query bridge. Normal cores leave it absent.
+	// The Lua state is borrowed only for this synchronous invocation.
+	std::function<bool(lua_State*, bool, bool)> pool_query;
+	effect* pool_target_check{};
+	const tevent* pool_target_event{};
+	bool pool_selection_pending{};
 
 	std::vector<byte> message_buffer;
 	std::unordered_set<card*> cards;
