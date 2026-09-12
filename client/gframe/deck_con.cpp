@@ -140,6 +140,62 @@ void DeckBuilder::RefreshEditorUndo() {
 	mainGame->btnUndoDeck->setToolTipText(!editorHistoryValid ? undo::EditorUndoInvalidText :
 		(editorHistory.CanUndo() ? undo::EditorUndoHint : undo::EditorUndoEmptyText));
 }
+DeckTestEntryState DeckBuilder::GetDeckTestEntryState() const {
+	if(!mainGame || this != &mainGame->deckBuilder || !mainGame->is_building)
+		return HasEditorSuspension() ? DeckTestEntryState::PendingPreparation : DeckTestEntryState::InactiveEditor;
+	if(mainGame->is_siding) return DeckTestEntryState::Siding;
+	if(HasEditorSuspension()) return DeckTestEntryState::PendingPreparation;
+	const auto state = EditorUndoState();
+	if(showing_pack) return DeckTestEntryState::ReadOnlyPack;
+	if(state.readOnly) return DeckTestEntryState::ReadOnlyDeck;
+	if(state.dragging) return DeckTestEntryState::Dragging;
+	if(state.modal) return DeckTestEntryState::BlockingDialog;
+	return DeckTestEntryState::Ready;
+}
+void DeckBuilder::RefreshDeckTestEntry() {
+	if(!mainGame || !mainGame->btnTestDeck) return;
+	const auto state = GetDeckTestEntryState();
+	const wchar_t* hint = undo::DeckTestHint;
+	switch(state) {
+	case DeckTestEntryState::PendingPreparation: hint = undo::DeckTestPendingText; break;
+	case DeckTestEntryState::Siding: hint = undo::DeckTestSidingText; break;
+	case DeckTestEntryState::ReadOnlyPack: hint = undo::DeckTestPackText; break;
+	case DeckTestEntryState::ReadOnlyDeck: hint = undo::DeckTestReadOnlyText; break;
+	case DeckTestEntryState::Dragging: hint = undo::DeckTestDraggingText; break;
+	case DeckTestEntryState::BlockingDialog: hint = undo::DeckTestDialogText; break;
+	case DeckTestEntryState::InactiveEditor: hint = undo::DeckTestInactiveText; break;
+	case DeckTestEntryState::Ready: break;
+	}
+	mainGame->btnTestDeck->setVisible(mainGame->is_building && !mainGame->is_siding);
+	mainGame->btnTestDeck->setEnabled(state == DeckTestEntryState::Ready);
+	mainGame->btnTestDeck->setToolTipText(hint);
+}
+bool DeckBuilder::RequestDeckTestPreparation() {
+	if(GetDeckTestEntryState() != DeckTestEntryState::Ready) {
+		RefreshDeckTestEntry();
+		return false;
+	}
+	auto token = SuspendEditor();
+	if(!token) {
+		RefreshDeckTestEntry();
+		return false;
+	}
+	deckTestPreparation = std::move(token);
+	RefreshDeckTestEntry();
+	return true;
+}
+bool DeckBuilder::CommitDeckTestPreparation(irr::IEventReceiver* receiver) {
+	if(!HasDeckTestPreparation()) return false;
+	return CommitEditorHandoff(*deckTestPreparation, receiver);
+}
+bool DeckBuilder::ResumeDeckTestPreparation() {
+	if(!HasDeckTestPreparation()) return false;
+	const auto token = *deckTestPreparation;
+	return ResumeEditor(token);
+}
+bool DeckBuilder::HasDeckTestPreparation() const {
+	return deckTestPreparation && MatchesSuspension(*deckTestPreparation);
+}
 bool DeckBuilder::UndoEditorEdit() {
 	if(!undo::CanEditorUndo(EditorUndoState())) return false;
 	try {
@@ -231,11 +287,13 @@ void DeckBuilder::Initialize() {
 	prev_operation = 0;
 	prev_sel = -1;
 	ResetEditorHistory();
+	RefreshDeckTestEntry();
 	mainGame->device->setEventReceiver(this);
 }
 void DeckBuilder::Terminate() {
 	// An ordinary exit explicitly abandons the capability before the existing
 	// reset path. It must never leave a token able to resurrect another session.
+	deckTestPreparation.reset();
 	suspension.reset();
 	++suspensionGeneration;
 	CancelEditorDrag();
@@ -252,6 +310,7 @@ void DeckBuilder::Terminate() {
 	mainGame->wCardImg->setVisible(false);
 	mainGame->wInfos->setVisible(false);
 	mainGame->btnLeaveGame->setVisible(false);
+	mainGame->btnTestDeck->setVisible(false);
 	mainGame->wBigCard->setVisible(false);
 	mainGame->btnBigCardOriginalSize->setVisible(false);
 	mainGame->btnBigCardZoomIn->setVisible(false);
@@ -276,6 +335,10 @@ void DeckBuilder::Terminate() {
 		mainGame->device->closeDevice();
 }
 bool DeckBuilder::OnEvent(const irr::SEvent& event) {
+	struct RefreshEntryOnExit {
+		DeckBuilder* editor;
+		~RefreshEntryOnExit() { editor->RefreshDeckTestEntry(); }
+	} refreshEntry{this};
 	if(HasEditorSuspension()) return true;
 	if(event.EventType == irr::EET_KEY_INPUT_EVENT && event.KeyInput.PressedDown) {
 		if(event.KeyInput.Key == irr::KEY_ESCAPE && (is_draging || is_starting_dragging)) {
@@ -317,6 +380,9 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 		case irr::gui::EGET_BUTTON_CLICKED: {
 			soundManager.PlaySoundEffect(SOUND_BUTTON);
 			switch(id) {
+			case BUTTON_TEST_DECK: {
+				return RequestDeckTestPreparation();
+			}
 			case BUTTON_UNDO_DECK: {
 				return UndoEditorEdit();
 			}
@@ -1861,6 +1927,7 @@ void DeckBuilder::RefreshReadonly(int catesel) {
 	mainGame->btnDMDeleteDeck->setEnabled(hasDeck && !readonly);
 	mainGame->btnMoveDeck->setEnabled(hasDeck && !readonly);
 	mainGame->btnCopyDeck->setEnabled(hasDeck);
+	RefreshDeckTestEntry();
 }
 void DeckBuilder::RefreshPackListScroll() {
 	if(HasEditorSuspension()) return;

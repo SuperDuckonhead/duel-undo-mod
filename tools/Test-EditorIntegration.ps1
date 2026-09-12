@@ -36,6 +36,26 @@ try {
     Get-Content -LiteralPath (Join-Path $testDir 'observer.stderr.log')
     if($testExit) { throw "Integration failed: $testExit" }
     if($observer.ExitCode) { throw "Second process failed: $($observer.ExitCode)" }
+    $entryImages = [ordered]@{
+        'deck-test-entry-080-enabled.png' = @(819, 512)
+        'deck-test-entry-100-enabled.png' = @(1024, 640)
+        'deck-test-entry-125-enabled.png' = @(1280, 800)
+        'deck-test-entry-150-enabled.png' = @(1536, 960)
+        'deck-test-entry-100-drag-disabled.png' = @(1024, 640)
+        'deck-test-entry-100-dialog-disabled.png' = @(1024, 640)
+        'deck-test-entry-100-pack-disabled.png' = @(1024, 640)
+        'deck-test-entry-100-siding-hidden.png' = @(1024, 640)
+    }
+    foreach($entry in $entryImages.GetEnumerator()) {
+        $path = Join-Path $testDir $entry.Key
+        if(!(Test-Path -LiteralPath $path) -or !(Get-Item -LiteralPath $path).Length) { throw "Missing entry image: $path" }
+        $png = [IO.File]::ReadAllBytes($path)
+        if($png.Length -lt 24 -or $png[0] -ne 137 -or $png[1] -ne 80 -or $png[2] -ne 78 -or $png[3] -ne 71) { throw "Invalid PNG: $path" }
+        [uint32]$width = ([uint32]$png[16] -shl 24) -bor ([uint32]$png[17] -shl 16) -bor ([uint32]$png[18] -shl 8) -bor $png[19]
+        [uint32]$height = ([uint32]$png[20] -shl 24) -bor ([uint32]$png[21] -shl 16) -bor ([uint32]$png[22] -shl 8) -bor $png[23]
+        if($width -ne $entry.Value[0] -or $height -ne $entry.Value[1]) { throw "Unexpected entry image dimensions $($width)x$($height): $path" }
+        Get-FileHash -Algorithm SHA256 -LiteralPath $path | Format-List Algorithm,Hash,Path
+    }
     Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $runtime 'deck/undo-editor-integration.ydk') | Format-List Algorithm,Hash,Path
 } finally {
     if(!$observer.HasExited) { Stop-Process -Id $observer.Id -Force }

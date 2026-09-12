@@ -16,6 +16,17 @@ struct CardDataC;
 struct LFList;
 struct EditorSuspension;
 
+enum class DeckTestEntryState {
+	Ready,
+	InactiveEditor,
+	PendingPreparation,
+	Siding,
+	ReadOnlyPack,
+	ReadOnlyDeck,
+	Dragging,
+	BlockingDialog
+};
+
 // A capability for one pending suspension. Copies cannot replay a consumed token
 // or refer to a different DeckBuilder, including one allocated at the same address.
 class EditorSuspensionToken {
@@ -39,6 +50,12 @@ public:
 	bool CommitEditorHandoff(const EditorSuspensionToken& token, irr::IEventReceiver* receiver);
 	bool ResumeEditor(const EditorSuspensionToken& token);
 	bool HasEditorSuspension() const { return bool(suspension); }
+	DeckTestEntryState GetDeckTestEntryState() const;
+	void RefreshDeckTestEntry();
+	bool RequestDeckTestPreparation();
+	bool CommitDeckTestPreparation(irr::IEventReceiver* receiver);
+	bool ResumeDeckTestPreparation();
+	bool HasDeckTestPreparation() const;
 	bool OnEvent(const irr::SEvent& event) override;
 	undo::DeckSnapshot CaptureEditorDeck() const;
 	bool RestoreEditorDeck(const undo::DeckSnapshot& snapshot);
@@ -130,6 +147,7 @@ private:
 	std::shared_ptr<const char> suspensionOwner{std::make_shared<const char>(0)};
 	uint64_t suspensionGeneration{};
 	std::shared_ptr<EditorSuspension> suspension;
+	std::optional<EditorSuspensionToken> deckTestPreparation;
 	std::shared_ptr<const LFList> restoredFilterList;
 };
 

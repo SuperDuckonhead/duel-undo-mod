@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <thread>
 #include <chrono>
+#include <clocale>
 #include <type_traits>
 using namespace ygo;
 static void mouse(irr::EMOUSE_INPUT_EVENT kind, int x, int y) {
@@ -27,6 +28,13 @@ static void button(irr::gui::IGUIButton* control) {
     irr::SEvent e{}; e.EventType = irr::EET_GUI_EVENT;
     e.GUIEvent.Caller = control; e.GUIEvent.EventType = irr::gui::EGET_BUTTON_CLICKED;
     mainGame->deckBuilder.OnEvent(e);
+}
+static void nativeClick(Game& game, int x, int y) {
+    const auto point = MAKELPARAM(x, y);
+    SendMessageW(game.hWnd, WM_MOUSEMOVE, 0, point);
+    SendMessageW(game.hWnd, WM_LBUTTONDOWN, MK_LBUTTON, point);
+    SendMessageW(game.hWnd, WM_LBUTTONUP, 0, point);
+    game.device->run();
 }
 static void change(irr::gui::IGUIComboBox* control) {
     irr::SEvent e{}; e.EventType = irr::EET_GUI_EVENT;
@@ -49,6 +57,7 @@ static void waitFor(const char* name) {
     CHECK(std::filesystem::exists(name));
 }
 #include "editor_suspension_cases.h"
+#include "editor_test_entry_cases.h"
 template<class T, class = void> struct HasEditorSuspension : std::false_type {};
 template<class T> struct HasEditorSuspension<T, std::void_t<decltype(std::declval<T&>().SuspendEditor())>> : std::true_type {};
 template<class Editor> static void suspensionRoundTrip(Game& game, Editor& editor) {
@@ -62,6 +71,7 @@ template<class Editor> static void suspensionRoundTrip(Game& game, Editor& edito
 }
 int main(int argc, char** argv) {
     try {
+        std::setlocale(LC_CTYPE, ".UTF-8");
         if(argc == 5 && std::string(argv[1]) == "--spawn-probe") {
             std::ofstream probe(argv[2], std::ios::binary);
             probe << std::filesystem::current_path().u8string() << '\n' << argv[3] << '\n' << argv[4];
@@ -128,6 +138,7 @@ int main(int argc, char** argv) {
             std::cout << "PASS second process memory and disk unchanged by first process undo\n";
             game.device->closeDevice(); return 0;
         }
+        editorTestEntryCases(game,editor);
         auto seed = [&] {
             game.wQuery->setVisible(false); game.wDeckManage->setVisible(false); game.wDMQuery->setVisible(false);
             game.wMessage->setVisible(false); game.wBigCard->setVisible(false); game.wACMessage->setVisible(false);

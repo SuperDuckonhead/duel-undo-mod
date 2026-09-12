@@ -16,8 +16,9 @@ static std::wstring observeEditor(Game& g) {
     for(auto s : {g.scrFilter,g.scrPackCards,g.scrCardText})
         out << s->getMin() << ':' << s->getMax() << ':' << s->getPos() << ':' << s->isVisible() << ':' << s->isEnabled() << '|';
     for(auto b : {g.btnEffectFilter,g.btnMarksFilter,g.btnManageDeck,g.btnSaveDeck,g.btnSaveDeckAs,g.btnClearDeck,
-                 g.btnSortDeck,g.btnShuffleDeck,g.btnDeleteDeck,g.btnLeaveGame,g.btnSideOK,g.btnSideShuffle,g.btnSideSort,g.btnSideReload})
+                  g.btnSortDeck,g.btnShuffleDeck,g.btnDeleteDeck,g.btnLeaveGame,g.btnSideOK,g.btnSideShuffle,g.btnSideSort,g.btnSideReload})
         out << b->isPressed() << ':' << b->isEnabled() << ':' << b->isVisible() << ':' << b->getText() << '|';
+    out << g.btnTestDeck->isPressed() << ':' << g.btnTestDeck->isEnabled() << ':' << g.btnTestDeck->isVisible() << ':' << g.btnTestDeck->getText() << '|';
     for(auto c : g.chkCategory) out << c->isChecked();
     for(auto b : g.btnMark) out << b->isPressed();
     for(auto w : std::array<irr::gui::IGUIElement*,5>{g.wDeckEdit,g.wFilter,g.wSort,g.wInfos,g.wCardImg})
@@ -89,9 +90,11 @@ template<class Editor> static void editorSuspensionCases(Game& game, Editor& edi
     game.btnEffectFilter->setPressed(true); game.btnMarksFilter->setPressed(true);
     game.scrFilter->setPos(3);
     mouse(irr::EMIE_MOUSE_MOVED,368,580); CHECK(editor.hovered_pos==3); CHECK(editor.hovered_seq==1); CHECK(editor.hovered_code==B);
-    // A fixed effect-heavy card gives a real nonzero card-text scroll position.
-    CHECK(data.at(37818794).type == (TYPE_MONSTER|TYPE_FUSION|TYPE_EFFECT));
-    game.ShowCardInfo(37818794); CHECK(game.scrCardText->getMax()>0); CHECK(game.scrCardText->isVisible());
+    // A fixed long effect card gives a real nonzero card-text scroll position
+    // when the fixture uses the same UTF-8 locale initialization as production.
+    constexpr unsigned scrollCard=6218704;
+    CHECK(data.at(scrollCard).type == (TYPE_MONSTER|TYPE_FUSION|TYPE_EFFECT|TYPE_PENDULUM));
+    game.ShowCardInfo(scrollCard); CHECK(game.scrCardText->getMax()>0); CHECK(game.scrCardText->isVisible());
     game.scrCardText->setPos(1);
     irr::SEvent scroll{}; scroll.EventType=irr::EET_GUI_EVENT; scroll.GUIEvent.Caller=game.scrCardText;
     scroll.GUIEvent.EventType=irr::gui::EGET_SCROLL_BAR_CHANGED; editor.OnEvent(scroll);
@@ -102,11 +105,13 @@ template<class Editor> static void editorSuspensionCases(Game& game, Editor& edi
     editor.RefreshEditorUndo(); const auto before=observeEditor(game);
     auto* nameControl=game.ebDeckname;
     auto token=editor.SuspendEditor(); CHECK(token); CHECK(editor.HasEditorSuspension());
-    CHECK(game.device->getEventReceiver()==&editor); CHECK(!game.is_building);
-    CHECK(game.env->getFocus()==nullptr); CHECK(!game.wDeckEdit->isVisible());
+    CHECK(game.device->getEventReceiver()==&editor); CHECK(game.is_building);
+    CHECK(game.env->getFocus()==nameControl); CHECK(game.wDeckEdit->isVisible());
+    CHECK(game.btnTestDeck->isVisible()); CHECK(!game.btnTestDeck->isEnabled());
     CHECK(!editor.SuspendEditor());
     CHECK(editor.CommitEditorHandoff(*token,&game.dField));
-    CHECK(game.device->getEventReceiver()==&game.dField);
+    CHECK(game.device->getEventReceiver()==&game.dField); CHECK(!game.is_building);
+    CHECK(game.env->getFocus()==nullptr); CHECK(!game.wDeckEdit->isVisible()); CHECK(!game.btnTestDeck->isVisible());
     CHECK(!editor.CommitEditorHandoff(*token,&game.menuHandler));
     // No ordinary editor entry/event may reset the suspension or save the shared consumer's deck.
     deckManager.current_deck={}; editor.Initialize(); editor.ResetEditorHistory(); editor.EditorDeckSaved();

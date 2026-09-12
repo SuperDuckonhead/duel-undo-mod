@@ -79,7 +79,7 @@ struct WidgetState {
 	}
 };
 std::vector<irr::gui::IGUIElement*> editorWindows(Game& g) {
-	return {g.wDeckEdit,g.wFilter,g.wSort,g.wInfos,g.wCardImg,g.btnLeaveGame,g.scrFilter,g.scrPackCards};
+	return {g.wDeckEdit,g.wFilter,g.wSort,g.wInfos,g.wCardImg,g.btnLeaveGame,g.btnTestDeck,g.scrFilter,g.scrPackCards};
 }
 bool materialize(const std::vector<uint32_t>& codes, std::vector<const CardDataC*>& out) {
 	const auto& data=dataManager.GetDataTable();
@@ -137,25 +137,30 @@ std::optional<EditorSuspensionToken> DeckBuilder::SuspendEditor() {
 		saved->exitOnReturn=g.exit_on_return;
 		std::copy(std::begin(g.open_file_name),std::end(g.open_file_name),saved->openFile.begin());
 		// All owning allocations precede the first change to live editor state.
-		auto windows=editorWindows(g);
+		// Preparation leaves the editor rendered while the pending capability
+		// blocks input. Successful handoff owns the later presentation change.
 		suspension=std::move(saved);
 		++suspensionGeneration;
-		g.env->installPreparedFocus(nullptr);
-		for(auto window: windows) window->setVisible(false);
-		g.is_building=false;
 		g.btnUndoDeck->setEnabled(false);
+		RefreshDeckTestEntry();
 		EditorSuspensionToken token; token.owner=suspensionOwner; token.generation=suspensionGeneration;
 		return token;
 	} catch(const std::bad_alloc&) { return std::nullopt; }
 }
 bool DeckBuilder::CommitEditorHandoff(const EditorSuspensionToken& token, irr::IEventReceiver* receiver) {
 	if(!MatchesSuspension(token) || !receiver || suspension->handedOff) return false;
-	mainGame->device->setEventReceiver(receiver);
 	suspension->handedOff=true;
+	mainGame->env->installPreparedFocus(nullptr);
+	for(auto window: editorWindows(*mainGame)) window->setVisible(false);
+	mainGame->is_building=false;
+	mainGame->btnUndoDeck->setEnabled(false);
+	mainGame->device->setEventReceiver(receiver);
+	RefreshDeckTestEntry();
 	return true;
 }
 bool DeckBuilder::ResumeEditor(const EditorSuspensionToken& token) {
 	if(!MatchesSuspension(token)) return false;
+	const bool ownsDeckTestPreparation = HasDeckTestPreparation();
 	Deck restored;
 	std::vector<const CardDataC*> restoredResults;
 	undo::EditorHistory history;
@@ -194,7 +199,9 @@ bool DeckBuilder::ResumeEditor(const EditorSuspensionToken& token) {
 	else g.env->installPreparedFocus(nullptr);
 	g.device->setEventReceiver(this);
 	suspension.reset();
+	if(ownsDeckTestPreparation) deckTestPreparation.reset();
 	RefreshEditorUndo();
+	RefreshDeckTestEntry();
 	return true;
 }
 }
