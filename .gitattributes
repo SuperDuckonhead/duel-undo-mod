@@ -2,3 +2,5 @@
 /tools/patches/**/*.patch -text
 # Windows cmd.exe requires this launcher to retain CRLF after checkout.
 /tools/Uninstall-UndoMod.cmd text eol=crlf
+# Query registration pins the exact native fixture bytes.
+/tests/fixtures/query-identity/*.lua -text
