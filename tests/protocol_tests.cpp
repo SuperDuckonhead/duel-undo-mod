@@ -32,8 +32,14 @@ int main() {
  other=key; ++other.targetDigest[0]; CHECK(!SameKey(other,key));
  CHECK(NewSessionId()!=SessionId{}); CHECK(NewSessionId()!=NewSessionId());
  Hello hello; hello.engine[2]=9; hello.resources[31]=7;
+ CHECK(hello.version==2); // v1 meant executable/rules/resource file equality.
  CHECK(EncodeHello(hello).size()==99);
  CHECK(Compatibility(hello,DecodeHello(EncodeHello(hello))).empty());
+ bad=EncodeHello(hello); bad[0]=1;
+ CHECK(Rejects([&]{DecodeHello(bad);}));
+ auto legacy=hello;legacy.version=1;
+ CHECK(!Compatibility(hello,legacy).empty());
+ CHECK(Rejects([&]{EncodeHello(legacy);}));
  CHECK(!Compatibility(hello,std::nullopt).empty());
  for(int field=0;field<5;++field) {
   auto peer=hello;

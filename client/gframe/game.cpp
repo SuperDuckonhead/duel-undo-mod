@@ -1067,7 +1067,7 @@ void Game::MainLoop() {
 		}
 		auto room=DuelClient::Room();
 		auto size = driver->getScreenSize();
-		if(window_size != size && !(room&&room->InputPaused())) {
+		if(window_size != size && !(room&&room->PresentationFrozen())) {
 			window_size = size;
 			xScale = window_size.Width / static_cast<float>(GAME_WINDOW_WIDTH);
 			yScale = window_size.Height / static_cast<float>(GAME_WINDOW_HEIGHT);
@@ -1173,7 +1173,7 @@ void Game::MainLoop() {
 			lastFpsTime += std::chrono::milliseconds(1000);
 			if(now - lastFpsTime > std::chrono::milliseconds(1000))
 				lastFpsTime = now;
-			if((dInfo.time_player == 0 || dInfo.time_player == 1) && !(room&&room->InputPaused()))
+			if((dInfo.time_player == 0 || dInfo.time_player == 1) && !(room&&room->PresentationFrozen()))
 				if(dInfo.time_left[dInfo.time_player])
 					dInfo.time_left[dInfo.time_player]--;
 		}

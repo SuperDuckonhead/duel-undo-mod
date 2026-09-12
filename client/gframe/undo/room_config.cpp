@@ -1,7 +1,7 @@
 #include "room_config.h"
 #include "../bufferio.h"
 #include "../data_manager.h"
-#include "../deck_manager.h"
+#include "../config.h"
 #include "runtime_paths.h"
 #include <cstring>
 #include <fstream>
@@ -21,9 +21,38 @@ void put(Bytes &b, uint64_t n) {
   for (unsigned i = 0; i < 8; ++i)
     b.push_back(uint8_t(n >> (i * 8)));
 }
-void blob(Bytes &b, const Bytes &v) {
-  put(b, v.size());
-  b.insert(b.end(), v.begin(), v.end());
+Digest profile(const char* name, std::uint16_t version, std::uint16_t nativeVersion = 0) {
+  Bytes bytes(name, name + std::strlen(name));
+  put(bytes, version);
+  put(bytes, nativeVersion);
+  return Sha256(bytes);
+}
+Hello capability(const ygo::DataManager& data, RoomMode mode) {
+  Hello result;
+  result.mode = mode;
+  // These identities describe serialized formats, never local program bytes.
+  result.engine = profile("ygopro-native-game-messages", GameMessageProfileVersion, PRO_VERSION);
+  result.rules = profile("ygopro-undo-player-restore-status", RestoreProfileVersion);
+  // Hash the resolved numeric rows used by the native selection UI. Do not
+  // serialize struct padding, map order, translated text, database files,
+  // restriction lists or effect scripts. rule_code and extra setcodes matter
+  // for declarable-card predicates even when the backing SQL schema omits them.
+  const std::string domain = "ygopro-native-selection-cards-v1";
+  Bytes cards(domain.begin(), domain.end());
+  std::map<std::uint32_t, const ygo::CardDataC*> ordered;
+  for (const auto& entry : data.GetDataTable()) ordered.emplace(entry.first, &entry.second);
+  put(cards, ordered.size());
+  for (const auto& entry : ordered) {
+    const auto& c = *entry.second;
+    put(cards, entry.first);
+    put(cards, c.code); put(cards, c.alias);
+    for (auto value : c.setcode) put(cards, value);
+    for (auto value : {c.type, c.level, c.attribute, c.race,
+         static_cast<std::uint32_t>(c.attack), static_cast<std::uint32_t>(c.defense),
+         c.lscale, c.rscale, c.link_marker, c.rule_code, c.ot, c.category}) put(cards, value);
+  }
+  result.resources = Sha256(cards);
+  return result;
 }
 struct XmlBytes final : irr::io::IFileReadCallBack {
   Bytes bytes;
@@ -120,6 +149,12 @@ void appSettings(const std::filesystem::path &path,
 }
 } // namespace
 std::shared_ptr<const RoomConfig>
+CaptureClientRoomConfig(ygo::DataManager& data, RoomMode mode) {
+  auto config = std::make_shared<RoomConfig>();
+  config->capability = capability(data, mode);
+  return config;
+}
+std::shared_ptr<const RoomConfig>
 CaptureRoomConfig(ygo::DataManager &data, const std::string &runtimeRoot,
                   bool prefer, RoomMode mode, const std::string &selection,
                   const std::string &custom) {
@@ -128,38 +163,20 @@ CaptureRoomConfig(ygo::DataManager &data, const std::string &runtimeRoot,
       std::filesystem::absolute(std::filesystem::u8path(runtimeRoot))
           .lexically_normal();
   config->resources = data.CaptureResources(root.u8string(), prefer, ResourceScope::Duel);
-  std::vector<wchar_t> exe(32768);
-  auto count = GetModuleFileNameW(nullptr, exe.data(), DWORD(exe.size()));
-  if (!count || count >= exe.size())
-    throw std::runtime_error("Cannot identify running engine");
-  config->capability.engine =
-      Sha256(read(std::filesystem::path(std::wstring(exe.data(), count))));
-  config->capability.resources = config->resources->Fingerprint();
-  config->capability.mode = mode;
-  // Canonical logical values from the exact live lflists, independent of their
-  // source path and map iteration order. The executable binds compiled rules.
-  Bytes rules;
-  put(rules, ygo::deckManager._lfList.size());
-  for (const auto &list : ygo::deckManager._lfList) {
-    put(rules, list.hash);
-    put(rules, list.listName.size());
-    for (auto ch : list.listName)
-      put(rules, uint32_t(ch));
-    std::map<uint32_t, int> ordered(list.content.begin(), list.content.end());
-    put(rules, ordered.size());
-    for (auto &entry : ordered) {
-      put(rules, entry.first);
-      put(rules, entry.second);
-    }
-  }
-  config->capability.rules = Sha256(rules);
+  config->capability = capability(data, mode);
   if (!selection.empty()) {
     BotLaunchData bot;
     bot.runtimeRoot = (root / "WindBot").u8string();
     bot.selectionCommand = selection;
     bot.selectionCatalog = read(root / "bot.conf");
-    bot.engine = config->capability.engine;
-    bot.resources = config->capability.resources;
+    // Private AI restoration retains exact local executable/resource identity.
+    // These are deliberately independent of the peer compatibility contract.
+    std::vector<wchar_t> exe(32768);
+    auto count = GetModuleFileNameW(nullptr, exe.data(), DWORD(exe.size()));
+    if (!count || count >= exe.size())
+      throw std::runtime_error("Cannot identify running engine");
+    bot.engine = Sha256(read(std::filesystem::path(std::wstring(exe.data(), count))));
+    bot.resources = config->resources->Fingerprint();
     bot.cardView = CaptureBotCardView(*config->resources, data, bot.engine);
     bot.seed = int32_t(std::random_device{}());
     config->botExecutable =

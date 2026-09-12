@@ -48,9 +48,11 @@ static int pairGame(bool host, const std::filesystem::path &shared,
     game.menuHandler.OnEvent(e);
   };
   game.ebNickName->setText(host ? L"Actual Game Host" : L"Actual Game Guest");
-  auto config =
-      CaptureRoomConfig(dataManager, std::filesystem::current_path().u8string(),
-                        false, RoomMode::ConsentLan);
+  auto config = host
+      ? CaptureRoomConfig(dataManager, std::filesystem::current_path().u8string(),
+                          false, RoomMode::ConsentLan)
+      : CaptureClientRoomConfig(dataManager, RoomMode::ConsentLan);
+  CHECK(bool(config->resources) == host);
   unsigned short port{};
   if (host) {
     if (freePair) {

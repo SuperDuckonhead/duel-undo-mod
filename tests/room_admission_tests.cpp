@@ -15,6 +15,12 @@ int main(){try {
  CHECK(room.Receive(peer,*answer)==HandshakeResult::Confirmed);CHECK(peer.ready);
  CHECK(!client.Receive(room.Confirmation()));CHECK(client.Ready());
  CHECK(client.Session()==room.Session());
+ auto legacyOffer=client.Offer();legacyOffer.payload[0]=1;
+ RoomPeer legacyPeer;
+ CHECK(rejects([&]{room.Receive(legacyPeer,legacyOffer);}));
+ CHECK(!legacyPeer.ready && !legacyPeer.offered);
+ auto legacyChallenge=challenge;legacyChallenge.payload[0]=1;
+ CHECK(rejects([&]{client.Receive(legacyChallenge);}));
  CHECK(room.Receive(peer,*answer)==HandshakeResult::Confirmed); // idempotent ack
  CHECK(!client.Receive(room.Confirmation()));CHECK(client.Ready());
  auto stale=*answer;stale.key.session[1]^=1;CHECK(rejects([&]{room.Receive(peer,stale);}));

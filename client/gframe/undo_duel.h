@@ -48,6 +48,7 @@ public:
     const undo::TxKey& ActiveKey() const;
     std::uint64_t InstalledEpoch() const;
 protected:
+    void SubmitResponse(unsigned char*, unsigned int) override;
     undo::Bytes QueryFieldBytes(int, int, unsigned int, int) override;
     undo::Bytes QueryCardBytes(int, int, int, unsigned int) override;
 private:

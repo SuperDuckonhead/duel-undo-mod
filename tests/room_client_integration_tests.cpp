@@ -181,7 +181,9 @@ int main(int argc, char **argv) {
       CHECK(config->bot && config->bot->hasCustomDeck);
       CHECK(config->capability.engine != Digest{} &&
             config->capability.rules != Digest{} &&
-            config->capability.resources == config->resources->Fingerprint());
+            config->capability.resources ==
+                CaptureClientRoomConfig(dataManager, RoomMode::ConsentLan)->capability.resources);
+      CHECK(config->bot->resources == config->resources->Fingerprint());
       CHECK(config->bot->selectionConfigs.size() == 1);
       CHECK(config->bot->appSettings);
       CHECK(config->bot->appSettings->source.find("n2-extra.xml") !=

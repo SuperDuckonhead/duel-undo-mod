@@ -93,7 +93,7 @@ void DuelClient::SendLegacyPacket(unsigned char proto,const void* data,size_t le
  undo::Bytes packet{proto};if(len){auto*p=static_cast<const uint8_t*>(data);packet.insert(packet.end(),p,p+len);}
  if(auto room=Room()){
   if(proto==CTOS_RESPONSE)return;
-  if(proto==CTOS_TIME_CONFIRM||proto==CTOS_CHAT||proto==CTOS_SURRENDER){room->QueueLegacy(packet);return;}
+  if(proto==CTOS_TIME_CONFIRM||proto==CTOS_SURRENDER){room->QueueLegacy(packet);return;}
  }
  std::lock_guard<std::mutex> lock(outboundMutex);lobbyOutbound.push_back(std::move(packet));
 }
@@ -105,7 +105,7 @@ void DuelClient::RoomPoll(EventSocket,short,void*){
 bool DuelClient::StartClient(unsigned int ip, unsigned short port, bool create_game) {
 	if(connect_state != CONNECT_STATE_NONE)
 		return false;
-	try{if(!roomConfig)roomConfig=undo::CaptureRoomConfig(dataManager,mainGame->runtime_root.u8string(),mainGame->gameConf.prefer_expansion_script!=0,undo::RoomMode::ConsentLan);}catch(const std::exception&){mainGame->env->addMessageBox(L"",L"无法冻结对战资源");return false;}
+	try{if(!roomConfig)roomConfig=undo::CaptureClientRoomConfig(dataManager,undo::RoomMode::ConsentLan);}catch(const std::exception&){mainGame->env->addMessageBox(L"",L"无法读取联机卡片数据");return false;}
     {std::lock_guard<std::mutex> lock(outboundMutex);lobbyOutbound.clear();}
     sockaddr_in sin;
 	client_base = event_base_new();
@@ -344,7 +344,6 @@ void DuelClient::HandleSTOCPacketLan(unsigned char* data,size_t len){
   }
   if(roomHandshake&&(data[0]==STOC_GAME_MSG||data[0]==STOC_TIME_LIMIT||data[0]==STOC_REPLAY||data[0]==STOC_DUEL_END))throw std::runtime_error("Unwrapped game traffic");
   if(roomHandshake&&(data[0]==STOC_DUEL_START||data[0]==STOC_SELECT_HAND||data[0]==STOC_SELECT_TP)&&!roomHandshake->Ready())throw std::runtime_error("Duel started before capability confirmation");
-  if(auto room=Room();room&&room->Token().prompt&&data[0]==STOC_CHAT)throw std::runtime_error("Unwrapped duel chat");
   HandleLegacySTOC(data,len);
  }catch(const std::exception& error){mainGame->ErrorLog(error.what());StopClient();}
 }

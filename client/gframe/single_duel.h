@@ -46,6 +46,9 @@ private:
 	undo::Bytes WriteUpdateData(int player, int location, unsigned int flag, int use_cache);
 	
 protected:
+    // Extension point for an owned core. Ordinary response gating, time debit
+    // and Process dispatch remain in GetResponse for every duel implementation.
+    virtual void SubmitResponse(unsigned char* response, unsigned int length);
     virtual undo::Bytes QueryFieldBytes(int player, int location, unsigned int flags, int use_cache);
     virtual undo::Bytes QueryCardBytes(int player, int location, int sequence, unsigned int flags);
 	DuelPlayer* players[2]{};

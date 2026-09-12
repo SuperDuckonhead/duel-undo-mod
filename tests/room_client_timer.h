@@ -99,6 +99,14 @@ static int timerConfirmationTests() {
       CHECK(client.InputPaused());
       CHECK(!client.Submit({{0, 0, 0, 0}, Origin::Manual, oldPrompt}));
       CHECK(!client.Submit({{0, 0, 0, 0}, Origin::Manual, client.Token()}));
+      autoReply = false;
+      frame(chain, 3);
+      status(3);
+      CHECK(client.Submit({{255, 255, 255, 255}, Origin::Manual,
+                            client.Token()}));
+      // Consent can arrive before the transport poll sends either the native
+      // timer acknowledgement or the selection. Abort must resume both, once,
+      // and in their original order so the host can accept the selection.
       TxKey consent{session, 0, 1, 0, {}};
       consent.targetDigest[0] = 1;
       client.Receive({WireKind::Consent, consent, {1}});
@@ -106,7 +114,14 @@ static int timerConfirmationTests() {
       CHECK(sent.size() == 2);
       client.Receive({WireKind::Abort, consent, {2, 1}});
       client.Poll();
-      CHECK(sent.size() == 2);
+      CHECK(sent.size() == 4 && sent[2].kind == WireKind::Game &&
+            sent[3].kind == WireKind::Response);
+      auto resumedConfirmation = outbound.Add(sent[2]);
+      CHECK(resumedConfirmation && resumedConfirmation->prompt == 3 &&
+            resumedConfirmation->packet == Bytes{CTOS_TIME_CONFIRM});
+      CHECK(DecodeResponse(sent[3]).key.request == 3);
+      client.Poll();
+      CHECK(sent.size() == 4);
       for (bool wrongSession : {false, true}) {
         auto other = wrongSession ? NewSessionId() : session;
         for (const auto &e : EncodeGamePacket(other, wrongSession ? 0 : 1,
@@ -114,14 +129,15 @@ static int timerConfirmationTests() {
           client.Receive(e);
       }
       client.Poll();
-      CHECK(sent.size() == 2);
+      CHECK(sent.size() == 4);
       packet(timer, 4);
       client.Close();
       client.Poll();
-      CHECK(sent.size() == 2);
+      CHECK(sent.size() == 4);
     }
   }
   std::cout << "PASS 180-second time-before-chain confirmations, early/late "
-               "poll, manual/automatic responses and stale/lifecycle gates\n";
+               "poll, manual/automatic responses, queued confirmation/response "
+               "surviving Consent/Abort, and stale/lifecycle gates\n";
   return 0;
 }

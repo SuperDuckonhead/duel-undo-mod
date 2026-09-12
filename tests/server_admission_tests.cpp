@@ -74,6 +74,11 @@ int main(){try {
   Peer legacy(port);CTOS_JoinGame join{};join.version=PRO_VERSION;legacy.SendStruct(CTOS_JOIN_GAME,join);legacy.Rejected();
  }
  {
+  // Same 99-byte layout does not make a v1 full-resource handshake compatible.
+  Peer oldUndo(port);auto offer=hostHandshake.Offer();offer.payload[0]=1;
+  oldUndo.Envelope(offer);oldUndo.Rejected();
+ }
+ {
   Peer incompatible(port);auto wrong=capability;wrong.resources[1]=7;
   undo::ClientRoomHandshake mismatch(wrong,true);incompatible.Envelope(mismatch.Offer());
   // Two buffered frames exercise safe exit after an immediate rejection/disconnect.

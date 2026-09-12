@@ -24,8 +24,17 @@ bool SameKey(const TxKey&, const TxKey&);
 bool IsCurrent(const TxKey&, const SessionId&, std::uint64_t epoch);
 SessionId NewSessionId();
 enum class RoomMode : std::uint8_t { ConsentLan=1, LoopbackFree=2 };
+// The envelope framing remains v1. Hello v2 replaces v1's file fingerprints
+// with explicit compatible formats and the logical native-selection card data.
+constexpr std::uint16_t CapabilityVersion = 2;
+constexpr std::uint16_t GameMessageProfileVersion = 1;
+constexpr std::uint16_t RestoreProfileVersion = 1;
 struct Hello {
- std::uint16_t version{1};
+ std::uint16_t version{CapabilityVersion};
+ // Fixed wire slots retained to avoid changing the envelope/Hello layout:
+ // engine = native game-message format identity (including PRO_VERSION),
+ // rules = restore/status format identity, resources = logical card-data hash.
+ // None is an executable, restriction-list or effect-script fingerprint.
  Digest engine{}, rules{}, resources{};
  RoomMode mode{RoomMode::ConsentLan};
 };

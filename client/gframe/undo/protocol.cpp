@@ -71,22 +71,22 @@ SessionId NewSessionId() {
  return id;
 }
 Bytes EncodeHello(const Hello& h) {
- if(h.version!=1 || !Valid(h.mode)) throw std::invalid_argument("unsupported undo hello");
+ if(h.version!=CapabilityVersion || !Valid(h.mode)) throw std::invalid_argument("unsupported undo hello");
  Bytes b; Put(b,h.version,2); Put(b,h.engine); Put(b,h.rules); Put(b,h.resources); Put(b,static_cast<std::uint8_t>(h.mode),1); return b;
 }
 Hello DecodeHello(const Bytes& b) {
  if(b.size()!=99) throw std::invalid_argument("invalid hello length");
  Reader r(b); Hello h; h.version=static_cast<std::uint16_t>(r.Get(2)); r.Get(h.engine); r.Get(h.rules); r.Get(h.resources); h.mode=static_cast<RoomMode>(r.Get(1));
- if(h.version!=1 || !Valid(h.mode)) throw std::invalid_argument("unsupported undo hello");
+ if(h.version!=CapabilityVersion || !Valid(h.mode)) throw std::invalid_argument("unsupported undo hello");
  return h;
 }
 std::string Compatibility(const Hello& local, const std::optional<Hello>& peer) {
  if(!peer) return "undo capability missing";
- if(local.version!=1 || peer->version!=1) return "protocol version";
+ if(local.version!=CapabilityVersion || peer->version!=CapabilityVersion) return "undo capability version";
  if(!Valid(local.mode) || !Valid(peer->mode) || local.mode!=peer->mode) return "room mode";
- if(local.engine!=peer->engine) return "engine fingerprint";
- if(local.rules!=peer->rules) return "rules fingerprint";
- if(local.resources!=peer->resources) return "logical resources fingerprint";
+ if(local.engine!=peer->engine) return "game message format";
+ if(local.rules!=peer->rules) return "restore format";
+ if(local.resources!=peer->resources) return "logical card data";
  return {};
 }
 std::vector<Bytes> Fragment(const Bytes& stream) {

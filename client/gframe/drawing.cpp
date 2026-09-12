@@ -957,7 +957,7 @@ void Game::DrawGUI() {
 	for(auto fit = fadingList.begin(); fit != fadingList.end();) {
 		auto fthis = fit++;
 		FadingUnit& fu = *fthis;
-  if(fu.signalAction && ((mainGame->dInfo.isSingleMode && SingleMode::InputPaused())||(room&&room->InputPaused())))continue;
+  if(fu.signalAction && mainGame->dInfo.isSingleMode && SingleMode::InputPaused())continue;
 		if(fu.fadingFrame) {
 			fu.guiFading->setVisible(true);
 			if(fu.isFadein) {

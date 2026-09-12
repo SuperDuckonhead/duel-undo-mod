@@ -74,13 +74,13 @@ int main(int argc,char** argv) {try {
         CHECK(SamePosition(duel.CurrentBoundary().checkpoint,original));
         if(mode=="deadline-response") {
             const auto count=duel.History().Records().size();
-            std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+            duel.TimerTick(); // Native timer callback is the sole ordinary countdown.
             submit(Origin::Manual,integer(7));
             CHECK(duel.History().Records().size()==count && !duel.HasActiveDuel());
             CHECK(duel.ActiveKey().session==SessionId{});
-            std::cout<<"expired turn-ending response rejected before timer callback"<<std::endl;return 0;
+            std::cout<<"native timer expiry prevents a subsequent turn-ending response"<<std::endl;return 0;
         }
-        if(mode=="turn-clock")std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        if(mode=="turn-clock")duel.TimerTick();
         submit(Origin::Manual,integer(7));idle();
         if(mode=="turn-clock") {
             CHECK(turnClocks.size()==2);
@@ -94,12 +94,12 @@ int main(int argc,char** argv) {try {
             const auto count=duel.History().Records().size();const auto keyBefore=duel.ActiveKey();
             auto* expired=duel.CurrentBoundary().checkpoint.player==a.type?&a:&b;
             CHECK(duel.History().Target(expired->type).has_value());
-            std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+            duel.TimerTick();
             TxKey request{session,duel.InstalledEpoch(),duel.Status().nextRequest,0,{}};
             duel.ReceiveUndo(expired,{WireKind::Request,request,{}});
             CHECK(duel.History().Records().size()==count && !duel.HasActiveDuel());
             CHECK(SameKey(duel.ActiveKey(),keyBefore));
-            std::cout<<"expired undo request rejected before timer callback"<<std::endl;return 0;
+            std::cout<<"native timer expiry prevents a subsequent undo transaction"<<std::endl;return 0;
         }
         CHECK(duel.History().Target(a.type).has_value());
         auto keep=*duel.History().Target(a.type);auto target=duel.History().Records().at(keep).before;

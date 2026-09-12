@@ -84,7 +84,10 @@ namespace{
 
 
 	void DuelTimer(EventSocket, short, void* arg) {
-		static_cast<DuelMode*>(arg)->TimerTick();
+		// The undo timer can also poll AI/transport work. Keep failures inside
+		// the C callback just as UndoPoll does, and let normal teardown run.
+		try { static_cast<DuelMode*>(arg)->TimerTick(); }
+		catch(...) { NetServer::StopServer(); }
 	}
 }
 
@@ -160,8 +163,7 @@ bool NetServer::StartServer(unsigned short port, unsigned int ip, unsigned short
 	    try {
         if(undo_config) {
             if(!undo_capability || !undo_config->resources ||
-               !undo::Compatibility(*undo_capability,undo_config->capability).empty() ||
-               undo_config->resources->Fingerprint()!=undo_capability->resources)
+               !undo::Compatibility(*undo_capability,undo_config->capability).empty())
                 throw std::invalid_argument("Invalid or unsupported undo room configuration");
             room_config=std::move(undo_config);
         }
@@ -399,7 +401,7 @@ void NetServer::HandleCTOSPacket(DuelPlayer* dp, unsigned char* data, size_t len
             return;
         }
         if(dp->game && dp->game->HasActiveDuel() &&
-           (pktType==CTOS_RESPONSE || pktType==CTOS_TIME_CONFIRM || pktType==CTOS_SURRENDER || pktType==CTOS_CHAT)) return;
+           (pktType==CTOS_RESPONSE || pktType==CTOS_TIME_CONFIRM || pktType==CTOS_SURRENDER)) return;
         if(pktType==CTOS_HS_START && dp->game && !dp->game->SupportsUndo()) return;
     }
 	if((pktType != CTOS_SURRENDER) && (pktType != CTOS_CHAT) && (dp->state == 0xff || (dp->state && dp->state != pktType)))

@@ -92,14 +92,38 @@ bool ClientField::OnEvent(const irr::SEvent& event) {
  }
  if(event.EventType==irr::EET_GUI_EVENT && event.GUIEvent.EventType==irr::gui::EGET_BUTTON_CLICKED && event.GUIEvent.Caller->getID()==BUTTON_DUEL_UNDO){requestUndo();return true;}
 
- if(auto room=DuelClient::Room()){
-  // InputPaused gates core submissions; it is not a general GUI pause.
-  // Opening and terminal dialogs retain Irrlicht's original input dispatch.
-  // Terminal gameplay stays paused; only the normal UI flow is restored.
-  const bool nativeFlow = !room->PresentationFrozen() &&
-   (!room->Token().prompt || room->DuelEnded());
-  bool acknowledgment=event.EventType==irr::EET_GUI_EVENT&&event.GUIEvent.EventType==irr::gui::EGET_BUTTON_CLICKED&&(event.GUIEvent.Caller->getID()==BUTTON_MSG_OK||event.GUIEvent.Caller->getID()==BUTTON_REPLAY_SAVE||event.GUIEvent.Caller->getID()==BUTTON_REPLAY_CANCEL);
-  if(!nativeFlow&&room->InputPaused()&&!acknowledgment)return true;
+ if(auto room=DuelClient::Room()) {
+  if(room->PresentationFrozen())return true;
+  if(room->InputPaused() && room->Token().prompt && !room->DuelEnded()) {
+   // A displayed choice may precede its authoritative boundary status. Do not
+   // let an early click hide/mutate it before the normal prompt is captured.
+   // Native acknowledgments, card viewing and local controls still work while
+   // the legacy handler waits for its action signal. No core-message copy is
+   // needed: route these events by their actual native widget ancestry.
+   irr::gui::IGUIElement* target=nullptr;
+   bool local=false;
+   if(event.EventType==irr::EET_GUI_EVENT) {
+    target=event.GUIEvent.Caller;
+    local=event.GUIEvent.EventType==irr::gui::EGET_ELEMENT_FOCUS_LOST ||
+     event.GUIEvent.EventType==irr::gui::EGET_ELEMENT_FOCUSED ||
+     event.GUIEvent.EventType==irr::gui::EGET_ELEMENT_HOVERED ||
+     event.GUIEvent.EventType==irr::gui::EGET_ELEMENT_LEFT;
+   }
+   else if(event.EventType==irr::EET_MOUSE_INPUT_EVENT) {
+    target=mainGame->env->getRootGUIElement()->getElementFromPoint({event.MouseInput.X,event.MouseInput.Y});
+    local=event.MouseInput.Event==irr::EMIE_MOUSE_MOVED;
+   } else if(event.EventType==irr::EET_KEY_INPUT_EVENT) {
+    target=mainGame->env->getFocus();
+    local=event.KeyInput.Key>=irr::KEY_F1 && event.KeyInput.Key<=irr::KEY_F8;
+   }
+   for(auto* node=target;node;node=node->getParent()) {
+    local|=node==mainGame->wMessage || node==mainGame->wReplaySave ||
+     node==mainGame->wCardDisplay || node==mainGame->wInfos ||
+     node==mainGame->wChat || node==mainGame->wBigCard ||
+     (node==mainGame->wCardSelect && mainGame->dInfo.curMsg==MSG_CONFIRM_CARDS);
+   }
+   if(!local)return true;
+  }
  }
 	if(OnCommonEvent(event))
 		return false;

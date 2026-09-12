@@ -49,6 +49,11 @@ struct RoomClient::Impl {
     undo::Bytes packet;
     bool approve{};
     undo::TxKey key;
+    bool resumesOnAbort() const {
+      return kind == Response ||
+             (kind == Legacy && !packet.empty() &&
+              packet[0] == CTOS_TIME_CONFIRM);
+    }
   };
   Game &g;
   Send send;
@@ -461,11 +466,11 @@ struct RoomClient::Impl {
       std::lock_guard<std::mutex> lock(mutex);
       consent = false;
       requestPending = false;
-      // A response queued before the other peer's Consent has not reached
-      // transport yet. Preserve that first delivery when this branch resumes.
+      // Preserve unsent selections and their native timer acknowledgement in
+      // order. The unchanged branch still needs confirmation before response.
       commands.erase(std::remove_if(commands.begin(), commands.end(),
                                     [](const Command &c) {
-                                      return c.kind != Command::Response;
+                                      return !c.resumesOnAbort();
                                     }),
                      commands.end());
       text = L"撤回已取消，原局可继续";
@@ -588,11 +593,9 @@ bool RoomClient::QueueLegacy(const undo::Bytes &b) {
   auto &r = *impl_;
   std::lock_guard<std::mutex> lock(r.mutex);
   if (b.empty() ||
-      (r.paused && ((b[0] != CTOS_TIME_CONFIRM &&
-                     !(b[0] == CTOS_CHAT && !r.published.prompt)) ||
-                    r.freezePresentation)))
+      (r.paused && (b[0] != CTOS_TIME_CONFIRM || r.freezePresentation)))
     return false;
-  if (b[0] != CTOS_TIME_CONFIRM && b[0] != CTOS_SURRENDER && b[0] != CTOS_CHAT)
+  if (b[0] != CTOS_TIME_CONFIRM && b[0] != CTOS_SURRENDER)
     return false;
   Impl::Command c;
   c.kind = Impl::Command::Legacy;
@@ -666,7 +669,7 @@ void RoomClient::Poll() {
             (!c.input.token.prompt ||
              (!c.packet.empty() && c.packet[0] == CTOS_TIME_CONFIRM)) &&
             !PresentationFrozen())) {
-        if (c.kind == Impl::Command::Response) {
+        if (c.resumesOnAbort()) {
           std::lock_guard<std::mutex> lock(r.mutex);
           r.commands.push_back(std::move(c));
         }

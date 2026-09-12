@@ -99,7 +99,7 @@ struct Client {
         peer.Envelope(EncodeResponse({session,epoch,status.prompt,0,{}},origin,bytes));
     }
 };
-int main(int argc,char** argv) {try {
+int main(int argc,char** argv) {SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);try {
     CHECK(argc==2 || argc==3);const std::string fault=argc==3?argv[2]:"";WSADATA winsock;CHECK(WSAStartup(MAKEWORD(2,2),&winsock)==0);
     std::unique_ptr<irr::io::IFileSystem,void(*)(irr::io::IFileSystem*)> files(irr::io::createFileSystem(),[](auto* p){p->drop();});
     dataManager.IrrFileSystem=files.get();
@@ -174,6 +174,27 @@ int main(int argc,char** argv) {try {
         throw std::runtime_error("Did not reach actual idle prompt");
     };
     idle();const auto targetPrompt=a.status.prompt;CHECK(a.status.promptPlayer==a.player);
+    const auto nativeChat=[&](std::uint16_t marker) {
+        const auto prompt=a.status.prompt;
+        Bytes text;BufferIO::VectorWrite<std::uint16_t>(text,marker);BufferIO::VectorWrite<std::uint16_t>(text,0);
+        // Chat retains the original protocol even while a different player acts,
+        // or while both clients are preparing an undo transaction.
+        b.peer.Send(CTOS_CHAT,text);
+        for(auto* client:{&a,&b}) {
+            bool found=false;const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(4);
+            while(!found && std::chrono::steady_clock::now()<deadline) {
+                const auto packet=client->peer.Read();CHECK(!packet.empty());
+                if(packet[0]!=STOC_CHAT)continue;
+                CHECK(packet.size()>=7);
+                CHECK(packet[1]==b.player && packet[2]==0);
+                CHECK(packet[3]==std::uint8_t(marker) && packet[4]==std::uint8_t(marker>>8));
+                found=true;
+            }
+            CHECK(found);
+        }
+        CHECK(a.status.prompt==prompt);
+    };
+    if(fault=="native-chat")nativeChat('A');
     const auto retainedCount=acceptedInputs.size();
     advance(integer(7),Origin::Manual);idle();advance(integer(7),Origin::Manual);idle();
     for(auto* client:{&a,&b}) {
@@ -197,6 +218,7 @@ int main(int argc,char** argv) {try {
         CHECK(visible.visibleDigest==client->visibleAt.at(targetPrompt));
         restores[index]=std::make_unique<ClientRestore>(fields[index],states[index],client->player,key.session,0);
         CHECK(restores[index]->Prepare(key,visible,visible.prompt));
+        if(fault=="native-chat" && index==1)nativeChat('B');
         if(fault=="prepare" && index==1) {disconnectFriend();std::cout<<"actual guest EOF during prepare cleaned up safely"<<std::endl;return 0;}
         if(fault=="policy" && index==1) {
             // Both candidates exist and the second Ready is withheld. Policy
@@ -239,6 +261,7 @@ int main(int argc,char** argv) {try {
         CHECK(client->status.prompt==targetPrompt);++index;
     }
     // Current epoch proceeds through the real socket/core/filter path after restore.
+    if(fault=="native-chat")nativeChat('C');
     acceptedInputs.resize(retainedCount);
     auto before=a.status.prompt;a.respond(integer(7));acceptedInputs.push_back(integer(7));
     a.boundaryAfter(before);b.boundaryAfter(before);idle();
@@ -261,4 +284,4 @@ int main(int argc,char** argv) {try {
     }
     disconnectFriend();
     std::cout<<"actual TCP lobby/ready/RPS/core, hidden-card filtering, two real N3 models, commit/Resume and continued play passed\n";
-} catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}}
+} catch(const std::exception& e) {std::cerr<<e.what()<<std::endl;NetServer::StopServer();return 1;}}

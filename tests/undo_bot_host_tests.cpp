@@ -163,7 +163,7 @@ static void branch(const std::shared_ptr<const ResourceView>& resources,
             host.RefreshSingle(human.type,LOCATION_HAND,0,0xf81fff);
             CHECK(host.BotStatus()->humanPromptHeld && host.BotStatus()->fencePending);
             const auto heldCount=output.size();const auto frozenClock=host.Status().clock.remainingMs;
-            for(int i=0;i<20;++i){host.PollUndo();std::this_thread::sleep_for(std::chrono::milliseconds(2));}
+            for(int i=0;i<20;++i){host.TimerTick();std::this_thread::sleep_for(std::chrono::milliseconds(2));}
             CHECK(host.BotStatus()->humanPromptHeld && output.size()==heldCount && host.History().Records().empty());
             CHECK(host.Status().clock.remainingMs==frozenClock && host.Status().timePlayer==2);
             host.ReceiveUndo(&human,EncodeResponse({session,0,host.Status().prompt,0,{}},Origin::Manual,integer(7)));
@@ -202,6 +202,8 @@ static void branch(const std::shared_ptr<const ResourceView>& resources,
             throw std::runtime_error("Actual human idle prompt did not arrive");
         };
         idle();std::cout<<"stage first human idle"<<std::endl;const auto target=host.CurrentBoundary().checkpoint;
+        const auto nativeAllowance=host.Status().clock.remainingMs[human.type];
+        host.TimerTick();CHECK(host.Status().clock.remainingMs[human.type]==nativeAllowance-1000);
         if(invalidFieldQuery || invalidCardQuery)std::cerr<<"undefined query bit: field="<<invalidFieldQuery<<" card="<<invalidCardQuery<<std::endl;
         CHECK(!invalidFieldQuery && !invalidCardQuery);
         CHECK(target.aiLogCursor>0 && target.aiLogCursor==host.BotStatus()->fencedCursor &&
@@ -211,6 +213,7 @@ static void branch(const std::shared_ptr<const ResourceView>& resources,
         const auto retryPrompt=host.Status().prompt;
         submit(integer(0x7fffffffu),Origin::Manual);
         CHECK(host.CurrentBoundary().rejectedResponse && host.Status().prompt==retryPrompt && host.History().Records().empty());
+        CHECK(human.state==CTOS_TIME_CONFIRM);
         CHECK(host.CurrentBoundary().checkpoint.aiLogCursor==target.aiLogCursor);
         CHECK(host.CurrentBoundary().checkpoint.prompt==target.prompt && host.BotStatus()->fencedCursor==target.aiLogCursor);
         const TxKey unavailable{session,0,host.Status().nextRequest,0,{}};
@@ -225,7 +228,10 @@ static void branch(const std::shared_ptr<const ResourceView>& resources,
         const TxKey request{session,host.InstalledEpoch(),host.Status().nextRequest,0,{}};
         host.ReceiveUndo(&human,{WireKind::Request,request,{}});
         const auto key=host.ActiveKey();CHECK(host.Status().state==TxState::Preparing);
-        const auto activeClock=host.Status().clock.remainingMs;const auto beforeBusy=output.size();
+        const auto activeClock=host.Status().clock.remainingMs;
+        for(unsigned i=0;i<5;++i)host.TimerTick();
+        CHECK(host.Status().clock.remainingMs==activeClock);
+        const auto beforeBusy=output.size();
         auto competitor=request;++competitor.request;
         host.ReceiveUndo(&human,{WireKind::Request,competitor,{}});
         CHECK(output.size()==beforeBusy+1 && output.back().kind==WireKind::RequestRejected &&

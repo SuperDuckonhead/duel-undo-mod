@@ -1428,8 +1428,7 @@ void SingleDuel::GetResponse(DuelPlayer* dp, unsigned char* pdata, unsigned int 
 	if (len > UINT8_MAX)
 		len = UINT8_MAX;
 	std::memcpy(resb, pdata, len);
-	last_replay_response_size = last_replay.WriteResponse(resb, len);
-	set_responseb(pduel, resb);
+	SubmitResponse(resb, len);
 	players[dp->type]->state = 0xff;
 	if(host_info.time_limit) {
 		if(time_limit[dp->type] >= time_elapsed)
@@ -1439,6 +1438,10 @@ void SingleDuel::GetResponse(DuelPlayer* dp, unsigned char* pdata, unsigned int 
 	}
 	Process();
 	last_replay_response_size = 0;
+}
+void SingleDuel::SubmitResponse(unsigned char* response, unsigned int length) {
+	last_replay_response_size = last_replay.WriteResponse(response, length);
+	set_responseb(pduel, response);
 }
 void SingleDuel::EndDuel() {
 	if(!pduel)
