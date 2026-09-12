@@ -43,6 +43,9 @@ public:
 	// Host-private, per-duel semantic query bridge. Normal cores leave it absent.
 	// The Lua state is borrowed only for this synchronous invocation.
 	std::function<bool(lua_State*, bool, bool)> pool_query;
+	// Candidate-only finite binding before filtering (null), then validation of
+	// the original filtered Group. The callback never survives a Lua yield.
+	std::function<void(lua_State*, group*)> pool_select;
 	// Synchronous borrowed inputs, never a Lua suspension or a replacement Group.
 	std::function<void(lua_State*, native_query_api, bool, const card_set*, card*, int32_t)> pool_observe;
 	effect* pool_target_check{};

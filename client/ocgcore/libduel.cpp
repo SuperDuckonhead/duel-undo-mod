@@ -2736,9 +2736,13 @@ int32_t scriptlib::duel_select_matching_cards(lua_State *L) {
 	uint32_t min = (uint32_t)lua_tointeger(L, 6);
 	uint32_t max = (uint32_t)lua_tointeger(L, 7);
 	native_query_scope query(pduel, L, native_query_api::SelectMatching);
+	if(pduel->pool_select)
+		pduel->pool_select(L, nullptr);
 	group* pgroup = pduel->new_group();
 	pduel->game_field->filter_matching_card(L, 2, (uint8_t)self, location1, location2, pgroup, pexception, pexgroup, extraargs);
 	query.finish(&pgroup->container, !pgroup->container.empty());
+	if(pduel->pool_select)
+		pduel->pool_select(L, pgroup);
 	if(pduel->pool_query)
 		pduel->pool_query(L, true, !pgroup->container.empty());
 	pduel->game_field->core.select_cards.assign(pgroup->container.begin(), pgroup->container.end());

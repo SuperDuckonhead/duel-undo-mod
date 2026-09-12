@@ -11,6 +11,10 @@
 #include "common.h"
 #include <mutex>
 std::recursive_mutex& ocgapi_mutex();
+class card;
+// Same lifecycle as new_card, with the actual initialized object for private
+// host transactions. The legacy C ABI remains unchanged.
+card* new_card_result(intptr_t pduel, uint32_t code, uint8_t owner, uint8_t playerid, uint8_t location, uint8_t sequence, uint8_t position);
 
 #if defined(OCGCORE_EXPORT_FUNCTIONS)
 #ifdef _WIN32

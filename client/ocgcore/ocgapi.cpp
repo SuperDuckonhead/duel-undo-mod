@@ -181,9 +181,12 @@ uint32_t process(intptr_t pduel) {
 	return result;
 }
 void new_card(intptr_t pduel, uint32_t code, uint8_t owner, uint8_t playerid, uint8_t location, uint8_t sequence, uint8_t position) {
+ new_card_result(pduel, code, owner, playerid, location, sequence, position);
+}
+card* new_card_result(intptr_t pduel, uint32_t code, uint8_t owner, uint8_t playerid, uint8_t location, uint8_t sequence, uint8_t position) {
  std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());
 	if (!check_playerid(owner) || !check_playerid(playerid))
-		return;
+		return nullptr;
 	duel* ptduel = (duel*)pduel;
 	if(ptduel->game_field->is_location_useable(playerid, location, sequence)) {
 		card* pcard = ptduel->new_card(code);
@@ -197,7 +200,9 @@ void new_card(intptr_t pduel, uint32_t code, uint8_t owner, uint8_t playerid, ui
 			if(location == LOCATION_MZONE)
 				pcard->set_status(STATUS_PROC_COMPLETE, TRUE);
 		}
+		return pcard;
 	}
+	return nullptr;
 }
 void new_tag_card(intptr_t pduel, uint32_t code, uint8_t owner, uint8_t location) {
  std::lock_guard<std::recursive_mutex> apiLock(ocgapi_mutex());

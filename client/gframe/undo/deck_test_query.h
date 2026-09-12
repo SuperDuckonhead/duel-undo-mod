@@ -4,6 +4,7 @@
 #include <future>
 struct lua_State;
 class card;
+class group;
 enum class native_query_api : uint8_t;
 
 namespace undo {
@@ -16,6 +17,9 @@ enum class PoolQuerySemantic : uint8_t { SingleTarget, FusionTarget, MaterialUni
 // effect are reobtained in each core, never exported to a worker.
 struct PoolQueryRequest {
  DeckTestContext context;
+ // Observations and D01 resolution capture callState before consumption.
+ // Existing D01 target-check evidence captures it after its native filter.
+ // The stage/API and exact identity must always accompany this digest.
  Digest acceptedPrefix{}, script{}, parameters{}, callState{};
  StableInstanceId handler;
  uint64_t effectRegistration{}, invocation{};
@@ -54,6 +58,23 @@ struct PoolQueryDiscovery {
  std::vector<PoolQueryObservation> observations;
 };
 
+// Bounded gate record, not the general history wire format. Prospective plan
+// identity is mapped to the cardid returned by the actual source lifecycle.
+struct PoolIntroductionRecord {
+ uint32_t version{1};
+ PoolQueryRequest query;
+ SelectionPlan plan;
+ std::vector<ResponseRecord> prefix;
+ std::vector<PoolQueryRequest> evidenceMilestones;
+ CardIntroducedEvent introduced;
+ StableInstanceId nativeInstance;
+ CardLocation sourceLocation;
+ uint8_t insertionSequence{}; // SEQ_DECKTOP; no shuffle request on insertion.
+ ResponseRecord selection;
+ Checkpoint after;
+ Digest diagnostic{};
+};
+
 // Only the worker can construct accepted evidence. A caller cannot turn an
 // arbitrary card number into a positive answer to the engine's precheck.
 class PoolQueryEvidence {
@@ -82,18 +103,25 @@ public:
  static void RecomputeActual(std::unique_ptr<CoreDriver>&,const std::vector<ResponseRecord>&,const DeckTestContext& current);
  static std::vector<PoolQueryRequest> PendingQueries(const CoreDriver&);
  static Digest PrefixDigest(const std::vector<ResponseRecord>&);
- // Recreate an actual control boundary privately and retain observation for
- // subsequent native responses. No evidence installation or entity creation.
+ // Recreate a control/private boundary, retaining earlier validated evidence
+ // installations at their original prefixes. Never creates source entities.
  static std::unique_ptr<CoreDriver> Recreate(const CoreDriver&,const std::vector<ResponseRecord>&,const DeckTestContext&);
  static std::vector<PoolQueryObservation> Observations(const CoreDriver&);
+ static void Introduce(std::unique_ptr<CoreDriver>&,const DeckTestContext&,const PoolQueryRequest&,const SelectionPlan&);
+ static std::vector<PoolIntroductionRecord> Introductions(const CoreDriver&);
+ static std::vector<ResponseRecord> AcceptedResponses(const CoreDriver&);
+ static std::unique_ptr<CoreDriver> ReplayIntroduction(const InitialState&,std::shared_ptr<const ResourceView>,const PoolIntroductionRecord&);
 private:
  friend class CoreDriver;
  static void ResponseSubmitted(CoreDriver&,const Bytes&,Origin);
  static void ResponseRejected(CoreDriver&);
  static void ResponseAccepted(CoreDriver&);
  static std::unique_ptr<CoreDriver> Replay(const InitialState&,std::shared_ptr<const ResourceView>,
-   const std::vector<ResponseRecord>&,std::shared_ptr<PoolQueryState>);
+   const std::vector<ResponseRecord>&,std::shared_ptr<PoolQueryState>,const std::vector<PoolQueryRequest>& milestones={});
+ static void Attach(CoreDriver&,std::shared_ptr<PoolQueryState>);
  static bool Query(CoreDriver&,lua_State*,bool selection,bool actual);
+ static std::optional<PoolQueryRequest> IdentifyD01(CoreDriver&,lua_State*,bool selection);
+ static void Select(CoreDriver&,lua_State*,group*);
  static void Observe(CoreDriver&,lua_State*,native_query_api,bool,const std::vector<card*>&,card*,int32_t);
 };
 }
