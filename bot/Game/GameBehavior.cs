@@ -62,8 +62,15 @@ namespace WindBot.Game
             return _duel.IsFirst ? player : 1 - player;
         }
 
-        private void TrackDeckMove(int cardId, int previousController, int previousLocation, int currentController, int currentLocation)
+        internal void ApplyTestStatePatch(byte[] bytes)
         {
+            Undo.TestStatePatch.Decode(bytes).Apply(_duel);
+        }
+
+        private void TrackDeckMove(int cardId, int previousController, int previousLocation, int currentController, int currentLocation, ClientCard card = null)
+        {
+            bool uncounted = card != null && card.UncountedDeckSource && previousLocation == (int)CardLocation.Deck;
+            if (uncounted && (currentLocation != previousLocation || currentController != previousController)) card.UncountedDeckSource = false;
             if (!_botDeckActive)
                 return;
 
@@ -73,7 +80,9 @@ namespace WindBot.Game
                 return;
 
             if (leavesBotDeck)
-                _duel.Fields[0].TrackRemoveFromDeck(cardId);
+            {
+                if (!uncounted) _duel.Fields[0].TrackRemoveFromDeck(cardId);
+            }
             else
                 _duel.Fields[0].TrackAddToDeck(cardId);
         }
@@ -510,9 +519,9 @@ namespace WindBot.Game
             for (int i = 0; i < count; ++i)
             {
                 int cardId = packet.ReadInt32() & 0x7fffffff;
-                TrackDeckMove(cardId, player, (int)CardLocation.Deck, player, (int)CardLocation.Hand);
                 int deckIndex = _duel.Fields[player].Deck.Count - 1;
                 ClientCard card = _duel.Fields[player].Deck[deckIndex];
+                TrackDeckMove(cardId, player, (int)CardLocation.Deck, player, (int)CardLocation.Hand, card);
                 _duel.Fields[player].Deck.RemoveAt(deckIndex);
                 _duel.AddCard(CardLocation.Hand, card, player, -1, 0, cardId);
             }
@@ -805,7 +814,7 @@ namespace WindBot.Game
             int trackedCardId = cardId;
             if (trackedCardId == 0 && card != null)
                 trackedCardId = card.Id;
-            TrackDeckMove(trackedCardId, previousControler, previousLocation, currentControler, currentLocation);
+            TrackDeckMove(trackedCardId, previousControler, previousLocation, currentControler, currentLocation, card);
             if ((previousLocation & (int)CardLocation.Overlay) != 0)
             {
                 // Detach by index rather than ID because a host may have multiple materials
@@ -897,8 +906,8 @@ namespace WindBot.Game
             if (card1 == null || card2 == null) return;
             int trackedCardId1 = cardId1 != 0 ? cardId1 : card1.Id;
             int trackedCardId2 = cardId2 != 0 ? cardId2 : card2.Id;
-            TrackDeckMove(trackedCardId1, controler1, location1, controler2, location2);
-            TrackDeckMove(trackedCardId2, controler2, location2, controler1, location1);
+            TrackDeckMove(trackedCardId1, controler1, location1, controler2, location2, card1);
+            TrackDeckMove(trackedCardId2, controler2, location2, controler1, location1, card2);
             _duel.RemoveCard((CardLocation)location1, card1, controler1, sequence1);
             _duel.RemoveCard((CardLocation)location2, card2, controler2, sequence2);
             _duel.AddCard((CardLocation)location2, card1, controler2, sequence2, card1.Position, cardId1);

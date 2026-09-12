@@ -9,6 +9,8 @@ namespace WindBot.Game
     public class ClientCard
     {
         public int Id { get; private set; }
+        // This slot was introduced without adding a secret code to .ydk counts.
+        internal bool UncountedDeckSource;
         public NamedCard Data { get; private set; }
         public string Name { get; private set; }
 

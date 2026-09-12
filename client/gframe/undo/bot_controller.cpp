@@ -164,6 +164,10 @@ BotController::BotController(const std::wstring& executable,const BotLaunchData&
  if(init.handOverride && (*init.handOverride<0 || *init.handOverride>1))throw std::invalid_argument("Invalid menu Hand override");
  put(request,init.handOverride.has_value(),1);if(init.handOverride)put(request,*init.handOverride,4);
  if(!p.request(std::move(request)))throw std::runtime_error(p.failure);
+ if(init.testStatePatchVersion) {
+  Bytes negotiate{10};put(negotiate,init.testStatePatchVersion,4);
+  if(!p.request(std::move(negotiate)))throw std::runtime_error("Bot refused TestStatePatch capability");
+ }
 }
 BotController::~BotController()=default;
 std::vector<BotOutput> BotController::Dispatch(SessionId session,std::uint64_t epoch,std::uint64_t prompt,const Bytes& packet) {
@@ -173,6 +177,7 @@ std::vector<BotOutput> BotController::Dispatch(SessionId session,std::uint64_t e
  for(auto& item:output)if(AcceptsBotOutput(item,Identity(),prompt))accepted.push_back(std::move(item));return accepted;
 }
 bool BotController::Prepare(const TxKey& tx,std::size_t cursor){Bytes request{3};key(request,tx);put(request,cursor,8);return impl_->request(std::move(request));}
+bool BotController::Prepare(const TxKey& tx,std::size_t cursor,const Bytes& continuation){Bytes request{9};key(request,tx);put(request,cursor,8);blob(request,continuation);return impl_->request(std::move(request));}
 bool BotController::Commit(const TxKey& tx){Bytes request{4};key(request,tx);return impl_->request(std::move(request));}
 void BotController::Abort(const TxKey& tx){Bytes request{5};key(request,tx);impl_->request(std::move(request));}
 bool BotController::Resume(const TxKey& tx,std::uint64_t epoch){Bytes request{6};key(request,tx);put(request,epoch,8);return impl_->request(std::move(request));}

@@ -26,7 +26,7 @@ namespace WindBot.Undo
             int length = r.ReadInt32();
             if (length < 0 || length > 1000000) throw new InvalidOperationException("Invalid tape length");
             var entries = new TapeEntry[length];
-            for (int i = 0; i < length; i++) entries[i] = new TapeEntry { Kind = (TapeKind)r.ReadInt32(), Call = r.ReadString(), Input = ReadBytes(r), Output = ReadBytes(r) };
+            for (int i = 0; i < length; i++) entries[i] = DecisionTape.Clone(new TapeEntry { Kind = (TapeKind)r.ReadInt32(), Call = r.ReadString(), Input = ReadBytes(r), Output = ReadBytes(r) });
             return entries;
         }
     }

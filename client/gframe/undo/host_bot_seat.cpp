@@ -97,7 +97,7 @@ struct HostBotSeat::Impl {
           result.accepted = bot->State() != BotState::Failed;
           break;
         case BotOperation::Prepare:
-          result.accepted = bot->Prepare(job.key, job.cursor);
+          result.accepted = job.packet.empty()?bot->Prepare(job.key, job.cursor):bot->Prepare(job.key, job.cursor, job.packet);
           break;
         case BotOperation::Commit:
           result.accepted = bot->Commit(job.key);
@@ -181,6 +181,10 @@ std::uint64_t HostBotSeat::Dispatch(std::uint64_t epoch, std::uint64_t prompt,
 std::uint64_t HostBotSeat::Fence() { return impl_->push(BotOperation::Fence); }
 std::uint64_t HostBotSeat::Prepare(TxKey key, std::size_t cursor) {
   return impl_->push(BotOperation::Prepare, key, 0, 0, {}, cursor);
+}
+std::uint64_t HostBotSeat::Prepare(TxKey key, std::size_t cursor, Bytes continuation) {
+  if(continuation.empty() || continuation.size()>4*1024*1024)throw std::invalid_argument("Invalid prepared continuation size");
+  return impl_->push(BotOperation::Prepare,key,0,0,std::move(continuation),cursor);
 }
 std::uint64_t HostBotSeat::Commit(TxKey key) {
   return impl_->push(BotOperation::Commit, key);

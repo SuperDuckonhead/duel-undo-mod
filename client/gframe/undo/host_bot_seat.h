@@ -40,6 +40,7 @@ public:
   // the entire host input/output boundary quiescent before saving this cursor.
   std::uint64_t Fence();
   std::uint64_t Prepare(TxKey, std::size_t cursor);
+  std::uint64_t Prepare(TxKey, std::size_t cursor, Bytes recipientContinuation);
   std::uint64_t Commit(TxKey);
   std::uint64_t Abort(TxKey);
   std::uint64_t Resume(TxKey, std::uint64_t epoch);

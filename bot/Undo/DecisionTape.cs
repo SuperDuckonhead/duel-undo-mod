@@ -4,7 +4,7 @@ using System.Linq;
 
 namespace WindBot.Undo
 {
-    public enum TapeKind { Message, Decision, Random, Clock, External }
+    public enum TapeKind { Message, Decision, Random, Clock, External, TestStatePatch }
 
     public sealed class TapeEntry
     {
@@ -26,6 +26,11 @@ namespace WindBot.Undo
         {
             if (entry == null || entry.Call == null || entry.Input == null || entry.Output == null || !Enum.IsDefined(typeof(TapeKind), entry.Kind))
                 throw new InvalidOperationException("Invalid AI event");
+            if (entry.Kind == TapeKind.TestStatePatch)
+            {
+                if (entry.Call != "TestStatePatch/v1" || entry.Output.Length != 0) throw new InvalidOperationException("Invalid TestStatePatch tape entry");
+                TestStatePatch.Decode(entry.Input);
+            }
             return new TapeEntry { Kind = entry.Kind, Call = entry.Call, Input = (byte[])entry.Input.Clone(), Output = (byte[])entry.Output.Clone() };
         }
 

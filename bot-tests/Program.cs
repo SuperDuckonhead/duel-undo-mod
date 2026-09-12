@@ -114,6 +114,26 @@ class UndoTests
     {
         using (var active = new ReplaySession(Init("ChainBurn")))
         {
+            active.Dispatch(Start());
+            var original = active.Snapshot();
+            byte[] patch;
+            using (var stream = new MemoryStream()) using (var writer = new BinaryWriter(stream))
+            {
+                writer.Write(1); writer.Write(0); // v1, transaction-local birth ordinal
+                writer.Write(new byte[] { 0, 1, 1, 1, 40, 8 }); writer.Write((ushort)40);
+                patch = stream.ToArray();
+            }
+            var extended = original.Concat(new[] { new TapeEntry { Kind = (TapeKind)5, Call = "TestStatePatch/v1", Input = patch, Output = new byte[0] } }).ToArray();
+            using (var candidate = new ReplaySession(Init("ChainBurn")))
+            {
+                candidate.Replay(extended, extended.Length);
+                Check(candidate.Snapshot().Last().Input.SequenceEqual(patch), "Hidden source birth was not retained as a deterministic recipient input");
+            }
+            Check(active.Snapshot().Length == original.Length, "Candidate source birth changed active tape");
+        }
+        Console.WriteLine("PASS hidden source birth replay input is retained in a private worker candidate");
+        using (var active = new ReplaySession(Init("ChainBurn")))
+        {
             active.Dispatch(Start()); active.Dispatch(Draw(98645731, 60990740));
             Check(BitConverter.ToInt32(Response(active.Dispatch(ActivatePot())), 1) == 5, "Pot of Duality callback not accepted");
             var history = active.Snapshot(); var before = active.DecisionStateDigest();
@@ -242,6 +262,7 @@ class UndoTests
     {
         try
         {
+            if (args.Length == 2 && args[0] == "--native-fixture") { PatchTests.Native(args[1]); return 0; }
             Check(args.Length == 2 && args[0] == "--suite", "Usage: --suite tape|rebuild|faults|transactions|all");
             string suite = args[1]; Check(new[] { "tape", "rebuild", "faults", "transactions", "all" }.Contains(suite), "Unknown suite");
             if (suite == "tape" || suite == "all") TapeTests();

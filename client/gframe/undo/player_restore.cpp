@@ -3,6 +3,7 @@
 #include "../game.h"
 #include "../network.h"
 #include "resource_view.h"
+#include "test_state_patch.h"
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
@@ -48,7 +49,7 @@ struct Reader {
 Bytes visible(const PlayerRestore &r) {
     need(r.player < 2, "invalid restore player");
     need(r.frames.size() <= 65536, "too many frames");
-    Bytes b{'Y', 'G', 'O', 'V', 1, r.player};
+    Bytes b{'Y', 'G', 'O', 'V', uint8_t(r.continuation.empty()?1:2), r.player};
     put(b, static_cast<std::uint32_t>(r.frames.size()));
     for (std::size_t i = 0; i < r.frames.size(); ++i) {
         const auto &f = r.frames[i];
@@ -58,6 +59,12 @@ Bytes visible(const PlayerRestore &r) {
         put(b, static_cast<std::uint32_t>(i));
         put(b, static_cast<std::uint32_t>(f.size()));
         b.insert(b.end(), f.begin(), f.end());
+    }
+    if(!r.continuation.empty()) {
+        auto extension=DecodePreparedContinuation(r.continuation);
+        need(DecodeTestStatePatch(extension.birth).recipient==r.player,"patch recipient mismatch");
+        need(b.size()+5+r.continuation.size()<=MaxRestoreBytes,"restore extension too large");
+        b.push_back('X');put(b,uint32_t(r.continuation.size()));b.insert(b.end(),r.continuation.begin(),r.continuation.end());
     }
     need(!r.prompt.empty() && r.prompt.size() <= MaxPayload, "invalid prompt size");
     need(b.size() + 5 + r.prompt.size() + 32 <= MaxRestoreBytes, "restore too large");
@@ -382,6 +389,15 @@ class Projector {
   public:
     Projector(ygo::ClientField &field, PlayerViewState &state, unsigned p)
         : f(field), s(state), recipient(p) {}
+    void patch(const Bytes& bytes) {
+        auto patch=DecodeTestStatePatch(bytes);
+        need(initialized && patch.recipient==recipient,"patch recipient or initial state mismatch");
+        auto p=patch.controller^recipient;
+        auto& deck=f.deck[p];need(deck.size()==patch.expectedCount,"patch source count mismatch");
+        auto c=make();c->owner=patch.owner^recipient;c->controler=p;c->code=0;
+        c->location=LOCATION_DECK;c->position=POS_FACEDOWN_DEFENSE;
+        deck.insert(deck.begin()+patch.sequence,c);reseq(deck);
+    }
     void frame(const Bytes &bytes) {
         Reader r(bytes);
         auto msg = r.u8();
@@ -1282,7 +1298,8 @@ Bytes EncodePlayerRestore(const PlayerRestore &r) {
 PlayerRestore DecodePlayerRestore(const Bytes &b) {
     need(b.size() <= MaxRestoreBytes, "restore too large");
     Reader r(b);
-    need(r.bytes(5) == Bytes({'Y', 'G', 'O', 'V', 1}), "restore version");
+    need(r.bytes(4) == Bytes({'Y', 'G', 'O', 'V'}), "restore magic");
+    const auto version=r.u8();need(version==1 || version==2,"restore version");
     PlayerRestore out;
     out.player = r.u8();
     need(out.player < 2, "restore player");
@@ -1293,6 +1310,10 @@ PlayerRestore DecodePlayerRestore(const Bytes &b) {
         auto n = r.u32();
         need(n > 0, "empty restore frame");
         out.frames.push_back(r.bytes(n));
+    }
+    if(version==2) {
+        need(r.u8()=='X',"patch extension tag");out.continuation=r.bytes(r.u32());
+        need(!out.continuation.empty(),"empty patch extension");
     }
     need(r.u8() == 'P', "prompt tag");
     auto n = r.u32();
@@ -1331,18 +1352,23 @@ ClientRestore::ClientRestore(ygo::ClientField &f, PlayerViewState &s, std::uint8
     need(p < 2, "restore recipient");
 }
 bool ClientRestore::Prepare(const TxKey &k, const PlayerRestore &r, const Bytes &expected) {
-    if (active_)
-        return false;
     try {
+        const auto digest=HashVisibleRestore(r);
+        if(active_)return SameKey(*active_,k) && !committed_ && r.prompt==expected && digest==r.visibleDigest && digest==preparedDigest_;
         need(IsCurrent(k, session_, epoch_), "stale restore transaction");
         need(r.player == recipient_, "restore recipient mismatch");
         need(r.prompt == expected, "target prompt mismatch");
-        need(HashVisibleRestore(r) == r.visibleDigest, "visible digest mismatch");
+        need(digest == r.visibleDigest, "visible digest mismatch");
+        need(r.continuation.empty() || patchVersion_==1,"TestStatePatch capability not negotiated");
         auto candidate = std::make_unique<ygo::ClientField>();
         PlayerViewState state;
         Projector projector(*candidate, state, recipient_);
         for (const auto &frame : r.frames)
             projector.frame(frame);
+        if(!r.continuation.empty()) {
+            auto extension=DecodePreparedContinuation(r.continuation);projector.patch(extension.birth);
+            for(const auto& packet:extension.messages)projector.frame(Bytes(packet.begin()+1,packet.end()));
+        }
         projector.prompt(r.prompt);
         projector.finish();
         candidate_ = std::move(candidate);
@@ -1351,11 +1377,15 @@ bool ClientRestore::Prepare(const TxKey &k, const PlayerRestore &r, const Bytes 
         paused_ = true;
         committed_ = false;
         error_.clear();
+        preparedDigest_=digest;
         return true;
     } catch (const std::exception &e) {
         error_ = e.what();
         return false;
     }
+}
+bool ClientRestore::NegotiateTestStatePatch(std::uint32_t version) noexcept {
+    if(active_ || paused_ || version!=1)return false;patchVersion_=version;return true;
 }
 bool ClientRestore::Commit(const TxKey &k, std::uint64_t epoch) noexcept {
     if (!active_ || !SameKey(*active_, k) || committed_ || !candidate_ || epoch_ == UINT64_MAX ||

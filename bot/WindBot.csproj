@@ -82,7 +82,9 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Config.cs" />
-    <Compile Include="Undo\*.cs" />
+    <Compile Include="Undo\*.cs" Exclude="Undo\TestStatePatch.cs;Undo\PreparedContinuation.cs" />
+    <Compile Include="Undo\TestStatePatch.cs" />
+    <Compile Include="Undo\PreparedContinuation.cs" />
     <Compile Include="Game\AI\AIUtil.cs" />
     <Compile Include="Game\AI\CardContainer.cs" />
     <Compile Include="Game\AI\CardExecutor.cs" />

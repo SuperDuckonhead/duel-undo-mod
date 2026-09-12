@@ -10,6 +10,7 @@ struct PlayerRestore {
     std::vector<Bytes> frames;
     Bytes prompt;
     Digest visibleDigest{};
+    Bytes continuation; // optional v2 envelope: one recipient birth + ordered STOC suffix
 };
 PlayerRestore BuildPlayerRestore(std::uint8_t player, const std::vector<Bytes> &playerVisibleHistory,
                                  const Bytes &targetPrompt);
@@ -43,6 +44,7 @@ class ClientRestore {
     ClientRestore(ygo::ClientField &live, PlayerViewState &state, std::uint8_t recipient,
                   const SessionId &session, std::uint64_t epoch);
     bool Prepare(const TxKey &, const PlayerRestore &, const Bytes &expectedPrompt);
+    bool NegotiateTestStatePatch(std::uint32_t version) noexcept;
     bool Commit(const TxKey &, std::uint64_t installedEpoch) noexcept;
     bool Resume(const TxKey &) noexcept;
     void Abort(const TxKey &) noexcept;
@@ -63,5 +65,7 @@ class ClientRestore {
     PlayerViewState preparedState_;
     bool paused_{}, committed_{};
     std::string error_;
+    std::uint32_t patchVersion_{};
+    Digest preparedDigest_{};
 };
 } // namespace undo

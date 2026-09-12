@@ -1,5 +1,6 @@
 #pragma once
 #include "resource_view.h"
+#include "test_state_patch.h"
 #include <functional>
 namespace undo {
 class PoolQueryGate;
@@ -24,6 +25,12 @@ struct Boundary {
  BoundaryKind kind{BoundaryKind::Failed}; Checkpoint checkpoint{};
  bool rejectedResponse{}; std::string failure;
 };
+// Native, host-private ordered output. Every message still requires the normal
+// host recipient filter before it can become a restore frame or AI input.
+struct CoreOutput {
+ Bytes message;
+ std::optional<TestStatePatch> sourceBirth; // recipient is assigned by the host
+};
 class CoreDriver {
 public:
  static std::unique_ptr<CoreDriver> Create(const InitialState&,std::shared_ptr<const ResourceView>);
@@ -34,6 +41,9 @@ public:
  // Awaiting-response prompts are withheld until the session records acceptance.
  // Rebuild leaves this callback empty and has no external output capability.
  using LiveOutput=std::function<void(const Bytes&)>;
+ // Candidate-only collection into a private host builder. As with LiveOutput,
+ // raw messages must pass the normal host visibility filter before delivery.
+ using PrivateOutput=std::function<void(const CoreDriver&,const CoreOutput&)>;
  Boundary Advance(const LiveOutput& output={});
  Bytes QueryInfo() const;
  Bytes QueryField(uint8_t player,uint8_t location,uint32_t flags) const;
@@ -47,6 +57,8 @@ public:
  std::vector<std::string> Logs() const;
  // Private host diagnostic, deliberately separate from legacy checkpoints.
  Bytes DiagnosticState() const;
+ // Captured only for an attached pool context or explicit private collector.
+ std::vector<CoreOutput> OrderedOutput() const;
 private:
  friend class PoolQueryGate;
  class Binding;
@@ -65,5 +77,8 @@ private:
  std::vector<std::string> logs_;
  std::string callbackFailure_;
  std::shared_ptr<PoolQueryState> poolQuery_;
+ std::vector<CoreOutput> orderedOutput_;
+ std::vector<std::pair<size_t,TestStatePatch>> pendingBirths_;
+ PrivateOutput privateOutput_;
 };
 }

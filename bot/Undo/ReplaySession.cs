@@ -152,6 +152,12 @@ namespace WindBot.Undo
         {
             lock (sync) { EnsureInitialized(); return Request(6, w => { w.Write(code); w.Write(setcode); }, WorkerWire.ReadBytes); }
         }
+        public void ApplyTestStatePatch(byte[] input)
+        {
+            TestStatePatch.Decode(input);
+            byte[] copy = (byte[])input.Clone();
+            lock (sync) { EnsureInitialized(); Request(9, w => WorkerWire.WriteBytes(w, copy), r => 0); }
+        }
         public void Dispose()
         {
             lock (sync)

@@ -45,6 +45,9 @@ namespace WindBot.Undo
         private ReplaySession active, candidate, retained;
         private BotTxKey transaction, completed;
         private ulong highestRequest, candidateCursor;
+        private ulong preparedPrefixCursor;
+        private uint patchVersion;
+        private byte[] preparedExtension;
         private bool disposed;
         public BotUndoState State { get; private set; }
         public ulong Epoch { get; private set; }
@@ -86,12 +89,35 @@ namespace WindBot.Undo
         }
         public bool Prepare(BotTxKey key, ulong aiCursor)
         {
+            return Prepare(key, aiCursor, null);
+        }
+        public bool NegotiateTestStatePatch(uint version)
+        {
+            lock (sync)
+            {
+                if (disposed || State != BotUndoState.Running || transaction != null || version != TestStatePatch.Version) return false;
+                patchVersion = version; return true;
+            }
+        }
+        public bool Prepare(BotTxKey key, ulong aiCursor, byte[] extension)
+        {
             lock (sync)
             {
                 if (disposed) return false;
-                if (transaction != null && transaction.Same(key)) return State == BotUndoState.Ready && aiCursor == candidateCursor;
+                if (transaction != null && transaction.Same(key)) return State == BotUndoState.Ready && aiCursor == preparedPrefixCursor &&
+                    (preparedExtension == null ? extension == null : extension != null && preparedExtension.SequenceEqual(extension));
                 if (State != BotUndoState.Running || key == null || !session.SequenceEqual(key.Session) || key.Epoch != Epoch || Epoch == ulong.MaxValue || key.Request == 0 || key.Request <= highestRequest || key.TargetDigest == null || key.TargetDigest.Length != 32 || key.TargetDigest.All(b => b == 0)) return false;
+                PreparedContinuation continuation = null;
+                if (extension != null && extension.Length > 4 * 1024 * 1024) return false;
+                byte[] immutableExtension = extension == null ? null : (byte[])extension.Clone();
+                if (immutableExtension != null)
+                {
+                    if (patchVersion != TestStatePatch.Version) return false;
+                    try { continuation = PreparedContinuation.Decode(immutableExtension); }
+                    catch (Exception ex) { Failure = ex.Message; return false; }
+                }
                 transaction = key.Copy(); highestRequest = key.Request;
+                preparedPrefixCursor = aiCursor; preparedExtension = immutableExtension;
                 State = BotUndoState.Frozen; Failure = "";
                 bool activeSnapshotComplete = false;
                 try
@@ -101,7 +127,9 @@ namespace WindBot.Undo
                     var tape = active.Snapshot(); Cursor = (ulong)tape.Length; activeSnapshotComplete = true;
                     if (aiCursor > Cursor || aiCursor > int.MaxValue) throw new InvalidOperationException("Invalid AI checkpoint cursor");
                     candidate = new ReplaySession(init);
-                    candidate.Replay(tape, (int)aiCursor); candidateCursor = aiCursor;
+                    candidate.Replay(tape, (int)aiCursor);
+                    if (continuation != null) continuation.Apply(candidate);
+                    candidateCursor = candidate.Cursor;
                     State = BotUndoState.Ready;
                     return true;
                 }
@@ -215,6 +243,18 @@ namespace WindBot.Undo
                                     else if (command == 5) control.Abort(BotTxKey.Read(r));
                                     else if (command == 6) accepted = control.Resume(BotTxKey.Read(r), r.ReadUInt64());
                                     else if (command == 8) control.Pause();
+                                    else if (command == 9)
+                                    {
+                                        var key = BotTxKey.Read(r); ulong cursor = r.ReadUInt64(); byte[] extension = WorkerWire.ReadBytes(r);
+                                        accepted = stream.Position == stream.Length && control.Prepare(key, cursor, extension);
+                                        stream.Position = stream.Length;
+                                    }
+                                    else if (command == 10)
+                                    {
+                                        uint version = r.ReadUInt32();
+                                        accepted = stream.Position == stream.Length && control.NegotiateTestStatePatch(version);
+                                        stream.Position = stream.Length;
+                                    }
                                     else if (command != 7) throw new InvalidOperationException("Unknown private control command");
                                 }
                                 if (stream.Position != stream.Length) throw new InvalidOperationException("Trailing control bytes");

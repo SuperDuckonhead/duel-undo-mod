@@ -22,6 +22,7 @@ struct BotFrozenConfig {
 // Freeze every returned source under its exact menu-relative/source label.
 std::vector<std::string> DiscoverBotConfigSources(const std::string& command, const Bytes& catalog);
 struct BotLaunchData {
+ std::uint32_t testStatePatchVersion{}; // negotiated before admitting edit extension
  std::string runtimeRoot, executor, deckFile, dialog{"default"};
  std::int32_t seed{};
  bool chat{true}, usePreErrataEffects{};
@@ -62,6 +63,7 @@ public:
  std::vector<BotOutput> Dispatch(SessionId, std::uint64_t epoch, std::uint64_t prompt, const Bytes& visibleSTOC);
  std::size_t Cursor() const;
  bool Prepare(const TxKey&, std::size_t aiCursor);
+ bool Prepare(const TxKey&, std::size_t aiCursor, const Bytes& recipientContinuation);
  bool Commit(const TxKey&);
  void Abort(const TxKey&);
  bool Resume(const TxKey&, std::uint64_t installedEpoch);

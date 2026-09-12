@@ -53,7 +53,9 @@ Debug.Message('parameters:'..UNDO_SCENARIO_PARAMETERS)
   auto live=CoreDriver::Create(initial,resources);
   CHECK(live->Current().failure=="Not advanced");
   bool early=false;try{live->Submit({1});}catch(const std::logic_error&){early=true;}CHECK(early);
-  auto liveStart=live->Advance();waiting(liveStart);CHECK(liveStart.checkpoint.prompt[0]==MSG_SELECT_YESNO);CHECK(liveStart.checkpoint.player==0);
+  std::vector<Bytes> liveFrames;
+  auto liveStart=live->Advance([&](const Bytes& frame){liveFrames.push_back(frame);});waiting(liveStart);CHECK(liveStart.checkpoint.prompt[0]==MSG_SELECT_YESNO);CHECK(liveStart.checkpoint.player==0);
+  CHECK(!liveFrames.empty());CHECK(live->OrderedOutput().empty());
   auto transcript=live->Transcript();auto logs=live->Logs();
   fixture::WriteFixtureFile(root+"/script/c900000002.lua",fixture::bytes("error('mutable disk read')"));
   auto candidate=CoreDriver::Create(initial,resources);

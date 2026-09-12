@@ -176,11 +176,20 @@ Boundary CoreDriver::Advance(const LiveOutput& output) {
    // Scenario preload messages belong before start_duel, as in legacy SingleMode.
    Bytes preload(16*1024*1024);
    {Binding binding(this);auto n=get_message(handle_,preload.data());preload.resize(n);CheckFailure();}
-   for(auto& m:decode(preload)){if(m.prompt)throw std::runtime_error("Prompt during scenario preload");accepted.insert(accepted.end(),m.bytes.begin(),m.bytes.end());if(output)output(m.bytes);}
+   for(auto& m:decode(preload)) {
+    if(m.prompt)throw std::runtime_error("Prompt during scenario preload");
+    accepted.insert(accepted.end(),m.bytes.begin(),m.bytes.end());
+    if(poolQuery_ || privateOutput_) {
+     orderedOutput_.push_back({m.bytes,{}});
+     if(privateOutput_)privateOutput_(*this,orderedOutput_.back());
+    }
+    if(output)output(m.bytes);
+   }
    {Binding binding(this);start_duel(handle_,initial_.duelOptions);started_=true;}
   }
   for(size_t step=0;step<100000;++step) {
    std::vector<Message> messages;bool prompt=false,finished=false,privateQuery=false;uint32_t status{};
+   const auto outputBegin=orderedOutput_.size();
    {
     Binding binding(this);status=process(handle_);Bytes message((status&PROCESSOR_BUFFER_LEN)+4096);auto n=get_message(handle_,message.data());message.resize(n);CheckFailure();messages=decode(message);
     bool retry=false;
@@ -196,6 +205,24 @@ Boundary CoreDriver::Advance(const LiveOutput& output) {
      PoolQueryGate::ResponseRejected(*this);
      boundary_=old;boundary_.rejectedResponse=true;waiting_=true;submitted_=false;return boundary_;
     }
+    // An explicit source candidate collector also needs ordinary replay-prefix
+    // messages while query observers are deliberately detached at earlier slots.
+    if(poolQuery_ || privateOutput_) {
+     size_t offset=0,birth=0;
+     for(const auto& m:messages) {
+      while(birth<pendingBirths_.size() && pendingBirths_[birth].first==offset) {
+       ValidateTestStatePatch(pendingBirths_[birth].second);
+       orderedOutput_.push_back({{},pendingBirths_[birth++].second});
+      }
+      orderedOutput_.push_back({m.bytes,{}});offset+=m.bytes.size();
+     }
+     while(birth<pendingBirths_.size() && pendingBirths_[birth].first==offset) {
+      ValidateTestStatePatch(pendingBirths_[birth].second);
+      orderedOutput_.push_back({{},pendingBirths_[birth++].second});
+     }
+     if(birth!=pendingBirths_.size())throw std::runtime_error("Source birth did not align with native message boundary");
+     pendingBirths_.clear();
+    }
     privateQuery=reinterpret_cast<duel*>(handle_)->pool_selection_pending;
     if(prompt || finished || privateQuery || (status&PROCESSOR_END)){
      PoolQueryGate::ResponseAccepted(*this);
@@ -208,6 +235,7 @@ Boundary CoreDriver::Advance(const LiveOutput& output) {
     }
    }
    // No Binding or API mutex remains while a live client animates or waits.
+   if(privateOutput_)for(size_t i=outputBegin;i<orderedOutput_.size();++i)privateOutput_(*this,orderedOutput_[i]);
    if(output)for(const auto& m:messages)if(!m.prompt)output(m.bytes);
    if(prompt || finished || privateQuery || (status&PROCESSOR_END))return boundary_;
    // Confirmation/display operations also yield PROCESSOR_WAITING without a response.
@@ -218,6 +246,9 @@ Boundary CoreDriver::Advance(const LiveOutput& output) {
 }
 Bytes CoreDriver::QueryInfo() const {
  Binding binding(const_cast<CoreDriver*>(this));Bytes b(16*1024*1024);auto n=query_field_info(handle_,b.data());b.resize(n);CheckFailure();return b;
+}
+std::vector<CoreOutput> CoreDriver::OrderedOutput() const {
+ Binding binding(const_cast<CoreDriver*>(this));return orderedOutput_;
 }
 Bytes CoreDriver::QueryField(uint8_t player,uint8_t location,uint32_t flags) const {
  if(player>1)throw std::invalid_argument("Invalid query player");Binding binding(const_cast<CoreDriver*>(this));Bytes b(16*1024*1024);auto n=query_field_card(handle_,player,location,flags,b.data(),0);b.resize(n);CheckFailure();return b;

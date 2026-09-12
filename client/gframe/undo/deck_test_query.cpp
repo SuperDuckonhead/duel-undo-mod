@@ -31,6 +31,7 @@ struct PoolQueryState {
  std::optional<PoolIntroductionRecord> preparation;
  std::vector<PoolIntroductionRecord> introductions;
  bool creating{},sourceCreated{},selectionBound{};
+ CoreDriver::PrivateOutput collect;
 };
 namespace {
 void word(Bytes& out,uint64_t n) {for(unsigned i=0;i<8;++i)out.push_back(uint8_t(n>>(8*i)));}
@@ -108,6 +109,16 @@ std::vector<CardReference> references(const std::vector<card*>& cards) {
 void membership(Bytes& b,const std::vector<CardReference>& cards) {
  word(b,cards.size());for(auto& c:cards){word(b,c.instance.value);word(b,c.code);word(b,c.owner);word(b,uint8_t(c.source));word(b,c.location->controller);word(b,c.location->zone);word(b,c.location->sequence);word(b,c.location->position);}
 }
+void registeredScope(PoolQueryState& state,PoolQueryRequest& request) {
+ Bytes phase;
+ word(phase,request.handler.value);word(phase,request.effectRegistration);word(phase,request.effectCode);word(phase,uint8_t(request.stage));
+ if(request.target.value){word(phase,request.target.value);word(phase,request.procedureRegistration);}
+ request.parentScope=Sha256(phase);
+ Bytes scope;
+ digest(scope,request.parentScope);digest(scope,request.caller);word(scope,uint8_t(request.api));word(scope,request.callsite);
+ request.scope=Sha256(scope);
+ request.invocation=++state.scopeInvocations[request.scope];
+}
 }
 Digest PoolQueryGate::PrefixDigest(const std::vector<ResponseRecord>& prefix) {
  Bytes out;word(out,prefix.size());
@@ -135,12 +146,32 @@ void PoolQueryGate::Observe(CoreDriver& driver,lua_State* L,native_query_api nat
  }
  size_t parent=absent;for(auto it=state.scopes.rbegin();it!=state.scopes.rend();++it)if(*it!=absent){parent=*it;break;}
  state.scopes.push_back(absent);
+ if(nativeApi==native_query_api::FusionMaterials && !state.creating && !state.checkingWitness) {
+  auto identity=IdentifyRegisteredQuery(driver,L,true);
+  if(identity && identity->api==PoolQueryApi::FusionMaterials) {
+   PoolQueryObservation observation;observation.request=*identity;
+   state.requests.push_back(*identity);state.scopes.back()=state.observations.size();state.observations.push_back(std::move(observation));
+   if(state.preparation && same(*identity,state.preparation->query))CreateSource(driver);
+   return;
+  }
+ }
+ if(nativeApi==native_query_api::SelectFusion && state.preparation && state.sourceCreated) {
+  const auto& record=*state.preparation;
+  if(!target || target->cardid!=record.query.target.value)throw std::runtime_error("Fusion source target changed");
+  for(const auto& selected:record.plan.cards) {
+   auto id=selected.kind==CardReferenceKind::NewCopy?record.nativeInstance:selected.instance;
+   if(std::none_of(cards.begin(),cards.end(),[&](auto* c){return c->cardid==id.value && c->data.code==selected.code;}))
+    throw std::runtime_error("Confirmed material rejected by original material collection");
+  }
+  state.selectionBound=true;
+ }
  // Accepted target evidence uses the very same pre/post native scope in both
  // discovery and workers. Reentrant witness checks retain native semantics but
  // cannot consume evidence or increment the outer phase's call ordinal.
- if(nativeApi==native_query_api::ExistingMatching && !state.creating && !state.checkingWitness) {
-  auto identity=IdentifyRegisteredQuery(driver,L,false);
+ if((nativeApi==native_query_api::ExistingMatching || nativeApi==native_query_api::SelectMatching) && !state.creating && !state.checkingWitness) {
+  auto identity=IdentifyRegisteredQuery(driver,L,nativeApi==native_query_api::SelectMatching);
   if(identity) {
+   if(nativeApi==native_query_api::SelectMatching)state.selectionQuery=identity;
    PoolQueryObservation observation;observation.request=*identity;
    state.scopes.back()=state.observations.size();state.observations.push_back(std::move(observation));
    return;
@@ -257,19 +288,58 @@ std::optional<PoolQueryRequest> PoolQueryGate::IdentifyRegisteredQuery(CoreDrive
  auto* pd=reinterpret_cast<duel*>(driver.handle_);
  auto* f=pd->game_field;
  effect* e=selection?f->core.reason_effect:pd->pool_target_check;
- if(!e || !e->handler || e->handler->current.controler!=0 ||
+ if(!e || !e->handler || e->handler->current.controler!=0)return std::nullopt;
+ const auto code=e->handler->data.code;
+ if(code==44362883 && selection) {
+  if(!(e->type&EFFECT_TYPE_ACTIVATE) || e->code!=EVENT_FREE_CHAIN || pd->pool_target_check || lua_gettop(L)!=2 ||
+     !lua_isinteger(L,1) || lua_tointeger(L,1)!=0 || !lua_isinteger(L,2) || lua_tointeger(L,2)!=(LOCATION_HAND|LOCATION_DECK|LOCATION_MZONE))return std::nullopt;
+  const auto script=Sha256(driver.Resources()->Read("script/c44362883.lua"));
+  const auto helper=Sha256(driver.Resources()->Read("script/procedure.lua"));
+  if(script!=fromHex("df65c2875fe485cab0ba106f2f9a8926af85e5616f2c3aa9d20125becbf85469") ||
+     helper!=fromHex("df887c18619374f825fc14f5a5f05f6a090c910adbb52933bd8462c773973baa"))return std::nullopt;
+  lua_Debug caller{};if(!lua_getstack(L,1,&caller) || !lua_getinfo(L,"fl",&caller))return std::nullopt;
+  const bool registered=tableFunction(L,-1,"FusionSpell","GetFusionMaterial");const auto callerId=functionIdentity(L,-1);lua_pop(L,1);
+  if(!registered)return std::nullopt;
+  card* target=nullptr;bool operation=false;
+  for(int depth=2;depth<32;++depth) {
+   lua_Debug frame{};if(!lua_getstack(L,depth,&frame) || !lua_getinfo(L,"f",&frame))break;
+   const bool precheck=tableFunction(L,-1,"FusionSpell","SummonTargetFilter");
+   const bool materialHelper=tableFunction(L,-1,"FusionSpell","GetMaterialsGroupForTargetCard");
+   lua_rawgeti(L,LUA_REGISTRYINDEX,e->operation);operation|=lua_rawequal(L,-1,-2);lua_pop(L,2);
+   if(precheck)return std::nullopt; // only the chosen target's resolution binding
+   if(materialHelper) {
+    const char* name=lua_getlocal(L,&frame,1);
+    if(name){if(std::string(name)=="tc" && lua_isuserdata(L,-1)){auto* c=*static_cast<card**>(lua_touserdata(L,-1));if(pd->cards.count(c))target=c;}lua_pop(L,1);}
+   }
+  }
+  if(!operation || !target || target->data.code!=87746184 || target->current.controler!=0 || target->current.location!=LOCATION_EXTRA ||
+     !target->is_position(POS_FACEDOWN) || Sha256(driver.Resources()->Read("script/c87746184.lua"))!=fromHex("8336d726dcdd1720461111283d5a037d7689df96338300ab5843b2a3acb05db8"))return std::nullopt;
+  auto procedure=target->single_effect.find(EFFECT_FUSION_MATERIAL);if(procedure==target->single_effect.end())return std::nullopt;
+  PoolQueryRequest request;request.context=state.context;request.acceptedPrefix=state.prefix;request.script=script;request.helper=helper;
+  request.handler={e->handler->cardid};request.handlerCode=code;request.effectRegistration=e->registration_ordinal;request.effectCode=e->code;
+  request.caller=callerId;request.callsite=caller.currentline;request.stage=PoolQueryStage::ResolutionSelection;
+  request.api=PoolQueryApi::FusionMaterials;request.semantic=PoolQuerySemantic::MaterialUniverse;request.role=SelectionRole::ResolutionMaterial;
+  request.source=CardSource::OwnMainDeck;request.selfLocation=LOCATION_HAND|LOCATION_DECK|LOCATION_MZONE;
+  request.target={target->cardid};request.procedureRegistration=procedure->second->registration_ordinal;
+  Bytes parameters;word(parameters,2);for(int i=1;i<=2;++i){word(parameters,lua_type(L,i));word(parameters,lua_tointeger(L,i));}
+  word(parameters,request.target.value);word(parameters,request.procedureRegistration);request.parameters=Sha256(parameters);
+  registeredScope(state,request);request.callState=Sha256(driver.DiagnosticState());return request;
+ }
+ const bool gold=code==75500286 && selection;
+ if(gold) {
+  if(!(e->type&EFFECT_TYPE_ACTIVATE) || e->code!=EVENT_FREE_CHAIN)return std::nullopt;
+ } else if((code!=62962630 && code!=900000120) ||
     e->type!=(EFFECT_TYPE_SINGLE|EFFECT_TYPE_TRIGGER_O|EFFECT_TYPE_ACTIONS) ||
     (e->code!=EVENT_SUMMON_SUCCESS && e->code!=EVENT_SPSUMMON_SUCCESS))return std::nullopt;
- const auto code=e->handler->data.code;
- if(code!=62962630 && code!=900000120)return std::nullopt;
  const bool fixture=code==900000120;
  const std::string table="c"+std::to_string(code);
  const auto script=Sha256(driver.Resources()->Read("script/"+table+".lua"));
- if(script!=(fixture?fromHex("576f41dc3d9554caf86e5363372ebdc30edb8d8891f97cd4b01f8081dfca24e9"):registeredScript()))return std::nullopt;
+ if(script!=(gold?fromHex("45789f7d9fea6da47b798b2d08ac1612521c0ad9d603e9120a8babcb2b867e04"):
+   fixture?fromHex("576f41dc3d9554caf86e5363372ebdc30edb8d8891f97cd4b01f8081dfca24e9"):registeredScript()))return std::nullopt;
  const int filter=selection?2:1;
  const int total=selection?8:6;
  if(lua_gettop(L)!=total+int(fixture) || !lua_isnil(L,total))return std::nullopt;
- bool filterRegistered=tableFunction(L,filter,table.c_str(),"thfilter");
+ bool filterRegistered=gold?tableFunction(L,filter,"Card","IsAbleToRemove"):tableFunction(L,filter,table.c_str(),"thfilter");
  if(fixture)filterRegistered=lua_isinteger(L,total+1) &&
   ((lua_tointeger(L,total+1)==21 && tableFunction(L,filter,table.c_str(),"onlyA")) ||
    (lua_tointeger(L,total+1)==22 && tableFunction(L,filter,table.c_str(),"onlyB")));
@@ -283,7 +353,7 @@ std::optional<PoolQueryRequest> PoolQueryGate::IdentifyRegisteredQuery(CoreDrive
  // Verify the immediate Lua caller is the registered original target/operation.
  lua_Debug ar{};
  if(!lua_getstack(L,1,&ar) || !lua_getinfo(L,"fl",&ar))return std::nullopt;
- bool caller=tableFunction(L,lua_gettop(L),table.c_str(),fixture?(selection?"operation":"target"):(selection?"thop":"thtg"));
+ bool caller=tableFunction(L,lua_gettop(L),table.c_str(),gold?"activate":fixture?(selection?"operation":"target"):(selection?"thop":"thtg"));
  const auto callerIdentity=functionIdentity(L,-1);
  lua_pop(L,1);
  if(!caller)return std::nullopt;
@@ -303,15 +373,9 @@ std::optional<PoolQueryRequest> PoolQueryGate::IdentifyRegisteredQuery(CoreDrive
  request.api=selection?PoolQueryApi::SelectMatching:PoolQueryApi::ExistingMatching;
  request.caller=callerIdentity;
  request.predicate=functionIdentity(L,filter);
- Bytes phase;
- word(phase,request.handler.value);word(phase,request.effectRegistration);word(phase,request.effectCode);word(phase,uint8_t(request.stage));
- request.parentScope=Sha256(phase);
- Bytes scope;
- digest(scope,request.parentScope);digest(scope,request.caller);word(scope,uint8_t(request.api));word(scope,request.callsite);
- request.scope=Sha256(scope);
  // Parameters stay outside the counter key: reversing A/B at this callsite
  // must not relabel the later A invocation as the earlier A invocation.
- request.invocation=++state.scopeInvocations[request.scope];
+ registeredScope(state,request);
  Bytes parameters;
  word(parameters,total);
  word(parameters,selection);
@@ -343,7 +407,10 @@ bool PoolQueryGate::Query(CoreDriver& driver,lua_State* L,bool selection,bool ac
   if(!difference.empty() && request.scope==state.match->scope && request.invocation==state.match->invocation)
    state.replayMismatch=difference;
  }
- if(actual)return actual;
+ if(actual) {
+  if(selection && request.handlerCode==75500286)state.requests.push_back(request);
+  return actual;
+ }
  state.requests.push_back(request);
  if(selection) {pd->pool_selection_pending=true;return actual;}
  if(!state.match || !same(request,*state.match))return actual;
@@ -372,11 +439,22 @@ bool PoolQueryGate::Query(CoreDriver& driver,lua_State* L,bool selection,bool ac
 void PoolQueryGate::Select(CoreDriver& driver,lua_State* L,group* filtered) {
  auto& state=*driver.poolQuery_;
  if(state.creating)return;
- if(!filtered)state.selectionQuery=IdentifyRegisteredQuery(driver,L,true);
+ if(!filtered && !state.selectionQuery)state.selectionQuery=IdentifyRegisteredQuery(driver,L,true);
  if(!state.selectionQuery || !state.preparation || !same(*state.selectionQuery,state.preparation->query))return;
  auto& record=*state.preparation;
- auto* pd=reinterpret_cast<duel*>(driver.handle_);
  if(!filtered) {
+  CreateSource(driver);
+ } else {
+  auto found=std::find_if(filtered->container.begin(),filtered->container.end(),[&](card* c){return c->cardid==record.nativeInstance.value;});
+  if(!state.sourceCreated || found==filtered->container.end())
+   throw std::runtime_error("Confirmed source rejected by original selection filter");
+  auto* selected=*found;
+  filtered->container.clear();filtered->container.insert(selected);state.selectionBound=true;
+ }
+}
+void PoolQueryGate::CreateSource(CoreDriver& driver) {
+  auto& state=*driver.poolQuery_;auto& record=*state.preparation;
+  auto* pd=reinterpret_cast<duel*>(driver.handle_);
   if(state.sourceCreated)throw std::runtime_error("Source plan already consumed");
   // Initialization can execute nested Lua queries. They retain native rules
   // and cannot recursively consume the outer plan or overwrite its identity.
@@ -386,6 +464,9 @@ void PoolQueryGate::Select(CoreDriver& driver,lua_State* L,group* filtered) {
    ~Creating(){flag=false;}
   } creating(state.creating);
   const auto& selected=record.plan.cards.at(0);
+  const auto sourceCount=pd->game_field->player[0].list_main.size();
+  if(sourceCount>126)throw std::runtime_error("Source count exceeds TestStatePatch/v1 bound");
+  const auto outputOffset=pd->message_buffer.size();
   auto* created=new_card_result(driver.handle_,selected.code,0,0,LOCATION_DECK,SEQ_DECKTOP,POS_FACEDOWN_DEFENSE);
   driver.CheckFailure();
   if(!created || !pd->cards.count(created) || created->owner!=0 || created->current.controler!=0 ||
@@ -393,18 +474,9 @@ void PoolQueryGate::Select(CoreDriver& driver,lua_State* L,group* filtered) {
    throw std::runtime_error("Source initialization did not produce own main-deck card");
   record.nativeInstance={created->cardid};
   record.sourceLocation={0,LOCATION_DECK,created->current.sequence,POS_FACEDOWN_DEFENSE};
+  TestStatePatch birth{0,0,0,uint8_t(created->current.sequence),uint16_t(sourceCount)};
+  driver.pendingBirths_.push_back({outputOffset,birth});
   state.sourceCreated=true;
- } else {
-  auto found=std::find_if(filtered->container.begin(),filtered->container.end(),[&](card* c){return c->cardid==record.nativeInstance.value;});
-  if(!state.sourceCreated || found==filtered->container.end())
-   throw std::runtime_error("Confirmed source rejected by original selection filter");
-  auto* selected=*found;
-  // The original closure checked the whole actual group. Only the finite,
-  // confirmed subset enters the bounded native response index space.
-  filtered->container.clear();
-  filtered->container.insert(selected);
-  state.selectionBound=true;
- }
 }
 
 void PoolQueryGate::Attach(CoreDriver& candidate,std::shared_ptr<PoolQueryState> state) {
@@ -457,6 +529,7 @@ std::unique_ptr<CoreDriver> PoolQueryGate::Replay(const InitialState& initial,st
   if(introductions.size()!=1 || !state)throw std::runtime_error("Unsupported retained introduction history");
   const auto& introduced=introductions.front();
   auto committed=introduced.prefix;committed.push_back(introduced.selection);
+  committed.insert(committed.end(),introduced.materialResponses.begin(),introduced.materialResponses.end());
   resume=committed.size();
   if(resume>prefix.size() || !sameGeneration(introduced.plan.context,state->context) ||
      PrefixDigest(committed)!=PrefixDigest(std::vector<ResponseRecord>(prefix.begin(),prefix.begin()+resume)))
@@ -466,6 +539,7 @@ std::unique_ptr<CoreDriver> PoolQueryGate::Replay(const InitialState& initial,st
    if(!same(introduced.evidenceMilestones[i],milestones[i]))throw std::runtime_error("Retained evidence milestone signature mismatch");
   candidate=ReplayIntroduction(initial,resources,introduced);
  } else candidate=CoreDriver::Create(initial,resources);
+ if(state)candidate->privateOutput_=state->collect;
  size_t milestoneIndex=0;
  while(milestoneIndex<milestones.size() && milestones[milestoneIndex].context.historyCursor<resume)++milestoneIndex;
  auto advance=[&](size_t cursor) {
@@ -615,9 +689,11 @@ std::vector<PoolQueryRequest> PoolQueryGate::PendingQueries(const CoreDriver& dr
  std::lock_guard<std::recursive_mutex> lock(ocgapi_mutex());return driver.poolQuery_?driver.poolQuery_->requests:std::vector<PoolQueryRequest>{};
 }
 void PoolQueryGate::Introduce(std::unique_ptr<CoreDriver>& live,const DeckTestContext& current,
- const PoolQueryRequest& request,const SelectionPlan& plan) {
+ const PoolQueryRequest& request,const SelectionPlan& plan,CoreDriver::PrivateOutput collect) {
  std::lock_guard<std::recursive_mutex> lock(ocgapi_mutex());
- if(!live || !live->poolQuery_ || live->Current().kind!=BoundaryKind::AwaitPoolQuery)
+ const bool fusion=request.handlerCode==44362883 && request.api==PoolQueryApi::FusionMaterials;
+ const bool physical=(request.handlerCode==75500286 || fusion) && live && live->Current().kind==BoundaryKind::AwaitResponse;
+ if(!live || !live->poolQuery_ || (live->Current().kind!=BoundaryKind::AwaitPoolQuery && !physical))
   throw std::runtime_error("Source introduction requires a pending private selection");
  const auto& source=*live->poolQuery_;
  const auto prefix=source.records;
@@ -625,8 +701,8 @@ void PoolQueryGate::Introduce(std::unique_ptr<CoreDriver>& live,const DeckTestCo
  auto expected=source.context;
  expected.checkpoint=live->Current().checkpoint;
  if(!context(current,expected) || !context(plan.context,current) || Validate(plan)!=DeckTestError::None ||
-    plan.cards.size()!=1 || plan.role!=SelectionRole::ResolutionTarget || plan.bindingStage!=BindingStage::Resolution ||
-    request.stage!=PoolQueryStage::ResolutionSelection || request.role!=plan.role || request.api!=PoolQueryApi::SelectMatching ||
+    plan.cards.size()!=(fusion?2u:1u) || plan.role!=(fusion?SelectionRole::ResolutionMaterial:SelectionRole::ResolutionTarget) || plan.bindingStage!=BindingStage::Resolution ||
+    request.stage!=PoolQueryStage::ResolutionSelection || request.role!=plan.role || request.api!=(fusion?PoolQueryApi::FusionMaterials:PoolQueryApi::SelectMatching) ||
     request.source!=CardSource::OwnMainDeck || request.acceptedPrefix!=PrefixDigest(prefix) ||
     !std::any_of(source.requests.begin(),source.requests.end(),[&](const auto& q){return same(q,request);}) ||
     !source.introductions.empty())
@@ -636,6 +712,17 @@ void PoolQueryGate::Introduce(std::unique_ptr<CoreDriver>& live,const DeckTestCo
  if(selected.kind!=CardReferenceKind::NewCopy || selected.source!=CardSource::OwnMainDeck || selected.owner!=0 ||
     !(data.type&(TYPE_MONSTER|TYPE_SPELL|TYPE_TRAP)) || (data.type&(TYPE_TOKEN|TYPE_FUSION|TYPE_SYNCHRO|TYPE_XYZ|TYPE_LINK)))
   throw std::runtime_error("Selected card is not an own main-deck source");
+ if(fusion) {
+  const auto& existing=plan.cards[1];
+  if(selected.code!=89631139 || existing.kind!=CardReferenceKind::Existing || existing.code!=68468459 || existing.owner!=0 ||
+     !existing.location || existing.location->controller!=0 || existing.location->zone!=LOCATION_DECK || existing.source!=CardSource::ExistingState)
+   throw std::runtime_error("Unsupported bounded Fusion material relation");
+  auto* liveDuel=reinterpret_cast<duel*>(live->handle_);
+  auto found=std::find_if(liveDuel->cards.begin(),liveDuel->cards.end(),[&](auto* c){return c->cardid==existing.instance.value;});
+  if(found==liveDuel->cards.end() || (*found)->data.code!=existing.code || (*found)->current.controler!=existing.location->controller ||
+     (*found)->current.location!=existing.location->zone || (*found)->current.sequence!=existing.location->sequence || (*found)->current.position!=existing.location->position)
+   throw std::runtime_error("Existing Fusion material identity changed");
+ }
  const auto before=live->DiagnosticState();
  const auto transcript=live->Transcript();
  const auto logs=live->Logs();
@@ -649,27 +736,42 @@ void PoolQueryGate::Introduce(std::unique_ptr<CoreDriver>& live,const DeckTestCo
  state->context=request.context;
  state->prefix=request.acceptedPrefix;
  state->preparation=record;
+ state->collect=std::move(collect);
+ state->observe=true;
  auto candidate=Replay(live->Initial(),live->Resources(),prefix,state,record.evidenceMilestones);
  const auto boundary=candidate->Current();
  if(!state->sourceCreated || !state->selectionBound || boundary.kind!=BoundaryKind::AwaitResponse)
   throw std::runtime_error("Source plan did not reach its native selection");
  record=*state->preparation;
  auto* pd=reinterpret_cast<duel*>(candidate->handle_);
- const auto& cards=pd->game_field->core.select_cards;
- const auto& prompt=boundary.checkpoint.prompt;
- // Map actual identity after the native processor's sorting, never by code
- // or hidden deck sequence. This gate's finite plan has exactly one member.
- auto member=std::find_if(cards.begin(),cards.end(),[&](card* c){return c->cardid==record.nativeInstance.value;});
- if(cards.size()!=1 || member==cards.end() || prompt.size()!=14 || prompt[0]!=MSG_SELECT_CARD ||
-    prompt[1]!=0 || prompt[3]!=1 || prompt[4]!=1 || prompt[5]!=1)
-  throw std::runtime_error("Finite native selection identity mismatch");
- const auto slot=uint8_t(std::distance(cards.begin(),member));
- record.selection={0,Origin::Manual,{1,slot},boundary.checkpoint};
  state->preparation.reset();
- candidate->Submit(record.selection.response,record.selection.origin);
- auto after=candidate->Advance(); // All output remains in the private core.
- if(after.kind==BoundaryKind::Failed || after.rejectedResponse)
-  throw std::runtime_error("Source selection continuation failed: "+after.failure);
+ auto after=boundary;std::set<uint64_t> consumed;
+ for(unsigned step=0;;++step) {
+  if(step>=3)throw std::runtime_error("Bounded source procedure did not finish");
+  const auto& cards=pd->game_field->core.select_cards;const auto& prompt=after.checkpoint.prompt;
+  if(prompt.empty() || prompt[0]!=(fusion?MSG_SELECT_UNSELECT_CARD:MSG_SELECT_CARD) || prompt[1]!=0)
+   throw std::runtime_error("Finite native selection prompt mismatch");
+  auto member=std::find_if(cards.begin(),cards.end(),[&](card* c){return !consumed.count(c->cardid) &&
+   (c->cardid==record.nativeInstance.value || (fusion && c->cardid==plan.cards[1].instance.value));});
+  if(member==cards.end() || (!fusion && (cards.size()!=1 || prompt.size()!=14 || prompt[3]!=1 || prompt[4]!=1 || prompt[5]!=1)))
+   throw std::runtime_error("Finite native selection identity mismatch");
+  const auto slot=uint8_t(std::distance(cards.begin(),member));consumed.insert((*member)->cardid);
+  ResponseRecord response{0,Origin::Manual,{1,slot},after.checkpoint};
+  if(!step)record.selection=response;else record.materialResponses.push_back(response);
+  candidate->Submit(response.response,response.origin);after=candidate->Advance();
+  if(after.kind==BoundaryKind::Failed || after.rejectedResponse)throw std::runtime_error("Source selection continuation failed: "+after.failure);
+  if(!fusion || after.checkpoint.prompt.empty() || after.checkpoint.prompt[0]!=MSG_SELECT_UNSELECT_CARD)break;
+ }
+ if(fusion) {
+  bool complete=false;
+  for(const auto& observation:state->observations)if(observation.request.api==PoolQueryApi::SelectedFusion && observation.request.target==request.target && observation.completed) {
+   std::set<uint64_t> selected;for(const auto& c:observation.members)selected.insert(c.instance.value);
+   complete=observation.result==1 && observation.additionalCheckPresent && observation.additionalGoalPresent &&
+    observation.request.handler==request.handler && observation.request.effectRegistration==request.effectRegistration &&
+    selected==consumed && selected==std::set<uint64_t>{record.nativeInstance.value,plan.cards[1].instance.value};
+  }
+  if(!complete)throw std::runtime_error("Original complete Fusion procedure did not consume confirmed materials");
+ }
  record.after=after.checkpoint;
  record.diagnostic=Sha256(candidate->DiagnosticState());
  state->introductions.push_back(std::move(record));
@@ -677,7 +779,7 @@ void PoolQueryGate::Introduce(std::unique_ptr<CoreDriver>& live,const DeckTestCo
  validate(*live,prefix,current,true);
  if(live->DiagnosticState()!=before || live->Transcript()!=transcript || live->Logs()!=logs)
   throw std::runtime_error("Live core changed during source preparation");
- live.swap(candidate);
+ candidate->privateOutput_={};state->collect={};live.swap(candidate);
 }
 std::vector<PoolIntroductionRecord> PoolQueryGate::Introductions(const CoreDriver& driver) {
  std::lock_guard<std::recursive_mutex> lock(ocgapi_mutex());
@@ -690,7 +792,7 @@ std::vector<ResponseRecord> PoolQueryGate::AcceptedResponses(const CoreDriver& d
 std::unique_ptr<CoreDriver> PoolQueryGate::ReplayIntroduction(const InitialState& initial,
  std::shared_ptr<const ResourceView> resources,const PoolIntroductionRecord& record) {
  if(record.version!=1 || record.insertionSequence!=SEQ_DECKTOP || Validate(record.introduced)!=DeckTestError::None ||
-    record.plan.cards.size()!=1 || !context(record.introduced.context,record.plan.context) ||
+    (record.plan.cards.size()!=1 && record.plan.cards.size()!=2) || !context(record.introduced.context,record.plan.context) ||
     record.introduced.role!=record.plan.role || record.introduced.bindingStage!=record.plan.bindingStage)
   throw std::runtime_error("Invalid introduction record");
  const auto& card=record.plan.cards.front();
@@ -707,6 +809,7 @@ std::unique_ptr<CoreDriver> PoolQueryGate::ReplayIntroduction(const InitialState
     recreated.sourceLocation.zone!=record.sourceLocation.zone || recreated.sourceLocation.sequence!=record.sourceLocation.sequence ||
     recreated.sourceLocation.position!=record.sourceLocation.position ||
     PrefixDigest({recreated.selection})!=PrefixDigest({record.selection}) ||
+    PrefixDigest(recreated.materialResponses)!=PrefixDigest(record.materialResponses) ||
     !position(recreated.after,record.after) || recreated.after.clock.remainingMs!=record.after.clock.remainingMs ||
     recreated.after.aiLogCursor!=record.after.aiLogCursor || recreated.diagnostic!=record.diagnostic)
   throw std::runtime_error("Introduction replay diverged");

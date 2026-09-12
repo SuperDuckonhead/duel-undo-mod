@@ -72,6 +72,7 @@ struct PoolIntroductionRecord {
  CardLocation sourceLocation;
  uint8_t insertionSequence{}; // SEQ_DECKTOP; no shuffle request on insertion.
  ResponseRecord selection;
+ std::vector<ResponseRecord> materialResponses; // bounded original interactive suffix
  Checkpoint after;
  Digest diagnostic{};
 };
@@ -112,7 +113,7 @@ public:
  // No new source is selected; retained sources are reconstructed privately.
  static std::unique_ptr<CoreDriver> Recreate(const CoreDriver&,const std::vector<ResponseRecord>&,const DeckTestContext&);
  static std::vector<PoolQueryObservation> Observations(const CoreDriver&);
- static void Introduce(std::unique_ptr<CoreDriver>&,const DeckTestContext&,const PoolQueryRequest&,const SelectionPlan&);
+ static void Introduce(std::unique_ptr<CoreDriver>&,const DeckTestContext&,const PoolQueryRequest&,const SelectionPlan&,CoreDriver::PrivateOutput collect={});
  static std::vector<PoolIntroductionRecord> Introductions(const CoreDriver&);
  static std::vector<ResponseRecord> AcceptedResponses(const CoreDriver&);
  static std::unique_ptr<CoreDriver> ReplayIntroduction(const InitialState&,std::shared_ptr<const ResourceView>,const PoolIntroductionRecord&);
@@ -128,6 +129,7 @@ private:
  static bool Query(CoreDriver&,lua_State*,bool selection,bool actual);
  static std::optional<PoolQueryRequest> IdentifyRegisteredQuery(CoreDriver&,lua_State*,bool selection);
  static void Select(CoreDriver&,lua_State*,group*);
+ static void CreateSource(CoreDriver&);
  static void Observe(CoreDriver&,lua_State*,native_query_api,bool,const std::vector<card*>&,card*,int32_t);
 };
 }

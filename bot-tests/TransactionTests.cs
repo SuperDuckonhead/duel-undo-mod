@@ -40,6 +40,8 @@ internal static class TransactionTests
     static int Decision(BotOutput[] outputs) { return BitConverter.ToInt32(outputs.Last(o => o.Packet[0] == 1).Packet, 1); }
     static void PrivateChannelTests()
     {
+        Check(typeof(UndoControl).GetMethod("Prepare", new[] { typeof(BotTxKey), typeof(ulong), typeof(byte[]) }) != null,
+            "Versioned source-birth prepare is missing from the real control transaction");
         Type type = typeof(ReplaySession).Assembly.GetType("WindBot.Undo.PrivatePipe");
         string name = (string)type.GetMethod("NewName", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, null);
         using (var server = (NamedPipeServerStream)type.GetMethod("Server", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new object[] { name }))
@@ -154,6 +156,7 @@ internal static class TransactionTests
         Check(!UndoControl.CanEmitResponse(BotUndoState.Frozen, 7, 7), "Frozen participant emitted");
         PrivateChannelTests();
         var cards = ReadOriginal();
+        PatchTests.Run(Init("ChainBurn", cards));
         SelectionAndTerminalTests(cards); ConfigSelectionTests(cards);
         // This mimics already-resolved DataManager expansion values; the native
         // fixture separately constructs the bridge from a real merged DataManager.

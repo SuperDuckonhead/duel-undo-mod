@@ -88,6 +88,12 @@ namespace WindBot.Game
 
         internal object OfflineState() { return _behavior; }
 
+        internal void ApplyTestStatePatch(byte[] bytes)
+        {
+            if (!Offline) throw new InvalidOperationException("TestStatePatch requires an isolated client");
+            _behavior.ApplyTestStatePatch(bytes);
+        }
+
         public void Start()
         {
             if (Offline) throw new InvalidOperationException("Offline client cannot connect");

@@ -89,7 +89,9 @@ namespace WindBot.Game
                 // at most cases we don't want to log this
                 // Logger.DebugWriteLine($"GetTrackedDeckCount: cardId {cardId} not found in the deck being used.");
             }
-            return remaining;
+            // Only a normal reveal can make an introduced slot contribute a
+            // code here. Its unknown birth never changes the frozen .ydk map.
+            return remaining + Deck.Count(card => card.UncountedDeckSource && card.Id != 0 && card.IsCode(cardId));
         }
 
         internal void TrackAddToDeck(int cardId)
@@ -144,7 +146,7 @@ namespace WindBot.Game
             if (!DeckTrackingActive || _deckCardCounts == null)
                 return;
 
-            int trackedCount = _deckCardCounts.Values.Sum();
+            int trackedCount = _deckCardCounts.Values.Sum() + Deck.Count(card => card.UncountedDeckSource);
             if (trackedCount == actualCount)
                 return;
 

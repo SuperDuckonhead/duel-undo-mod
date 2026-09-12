@@ -55,6 +55,12 @@ namespace WindBot.Undo
         {
             return StateFingerprint.Compute(game.OfflineState(), tape.Snapshot());
         }
+        internal void ApplyPatch(byte[] input)
+        {
+            TestStatePatch.Decode(input);
+            game.ApplyTestStatePatch(input);
+            tape.Observe(new TapeEntry { Kind = TapeKind.TestStatePatch, Call = "TestStatePatch/v1", Input = input, Output = new byte[0] });
+        }
         internal static int Run(string pipeName = null)
         {
             // Keep protocol bytes separate from legacy logger/Executor console output.
@@ -93,6 +99,11 @@ namespace WindBot.Undo
                                         while (tape.Cursor < expected.Length)
                                         {
                                             var next = expected[tape.Cursor];
+                                            if (next.Kind == TapeKind.TestStatePatch)
+                                            {
+                                                worker.ApplyPatch(next.Input);
+                                                continue;
+                                            }
                                             if (next.Kind != TapeKind.Message || next.Call != "STOC")
                                                 throw new InvalidOperationException("Replay boundary is not a message driver");
                                             worker.Dispatch(next.Input);
@@ -114,6 +125,7 @@ namespace WindBot.Undo
                                     else if (command == 5) WorkerWire.WriteBytes(w, worker.Digest());
                                     else if (command == 8) w.Write(worker.game.Username);
                                     else if (command == 7) w.Write((ulong)tape.Cursor);
+                                    else if (command == 9) worker.ApplyPatch(WorkerWire.ReadBytes(r));
                                     else if (command == 6)
                                     {
                                         var card = NamedCard.Get(r.ReadInt32()); int setcode = r.ReadInt32();
