@@ -1,5 +1,7 @@
 # Native test harness
 
+The independently approved OpenSpec 1.1–1.6 deck-test edit-mode gates, exact rerun prerequisites, evidence, and limits are documented in [`docs/deck-test-edit-mode-gate.md`](../docs/deck-test-edit-mode-gate.md).
+
 The top-level CMake project provides `add_undo_test(name source)`. Each
 registered executable uses C++17, can include headers from `tests/` and
 `client/gframe/`, and is registered with CTest under the same name. Engine
