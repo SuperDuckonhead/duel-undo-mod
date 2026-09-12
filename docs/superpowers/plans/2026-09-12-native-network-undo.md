@@ -59,11 +59,13 @@ Files: docs, specification/tasks, regression evidence, existing release tooling.
 
 - [x] Independent review of the compatibility scope, native response/timer path and failure/old-input protections; resolve blocking findings.
 - [x] Run the complete native test suite and appropriate package/uninstaller checks; record exact commands and results without claiming unavailable physical-device verification.
-- [ ] Commit reviewed sources. Build in a clean short-path checkout using the documented Windows PowerShell 5.1 entry; validate provenance and package hashes.
-- [ ] Produce a same-version ZIP for both PCs, verify package install/uninstall/restore in fixtures. Back up verified existing mod files and install only the candidate payload when the game is closed. Preserve original/shared resources and personal configuration.
+- [x] Commit reviewed sources. Build in a clean short-path checkout using the documented Windows PowerShell 5.1 entry; validate provenance and package hashes.
+- [x] Produce a same-version ZIP for both PCs, verify package install/uninstall/restore in fixtures. Back up verified existing mod files and install only the candidate payload when the game is closed. Preserve original/shared resources and personal configuration.
 
 ## Execution decisions
 
 - User approved the design in the preceding conversation and explicitly requested implementation on 2026-09-12. No additional design approval is pending.
 - Use the existing clean `codex/duel-undo` source checkout with its prepared build dependencies and controlled staging runtimes. A separate clean checkout validates the final build; installed files remain untouched during development.
 - Existing compatibility tests describing full script/rule equality are historical policy evidence; update them to the newly approved contract, while retaining the host/replay identity tests.
+
+Delivery verified: see tests/native-network-delivery.md. Built source 2187cb36ab7dcac7511a578470612b58cda277a6; physical-device acceptance remains pending.
