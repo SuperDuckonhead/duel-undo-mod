@@ -1266,6 +1266,8 @@ std::wstring Game::SetStaticText(irr::gui::IGUIStaticText* pControl, irr::u32 cW
 	return result;
 }
 void Game::LoadExpansions() {
+	// A suspended editor still owns references to the shared card/string data.
+	if(deckBuilder.HasEditorSuspension()) return;
 	if(is_building && !is_siding) deckBuilder.Terminate();
 	FileSystem::TraversalDir("./expansions", [](const char* name, bool isdir) {
 		if (isdir)

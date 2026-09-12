@@ -73,6 +73,7 @@ undo::DeckSnapshot DeckBuilder::CaptureEditorDeck() const {
 	return snapshot;
 }
 bool DeckBuilder::RestoreEditorDeck(const undo::DeckSnapshot& snapshot) {
+	if(HasEditorSuspension()) return false;
 	try {
 		Deck restored;
 		std::vector<const CardDataC*>* zones[] = {&restored.main, &restored.extra, &restored.side};
@@ -96,10 +97,12 @@ bool DeckBuilder::RestoreEditorDeck(const undo::DeckSnapshot& snapshot) {
 	} catch(const std::bad_alloc&) { return false; }
 }
 void DeckBuilder::BeginEditorEdit() {
+	if(HasEditorSuspension()) return;
 	if(!mainGame->is_siding && !readonly && !editorEditStart)
 		editorEditStart = CaptureEditorDeck();
 }
 void DeckBuilder::FinishEditorEdit(bool accepted) {
+	if(HasEditorSuspension()) return;
 	if(!editorEditStart) return;
 	if(!accepted) {
 		if(!RestoreEditorDeck(*editorEditStart)) return;
@@ -113,6 +116,7 @@ void DeckBuilder::FinishEditorEdit(bool accepted) {
 	RefreshEditorUndo();
 }
 void DeckBuilder::CancelEditorDrag() {
+	if(HasEditorSuspension()) return;
 	if(!editorEditStart && !is_starting_dragging) return;
 	is_draging = false;
 	is_starting_dragging = false;
@@ -126,7 +130,7 @@ undo::EditorInputState DeckBuilder::EditorUndoState() const {
 		modalFocus |= focus->getType() == irr::gui::EGUIET_MODAL_SCREEN;
 	}
 	return {editorHistoryValid && editorHistory.CanUndo(), textFocus,
-		readonly || !mainGame->is_building, is_draging || is_starting_dragging || bool(editorEditStart),
+		readonly || !mainGame->is_building || HasEditorSuspension(), is_draging || is_starting_dragging || bool(editorEditStart),
 		modalFocus || havePopupWindow() || mainGame->wMessage->isVisible() || mainGame->wBigCard->isVisible(),
 		mainGame->is_siding};
 }
@@ -153,6 +157,7 @@ bool DeckBuilder::UndoEditorEdit() {
 	return true;
 }
 void DeckBuilder::ResetEditorHistory() {
+	if(HasEditorSuspension()) return;
 	editorEditStart.reset();
 	editorHistory.Reset(CaptureEditorDeck());
 	editorHistoryValid = true;
@@ -160,11 +165,13 @@ void DeckBuilder::ResetEditorHistory() {
 	RefreshEditorUndo();
 }
 void DeckBuilder::EditorDeckSaved() {
+	if(HasEditorSuspension()) return;
 	editorHistory.Saved(CaptureEditorDeck());
 	is_modified = false;
 	RefreshEditorUndo();
 }
 bool DeckBuilder::LoadEditorDeck(const wchar_t* file, bool pack) {
+	if(HasEditorSuspension()) return false;
 	CancelEditorDrag();
 	// The baseline loader clears current_deck before even opening the file.
 	// Preserve the stable pointers and history until it actually succeeds.
@@ -187,6 +194,8 @@ DeckBuilder::DeckBuilder() {
 	rnd.seed(seq);
 }
 void DeckBuilder::Initialize() {
+	if(HasEditorSuspension()) return;
+	++suspensionGeneration;
 	mainGame->is_building = true;
 	mainGame->is_siding = false;
 	mainGame->ClearCardInfo();
@@ -225,6 +234,10 @@ void DeckBuilder::Initialize() {
 	mainGame->device->setEventReceiver(this);
 }
 void DeckBuilder::Terminate() {
+	// An ordinary exit explicitly abandons the capability before the existing
+	// reset path. It must never leave a token able to resurrect another session.
+	suspension.reset();
+	++suspensionGeneration;
 	CancelEditorDrag();
 	ResetEditorHistory();
 	results.clear();
@@ -263,6 +276,7 @@ void DeckBuilder::Terminate() {
 		mainGame->device->closeDevice();
 }
 bool DeckBuilder::OnEvent(const irr::SEvent& event) {
+	if(HasEditorSuspension()) return true;
 	if(event.EventType == irr::EET_KEY_INPUT_EVENT && event.KeyInput.PressedDown) {
 		if(event.KeyInput.Key == irr::KEY_ESCAPE && (is_draging || is_starting_dragging)) {
 			CancelEditorDrag();
@@ -1432,6 +1446,7 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 	return false;
 }
 void DeckBuilder::GetHoveredCard() {
+	if(HasEditorSuspension()) return;
 	int pre_code = hovered_code;
 	hovered_pos = 0;
 	hovered_code = 0;
@@ -1541,6 +1556,7 @@ void DeckBuilder::GetHoveredCard() {
 	}
 }
 void DeckBuilder::StartFilter() {
+	if(HasEditorSuspension()) return;
 	filter_type = mainGame->cbCardType->getSelected();
 	filter_type2 = mainGame->cbCardType2->getItemData(mainGame->cbCardType2->getSelected());
 	filter_lm = mainGame->cbLimit->getSelected();
@@ -1555,6 +1571,7 @@ void DeckBuilder::StartFilter() {
 	FilterCards();
 }
 void DeckBuilder::FilterCards() {
+	if(HasEditorSuspension()) return;
 	results.clear();
 	struct element_t {
 		std::wstring keyword;
@@ -1750,10 +1767,12 @@ void DeckBuilder::FilterCards() {
 	SortList();
 }
 void DeckBuilder::InstantSearch() {
+	if(HasEditorSuspension()) return;
 	if(mainGame->gameConf.auto_search_limit >= 0 && ((int)std::wcslen(mainGame->ebCardName->getText()) >= mainGame->gameConf.auto_search_limit))
 		StartFilter();
 }
 void DeckBuilder::ClearSearch() {
+	if(HasEditorSuspension()) return;
 	mainGame->cbCardType->setSelected(0);
 	mainGame->cbCardType2->setSelected(0);
 	mainGame->cbCardType2->setEnabled(false);
@@ -1771,6 +1790,7 @@ void DeckBuilder::ClearSearch() {
 	myswprintf(result_string, L"%d", 0);
 }
 void DeckBuilder::ClearFilter() {
+	if(HasEditorSuspension()) return;
 	mainGame->cbAttribute->setSelected(0);
 	mainGame->cbRace->setSelected(0);
 	mainGame->cbLimit->setSelected(0);
@@ -1788,6 +1808,7 @@ void DeckBuilder::ClearFilter() {
 	mainGame->btnMarksFilter->setPressed(false);
 }
 void DeckBuilder::SortList() {
+	if(HasEditorSuspension()) return;
 	auto left = results.begin();
 	const wchar_t* pstr = mainGame->ebCardName->getText();
 	for(auto it = results.begin(); it != results.end(); ++it) {
@@ -1814,6 +1835,7 @@ void DeckBuilder::SortList() {
 }
 
 void DeckBuilder::RefreshDeckList() {
+	if(HasEditorSuspension()) return;
 	irr::gui::IGUIListBox* lstCategories = mainGame->lstCategories;
 	irr::gui::IGUIListBox* lstDecks = mainGame->lstDecks;
 	wchar_t catepath[256];
@@ -1822,6 +1844,7 @@ void DeckBuilder::RefreshDeckList() {
 	mainGame->RefreshDeck(catepath, [lstDecks](const wchar_t* item) { lstDecks->addItem(item); });
 }
 void DeckBuilder::RefreshReadonly(int catesel) {
+	if(HasEditorSuspension()) return;
 	bool hasDeck = mainGame->cbDBDecks->getItemCount() != 0;
 	readonly = catesel < 2;
 	showing_pack = catesel == 0;
@@ -1840,6 +1863,7 @@ void DeckBuilder::RefreshReadonly(int catesel) {
 	mainGame->btnCopyDeck->setEnabled(hasDeck);
 }
 void DeckBuilder::RefreshPackListScroll() {
+	if(HasEditorSuspension()) return;
 	if(showing_pack) {
 		mainGame->scrPackCards->setPos(0);
 		int mainsize = deckManager.current_deck.main.size();
@@ -1855,6 +1879,7 @@ void DeckBuilder::RefreshPackListScroll() {
 	}
 }
 void DeckBuilder::ChangeCategory(int catesel) {
+	if(HasEditorSuspension()) return;
 	CancelEditorDrag();
 	mainGame->RefreshDeck(mainGame->cbDBCategory, mainGame->cbDBDecks);
 	mainGame->cbDBDecks->setSelected(0);
@@ -1873,6 +1898,7 @@ void DeckBuilder::ChangeCategory(int catesel) {
 	prev_deck = mainGame->cbDBDecks->getSelected();
 }
 void DeckBuilder::ShowDeckManage() {
+	if(HasEditorSuspension()) return;
 	mainGame->RefreshCategoryDeck(mainGame->cbDBCategory, mainGame->cbDBDecks, false);
 	mainGame->cbDBCategory->setSelected(prev_category);
 	mainGame->RefreshDeck(mainGame->cbDBCategory, mainGame->cbDBDecks);
@@ -1896,6 +1922,7 @@ void DeckBuilder::ShowDeckManage() {
 }
 
 void DeckBuilder::ShowBigCard(int code, float zoom) {
+	if(HasEditorSuspension()) return;
 	bigcard_code = code;
 	bigcard_zoom = zoom;
 	auto img = imageManager.GetBigPicture(code, zoom);
@@ -1940,6 +1967,7 @@ void DeckBuilder::CloseBigCard() {
 }
 
 bool DeckBuilder::push_main(const CardDataC* pointer, int seq) {
+	if(HasEditorSuspension()) return false;
 	if(pointer->type & (TYPE_FUSION | TYPE_SYNCHRO | TYPE_XYZ | TYPE_LINK))
 		return false;
 	auto& container = deckManager.current_deck.main;
@@ -1955,6 +1983,7 @@ bool DeckBuilder::push_main(const CardDataC* pointer, int seq) {
 	return true;
 }
 bool DeckBuilder::push_extra(const CardDataC* pointer, int seq) {
+	if(HasEditorSuspension()) return false;
 	if(!(pointer->type & (TYPE_FUSION | TYPE_SYNCHRO | TYPE_XYZ | TYPE_LINK)))
 		return false;
 	auto& container = deckManager.current_deck.extra;
@@ -1970,6 +1999,7 @@ bool DeckBuilder::push_extra(const CardDataC* pointer, int seq) {
 	return true;
 }
 bool DeckBuilder::push_side(const CardDataC* pointer, int seq) {
+	if(HasEditorSuspension()) return false;
 	auto& container = deckManager.current_deck.side;
 	int maxc = mainGame->is_siding ? SIDE_MAX_SIZE + 5 : SIDE_MAX_SIZE;
 	if((int)container.size() >= maxc)
@@ -1983,18 +2013,21 @@ bool DeckBuilder::push_side(const CardDataC* pointer, int seq) {
 	return true;
 }
 void DeckBuilder::pop_main(int seq) {
+	if(HasEditorSuspension()) return;
 	auto& container = deckManager.current_deck.main;
 	container.erase(container.begin() + seq);
 	if(mainGame->is_siding) is_modified = true;
 	GetHoveredCard();
 }
 void DeckBuilder::pop_extra(int seq) {
+	if(HasEditorSuspension()) return;
 	auto& container = deckManager.current_deck.extra;
 	container.erase(container.begin() + seq);
 	if(mainGame->is_siding) is_modified = true;
 	GetHoveredCard();
 }
 void DeckBuilder::pop_side(int seq) {
+	if(HasEditorSuspension()) return;
 	auto& container = deckManager.current_deck.side;
 	container.erase(container.begin() + seq);
 	if(mainGame->is_siding) is_modified = true;

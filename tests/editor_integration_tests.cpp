@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <thread>
 #include <chrono>
+#include <type_traits>
 using namespace ygo;
 static void mouse(irr::EMOUSE_INPUT_EVENT kind, int x, int y) {
     irr::SEvent e{}; e.EventType = irr::EET_MOUSE_INPUT_EVENT;
@@ -46,6 +47,18 @@ static void signal(const char* name) { std::ofstream(name) << "ready"; }
 static void waitFor(const char* name) {
     for(int i=0;i<500 && !std::filesystem::exists(name);++i) std::this_thread::sleep_for(std::chrono::milliseconds(20));
     CHECK(std::filesystem::exists(name));
+}
+#include "editor_suspension_cases.h"
+template<class T, class = void> struct HasEditorSuspension : std::false_type {};
+template<class T> struct HasEditorSuspension<T, std::void_t<decltype(std::declval<T&>().SuspendEditor())>> : std::true_type {};
+template<class Editor> static void suspensionRoundTrip(Game& game, Editor& editor) {
+    // A resetting close/reopen loses unsaved construction and the saved/undo baseline.
+    // Keep this feature probe executable against the predecessor for behavioral RED.
+    if constexpr(!HasEditorSuspension<Editor>::value) {
+        throw std::runtime_error("editor suspension must preserve dirty construction and undo history; no suspension is available");
+    } else {
+        editorSuspensionCases(game, editor);
+    }
 }
 int main(int argc, char** argv) {
     try {
@@ -285,6 +298,7 @@ int main(int argc, char** argv) {
             CHECK(!editor.editorEditStart); CHECK(!editor.editorHistory.CanUndo()); CHECK(!editor.is_modified);
         }
         game.cbDBCategory->setSelected(2); change(game.cbDBCategory);
+        seed(); suspensionRoundTrip(game, editor);
         seed(); mouse(irr::EMIE_MOUSE_MOVED,320,180); mouse(irr::EMIE_RMOUSE_LEFT_UP,320,180);
         button(game.btnLeaveGame); button(game.btnNo); game.wQuery->setVisible(false); CHECK(editor.editorHistory.CanUndo()); CHECK(game.is_building);
         button(game.btnLeaveGame); button(game.btnYes); CHECK(!game.is_building); CHECK(!editor.editorHistory.CanUndo());

@@ -30,6 +30,7 @@ DataManager::DataManager() : _datas(32768), _strings(32768) {
 	};
 }
 bool DataManager::ReadDB(sqlite3* pDB) {
+	if(this==&dataManager && mainGame && mainGame->deckBuilder.HasEditorSuspension()) return false;
 	sqlite3_stmt* pStmt = nullptr;
 	int texts_offset = DATAS_COUNT;
 	if (sqlite3_prepare_v2(pDB, SELECT_STMT, -1, &pStmt, nullptr) != SQLITE_OK)
@@ -109,6 +110,7 @@ bool DataManager::ReadDB(sqlite3* pDB) {
 	return true;
 }
 bool DataManager::LoadDB(const char* file) {
+	if(this==&dataManager && mainGame && mainGame->deckBuilder.HasEditorSuspension()) return false;
 	auto reader = IrrFileSystem->createAndOpenFile(file);
 	if (reader == nullptr) {
 		mysnprintf(errmsg, "File does not exist or failed to unzip: %s", file);
@@ -157,6 +159,7 @@ bool DataManager::LoadDB(const char* file) {
 	return ret;
 }
 bool DataManager::LoadStrings(const char* file) {
+	if(this==&dataManager && mainGame && mainGame->deckBuilder.HasEditorSuspension()) return false;
 	FILE* fp = myfopen(file, "r");
 	if(!fp)
 		return false;
@@ -168,6 +171,10 @@ bool DataManager::LoadStrings(const char* file) {
 	return true;
 }
 bool DataManager::LoadStrings(irr::io::IReadFile* reader) {
+	if(this==&dataManager && mainGame && mainGame->deckBuilder.HasEditorSuspension()) {
+		if(reader) reader->drop();
+		return false;
+	}
 	char ch{};
 	std::string linebuf;
 	while (reader->read(&ch, 1)) {
@@ -186,6 +193,7 @@ bool DataManager::LoadStrings(irr::io::IReadFile* reader) {
 	return true;
 }
 void DataManager::ReadStringConfLine(const char* linebuf) {
+	if(this==&dataManager && mainGame && mainGame->deckBuilder.HasEditorSuspension()) return;
 	if(linebuf[0] != '!')
 		return;
 	char strbuf[TEXT_LINE_SIZE]{};

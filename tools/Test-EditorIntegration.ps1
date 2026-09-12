@@ -1,4 +1,4 @@
-param([ValidateSet('Debug','Release')][string]$Configuration = 'Release')
+param([ValidateSet('Debug','Release')][string]$Configuration = 'Release', [switch]$BuildOnly)
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $compiler = Join-Path $root '.cache/tools/llvm-mingw-20260908-ucrt-x86_64/bin/clang++.exe'
@@ -20,6 +20,7 @@ try {
     if($LASTEXITCODE) { throw "Integration compile failed: $LASTEXITCODE" }
 } finally { Pop-Location }
 foreach($dll in @('libc++.dll','libunwind.dll')) { Copy-Item -LiteralPath (Join-Path (Split-Path $compiler) $dll) -Destination $testDir -Force }
+if($BuildOnly) { Write-Host "Prepared actual editor integration binary: $exe"; exit 0 }
 $runtime = Join-Path $root 'out/baseline-runtime'
 if(!(Test-Path -LiteralPath (Join-Path $runtime '.undo-smoke-runtime'))) { throw 'Prepare isolated smoke runtime first.' }
 foreach($name in @('editor-observer-ready','editor-observer-loaded','editor-observer-done','editor-observer-passed')) {
