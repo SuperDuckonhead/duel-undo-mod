@@ -55,7 +55,12 @@ int main() {
 	CHECK(Validate(empty) == DeckTestError::IncompletePlan);
 
 	ModeChangedEvent mode{fixture.context, DeckTestMode::Editing};
-	CardIntroducedEvent introduced{fixture.context, fixture.firstCopy, BindingStage::Resolution};
+	CardIntroducedEvent introduced{
+		fixture.context,
+		fixture.firstCopy,
+		SelectionRole::ResolutionMaterial,
+		BindingStage::Resolution,
+	};
 	ResponseRecord legacy{0, Origin::Manual, {0x04, 0x00, 0x00, 0x00}, fixture.context.checkpoint};
 	ResponseAcceptedEvent accepted{fixture.context, legacy};
 	DeckTestEvent events[] = {mode, introduced, accepted};
@@ -64,6 +69,33 @@ int main() {
 	auto existingIntroduction = introduced;
 	existingIntroduction.card = fixture.existingCard;
 	CHECK(Validate(existingIntroduction) == DeckTestError::ContradictoryReference);
+	struct StageCase {
+		SelectionRole role;
+		BindingStage stage;
+	};
+	const StageCase stages[] = {
+		{SelectionRole::ActivationCost, BindingStage::Activation},
+		{SelectionRole::ActivationTarget, BindingStage::Activation},
+		{SelectionRole::ResolutionTarget, BindingStage::Resolution},
+		{SelectionRole::ResolutionMaterial, BindingStage::Resolution},
+	};
+	for(const auto& stage : stages) {
+		auto plan = fixture.resolutionMaterials;
+		plan.role = stage.role;
+		plan.bindingStage = stage.stage;
+		CHECK(Validate(plan) == DeckTestError::None);
+		auto introduction = introduced;
+		introduction.role = stage.role;
+		introduction.bindingStage = stage.stage;
+		CHECK(Validate(introduction) == DeckTestError::None);
+	}
+	auto tooEarlyIntroduction = introduced;
+	tooEarlyIntroduction.bindingStage = BindingStage::Activation;
+	CHECK(Validate(tooEarlyIntroduction) == DeckTestError::WrongBindingStage);
+	auto invalidRole = introduced;
+	invalidRole.role = static_cast<SelectionRole>(0xff);
+	invalidRole.bindingStage = BindingStage::Activation;
+	CHECK(Validate(invalidRole) == DeckTestError::WrongBindingStage);
 	const auto& readable = std::get<ResponseAcceptedEvent>(events[2]).response;
 	CHECK(readable.response == Bytes({0x04, 0x00, 0x00, 0x00}));
 	CHECK(readable.before.prompt == Bytes({0x16, 0x01}));

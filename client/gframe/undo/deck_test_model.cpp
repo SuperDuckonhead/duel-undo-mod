@@ -9,7 +9,7 @@ bool IsNewCopySource(CardSource source) {
 	return source == CardSource::OwnMainDeck || source == CardSource::OwnFacedownExtraDeck;
 }
 
-BindingStage RequiredStage(SelectionRole role) {
+std::optional<BindingStage> RequiredStage(SelectionRole role) {
 	switch(role) {
 	case SelectionRole::ActivationCost:
 	case SelectionRole::ActivationTarget:
@@ -18,7 +18,7 @@ BindingStage RequiredStage(SelectionRole role) {
 	case SelectionRole::ResolutionMaterial:
 		return BindingStage::Resolution;
 	}
-	return BindingStage::Activation;
+	return std::nullopt;
 }
 
 } // namespace
@@ -78,7 +78,8 @@ DeckTestError Validate(const SelectionPlan& plan) {
 		return contextError;
 	if(plan.cards.empty())
 		return DeckTestError::IncompletePlan;
-	if(plan.bindingStage != RequiredStage(plan.role))
+	const auto requiredStage = RequiredStage(plan.role);
+	if(!requiredStage || plan.bindingStage != *requiredStage)
 		return DeckTestError::WrongBindingStage;
 	std::unordered_set<std::uint64_t> instances;
 	for(const auto& card : plan.cards) {
@@ -95,6 +96,9 @@ DeckTestError Validate(const CardIntroducedEvent& event) {
 		return cardError;
 	if(event.card.kind != CardReferenceKind::NewCopy)
 		return DeckTestError::ContradictoryReference;
+	const auto requiredStage = RequiredStage(event.role);
+	if(!requiredStage || event.bindingStage != *requiredStage)
+		return DeckTestError::WrongBindingStage;
 	return DeckTestError::None;
 }
 

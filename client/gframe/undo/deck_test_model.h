@@ -108,6 +108,7 @@ struct ModeChangedEvent {
 struct CardIntroducedEvent {
 	DeckTestContext context;
 	CardReference card;
+	SelectionRole role{SelectionRole::ActivationCost};
 	BindingStage bindingStage{BindingStage::Activation};
 };
 
