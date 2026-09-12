@@ -4,13 +4,13 @@
                   {
                       "source":  "ygopro-undo.exe",
                       "destination":  "ygopro-undo.exe",
-                      "sha256":  "e8caab0799bb9d0cba20d7f75c1c735bdd6e75fb6a03306124e06f2bbbec009f",
+                      "sha256":  "04c588e61854070ae76e9746da0319efc20168ec9cdff7b4fecc8df1314ac761",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "WindBot/WindBot-undo.exe",
                       "destination":  "WindBot/WindBot-undo.exe",
-                      "sha256":  "6582a35a5a270c93854449ea135892f055ba731cbb370a2e26d80334e720ad61",
+                      "sha256":  "88d0ea9efc7af7ab402c3f075c5b4eefae138cade1acd6c6b030b131bf969131",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
@@ -32,27 +32,39 @@
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
+                      "source":  "Uninstall-UndoMod.cmd",
+                      "destination":  "Uninstall-UndoMod.cmd",
+                      "sha256":  "f6d4353632643f499d3cad3ba7cc7b9801132f95eee5b333354df72bdb739b64",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
+                      "source":  "undo-mod/Uninstall-UndoMod.ps1",
+                      "destination":  "undo-mod/Uninstall-UndoMod.ps1",
+                      "sha256":  "675a361ba8cae298f883dc1ca7e0c3e2444586eb176a0ffc71db121b41fedc12",
+                      "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
+                  },
+                  {
                       "source":  "undo-mod/BUILD.md",
                       "destination":  "undo-mod/BUILD.md",
-                      "sha256":  "47b8fb0aae1024fa1f428ce4998142f82dd70fe826686a99f99119552ba064cc",
+                      "sha256":  "130555e3badde4e034317d540a224c228224a2ce74278ed4a86cf8963ec2c3ff",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/INSTALL.md",
                       "destination":  "undo-mod/INSTALL.md",
-                      "sha256":  "ad5214af9001010561f2f479fba504904cc1c0fde913b323fa6fbe6ba3b0fc52",
+                      "sha256":  "6942c3caead14d932351b7abaa9a35c1b093641c3e2d7cf4396998e75ffe438a",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/COMPATIBILITY.md",
                       "destination":  "undo-mod/COMPATIBILITY.md",
-                      "sha256":  "562c44cbf408a68825ff359e82b1cc90459d0a0787ed43c01addb362e06427c1",
+                      "sha256":  "ffec7ac4a7043e3cfd12a96648594d475f64283379f1cac0d79215a1965146b1",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/RELEASE-NOTES.md",
                       "destination":  "undo-mod/RELEASE-NOTES.md",
-                      "sha256":  "492b94fc6296e38a93b97d542721c4b0cbbece7cf000c5bc9f981191e0235f78",
+                      "sha256":  "05983c7299615d104693306cbfa3bd1b636f4b5091f8b751f474a43d011cb049",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
@@ -220,7 +232,7 @@
                   {
                       "source":  "undo-mod/build-manifest.json",
                       "destination":  "undo-mod/build-manifest.json",
-                      "sha256":  "888dd624d738df9cd6915d1df1ee8dcc712f96206a24255afcad7fec87ae7eeb",
+                      "sha256":  "9fdd8a1b4efa3c3c95f3b8090c24d144423452b69ef8cc76b3f19a5837b6e5fd",
                       "license":  "See undo-mod/THIRD-PARTY.md."
                   }
               ]
