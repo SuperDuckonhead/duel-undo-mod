@@ -107,7 +107,12 @@ Configure the native test tree with every runtime-dependent registration variabl
 
 ```powershell
 $bin = 'F:/MyCardLibrary/ygopro/dev/duel-undo-mod/.cache/tools/cmake-4.4.3-windows-x86_64/bin'
-& "$bin/cmake.exe" -S . -B out/tests/Debug `
+$compiler = 'F:/MyCardLibrary/ygopro/dev/duel-undo-mod/.cache/tools/llvm-mingw-20260908-ucrt-x86_64/bin/clang++.exe'
+$make = 'F:/MyCardLibrary/ygopro/dev/duel-undo-mod/.cache/tools/llvm-mingw-20260908-ucrt-x86_64/bin/mingw32-make.exe'
+& "$bin/cmake.exe" -S . -B out/tests/Debug -G 'MinGW Makefiles' `
+  -DCMAKE_BUILD_TYPE=Debug `
+  -DCMAKE_CXX_COMPILER=$compiler `
+  -DCMAKE_MAKE_PROGRAM=$make `
   -DUNDO_POOL_RUNTIME_ROOT=F:/MyCardLibrary/ygopro `
   -DUNDO_TEST_RUNTIME_ROOT=F:/MyCardLibrary/ygopro `
   -DUNDO_BOT_TEST_EXE=F:/MyCardLibrary/ygopro/dev/deck-test-edit-mode/out/bot/Debug/WindBot-undo.exe `
@@ -139,9 +144,18 @@ $env:WIND_BOT_DATABASE = 'F:/MyCardLibrary/ygopro/cards.cdb'
 & ./out/bot-tests/UndoTests.exe --suite all
 ```
 
-The affected Release comparison used a separately configured `out/tests/Release` tree with the same five runtime/bot variables, `-G 'MinGW Makefiles'`, `-DCMAKE_BUILD_TYPE=Release`, and explicit cached `clang++.exe` / `mingw32-make.exe`, then:
+The affected Release comparison used a separate tree. Configure it from scratch with the same existing managed artifacts, installed runtime and explicit toolchain before building:
 
 ```powershell
+& "$bin/cmake.exe" -S . -B out/tests/Release -G 'MinGW Makefiles' `
+  -DCMAKE_BUILD_TYPE=Release `
+  -DCMAKE_CXX_COMPILER=$compiler `
+  -DCMAKE_MAKE_PROGRAM=$make `
+  -DUNDO_POOL_RUNTIME_ROOT=F:/MyCardLibrary/ygopro `
+  -DUNDO_TEST_RUNTIME_ROOT=F:/MyCardLibrary/ygopro `
+  -DUNDO_BOT_TEST_EXE=F:/MyCardLibrary/ygopro/dev/deck-test-edit-mode/out/bot/Debug/WindBot-undo.exe `
+  -DUNDO_BOT_TEST_RUNTIME=F:/MyCardLibrary/ygopro/WindBot `
+  -DUNDO_MANAGED_TEST_EXE=F:/MyCardLibrary/ygopro/dev/deck-test-edit-mode/out/bot-tests/UndoTests.exe
 & "$bin/cmake.exe" --build out/tests/Release `
   --target undo_duel_tests undo_tcp_tests undo_bot_host_tests undo_pending_response_tests native_duel_flow_tests -j 4
 & "$bin/ctest.exe" --test-dir out/tests/Release `
@@ -185,8 +199,8 @@ This boundary does not remove any later requirement. The following work remains 
 - editor/session ownership, mode transitions, launch entry, paging, preview, confirmation and UI;
 - the complete event-replay transport, production card catalog/index, adapter coverage, worker IPC/cancellation, worker state reuse and performance bounds;
 - general host source-install/session orchestration (including task 6.5), main/extra-deck multi-plan binding, multiple introductions and broader history;
-- persistent hidden-source shuffle/cut remapping and privacy-safe accounting;
+- persistent hidden-source shuffle/cut remapping and privacy-safe accounting (task 10.2);
 - the mandatory D01–D07 and S01–S04 fixture matrix, including competing triggers, costs/targets/materials, Chain Material/extra-material paths and Gold's delayed return;
-- Debug timeout/TCP diagnostics, tracked rebuild-fixture maintenance, full fault/replay/history integration, list-wide AI validation, performance acceptance and release acceptance.
+- Debug timeout/TCP diagnostics, tracked rebuild-fixture maintenance (task 11.4), and the broader task 11.x fault/replay/history integration, list-wide AI validation, performance acceptance and release acceptance.
 
 The two approved review notes also remain: the Fusion identity/completion code is dense and should be made easier to review when that area next changes, and the hidden-source fixture output directory should become build-configuration-specific before concurrent Debug/Release runs.
