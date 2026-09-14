@@ -613,6 +613,7 @@ public:
 	irr::gui::IGUIButton* btnManageDeck{};
 	irr::gui::IGUIButton* btnUndoDeck{};
 	irr::gui::IGUIButton* btnTestDeck{};
+	irr::gui::IGUIStaticText* stTestDeckStatus{};
  irr::gui::IGUIButton* btnUndoDuel{};
  irr::gui::IGUIStaticText* stUndoDuel{};
 	irr::gui::IGUIButton* btnClearDeck{};

@@ -36,6 +36,10 @@ static void nativeClick(Game& game, int x, int y) {
     SendMessageW(game.hWnd, WM_LBUTTONUP, 0, point);
     game.device->run();
 }
+static void nativeMove(Game& game, int x, int y) {
+    SendMessageW(game.hWnd, WM_MOUSEMOVE, 0, MAKELPARAM(x, y));
+    game.device->run();
+}
 static void change(irr::gui::IGUIComboBox* control) {
     irr::SEvent e{}; e.EventType = irr::EET_GUI_EVENT;
     e.GUIEvent.Caller = control; e.GUIEvent.EventType = irr::gui::EGET_COMBO_BOX_CHANGED;

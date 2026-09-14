@@ -41,6 +41,7 @@ try {
         'deck-test-entry-100-enabled.png' = @(1024, 640)
         'deck-test-entry-125-enabled.png' = @(1280, 800)
         'deck-test-entry-150-enabled.png' = @(1536, 960)
+        'deck-test-entry-100-pending-disabled.png' = @(1024, 640)
         'deck-test-entry-100-drag-disabled.png' = @(1024, 640)
         'deck-test-entry-100-dialog-disabled.png' = @(1024, 640)
         'deck-test-entry-100-pack-disabled.png' = @(1024, 640)

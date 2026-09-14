@@ -168,7 +168,15 @@ void DeckBuilder::RefreshDeckTestEntry() {
 	}
 	mainGame->btnTestDeck->setVisible(mainGame->is_building && !mainGame->is_siding);
 	mainGame->btnTestDeck->setEnabled(state == DeckTestEntryState::Ready);
-	mainGame->btnTestDeck->setToolTipText(hint);
+	// Irrlicht keeps an already-rendered tooltip in a separate element, so
+	// changing the stored tooltip can leave the old Ready text on screen while
+	// suspended input blocks hover maintenance. Keep the current reason in an
+	// owned status element instead.
+	mainGame->btnTestDeck->setToolTipText(L"");
+	if(mainGame->stTestDeckStatus) {
+		mainGame->stTestDeckStatus->setText(hint);
+		mainGame->stTestDeckStatus->setVisible(mainGame->btnTestDeck->isVisible());
+	}
 }
 bool DeckBuilder::RequestDeckTestPreparation() {
 	if(GetDeckTestEntryState() != DeckTestEntryState::Ready) {
@@ -311,6 +319,7 @@ void DeckBuilder::Terminate() {
 	mainGame->wInfos->setVisible(false);
 	mainGame->btnLeaveGame->setVisible(false);
 	mainGame->btnTestDeck->setVisible(false);
+	mainGame->stTestDeckStatus->setVisible(false);
 	mainGame->wBigCard->setVisible(false);
 	mainGame->btnBigCardOriginalSize->setVisible(false);
 	mainGame->btnBigCardZoomIn->setVisible(false);

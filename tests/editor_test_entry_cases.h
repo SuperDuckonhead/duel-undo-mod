@@ -56,6 +56,37 @@ static void captureEntryFrame(Game& game, const wchar_t* name) {
     CHECK(std::filesystem::file_size(path)>0);
 }
 
+static bool hasVisibleGuiText(irr::gui::IGUIElement* element, const wchar_t* text) {
+    if(element->isVisible() && element->getText() && std::wstring(element->getText())==text) return true;
+    for(auto* child: element->getChildren())
+        if(hasVisibleGuiText(child,text)) return true;
+    return false;
+}
+
+static void expectStatusTextFits(Game& game, DeckTestEntryState state, const wchar_t* text) {
+    const auto bounds=game.stTestDeckStatus->getAbsolutePosition();
+    const std::wstring value=text;
+    irr::u32 widest=0;
+    size_t begin=0;
+    do {
+        const auto end=value.find(L'\n',begin);
+        const auto line=value.substr(begin,end==std::wstring::npos ? value.size()-begin : end-begin);
+        const auto size=game.env->getSkin()->getFont()->getDimension(line.c_str());
+        widest=std::max(widest,size.Width);
+        if(end==std::wstring::npos) break;
+        begin=end+1;
+    } while(begin<=value.size());
+    const auto textHeight=game.stTestDeckStatus->getTextHeight();
+    if(widest+4>static_cast<irr::u32>(bounds.getWidth()) || textHeight+4>static_cast<irr::u32>(bounds.getHeight())) {
+        std::ostringstream detail;
+        detail << "status fit state=" << entryStateName(state)
+            << " scale=" << game.driver->getScreenSize().Width/static_cast<float>(GAME_WINDOW_WIDTH)
+            << " widest=" << widest << " textHeight=" << textHeight
+            << " bounds=" << bounds.getWidth() << 'x' << bounds.getHeight();
+        throw std::runtime_error(detail.str());
+    }
+}
+
 static void expectEntry(Game& game, DeckTestEntryState state, bool visible, bool enabled, const wchar_t* hint) {
     static unsigned checkIndex=0;
     const auto currentCheck=++checkIndex;
@@ -80,7 +111,10 @@ static void expectEntry(Game& game, DeckTestEntryState state, bool visible, bool
     }
     CHECK(game.btnTestDeck->isVisible()==visible);
     CHECK(game.btnTestDeck->isEnabled()==enabled);
-    CHECK(game.btnTestDeck->getToolTipText()==hint);
+    CHECK(game.btnTestDeck->getToolTipText().size()==0);
+    CHECK(game.stTestDeckStatus->isVisible()==visible);
+    CHECK(std::wstring(game.stTestDeckStatus->getText())==hint);
+    if(visible) expectStatusTextFits(game,state,hint);
 }
 
 static void nativeType(Game& game, wchar_t ch) {
@@ -142,12 +176,20 @@ template<class Editor> static void editorTestEntryCases(Game& game, Editor& edit
         {1.25f,L"deck-test-entry-125-enabled.png"},
         {1.5f,L"deck-test-entry-150-enabled.png"}}}) {
         resizeEntryFixture(game,variant.first);
+        expectEntry(game,DeckTestEntryState::Ready,true,true,undo::DeckTestHint);
         const auto entry=game.btnTestDeck->getAbsolutePosition();
         CHECK(entry==game.Resize(205,85,295,120));
         CHECK(!overlaps(entry,game.wCardImg->getAbsolutePosition()));
         CHECK(!overlaps(entry,game.btnLeaveGame->getAbsolutePosition()));
         CHECK(!overlaps(entry,game.wDeckEdit->getAbsolutePosition()));
         CHECK(!overlaps(entry,game.Resize(309,136,410,157)));
+        const auto status=game.stTestDeckStatus->getAbsolutePosition();
+        CHECK(status==game.Resize(200,122,305,174));
+        CHECK(!overlaps(status,game.wCardImg->getAbsolutePosition()));
+        CHECK(!overlaps(status,game.btnLeaveGame->getAbsolutePosition()));
+        CHECK(!overlaps(status,game.btnTestDeck->getAbsolutePosition()));
+        CHECK(!overlaps(status,game.wDeckEdit->getAbsolutePosition()));
+        CHECK(!overlaps(status,game.Resize(309,136,410,157)));
         const auto label=game.env->getSkin()->getFont()->getDimension(undo::DeckTestText);
         CHECK(label.Width<=static_cast<irr::u32>(entry.getWidth()));
         CHECK(label.Height<=static_cast<irr::u32>(entry.getHeight()));
@@ -159,6 +201,11 @@ template<class Editor> static void editorTestEntryCases(Game& game, Editor& edit
     const auto botExecutable=game.pending_bot_executable;
     CHECK(!DuelClient::Room()); CHECK(!editor.HasEditorSuspension());
     const auto center=game.btnTestDeck->getAbsolutePosition().getCenter();
+    nativeMove(game,center.X,center.Y);
+    Sleep(1100);
+    game.device->run();
+    captureEntryFrame(game,L"deck-test-entry-100-enabled.png");
+    CHECK(hasVisibleGuiText(game.env->getRootGUIElement(),undo::DeckTestHint));
     nativeClick(game,center.X,center.Y);
     CHECK(editor.HasDeckTestPreparation()); CHECK(editor.HasEditorSuspension());
     CHECK(editor.CaptureEditorDeck()==clean); CHECK(!editor.editorHistory.CanUndo());
@@ -166,6 +213,13 @@ template<class Editor> static void editorTestEntryCases(Game& game, Editor& edit
     CHECK(game.btnTestDeck->isVisible()); CHECK(!game.btnTestDeck->isEnabled());
     CHECK(!DuelClient::Room()); CHECK(game.pending_bot_executable==botExecutable);
     CHECK(bytes("deck/undo-editor-integration.ydk")==deckFile);
+    captureEntryFrame(game,L"deck-test-entry-100-pending-disabled.png");
+    CHECK(!hasVisibleGuiText(game.env->getRootGUIElement(),undo::DeckTestHint));
+    CHECK(hasVisibleGuiText(game.env->getRootGUIElement(),undo::DeckTestPendingText));
+    nativeMove(game,400,400);
+    nativeMove(game,center.X,center.Y);
+    CHECK(!hasVisibleGuiText(game.env->getRootGUIElement(),undo::DeckTestHint));
+    CHECK(hasVisibleGuiText(game.env->getRootGUIElement(),undo::DeckTestPendingText));
     button(game.btnTestDeck); CHECK(editor.HasDeckTestPreparation());
     CHECK(!editor.RequestDeckTestPreparation());
     deckManager.current_deck={};
@@ -180,6 +234,9 @@ template<class Editor> static void editorTestEntryCases(Game& game, Editor& edit
     game.ebDeckname->setText(L"pending-input-guard"); game.env->setFocus(game.ebDeckname);
     button(game.btnTestDeck);
     CHECK(editor.HasDeckTestPreparation()); CHECK(game.env->getFocus()==game.ebDeckname);
+    expectEntry(game,DeckTestEntryState::PendingPreparation,true,false,undo::DeckTestPendingText);
+    CHECK(!hasVisibleGuiText(game.env->getRootGUIElement(),undo::DeckTestHint));
+    CHECK(hasVisibleGuiText(game.env->getRootGUIElement(),undo::DeckTestPendingText));
     const auto pendingView=observeEditor(game);
     nativeType(game,L'Q');
     const auto sortCenter=game.btnSortDeck->getAbsolutePosition().getCenter();
@@ -281,7 +338,7 @@ template<class Editor> static void editorTestEntryCases(Game& game, Editor& edit
     game.cbDBCategory->setSelected(oldCategory); game.cbDBDecks->setSelected(oldDeck);
     game.cbDBCategory->setEnabled(categoryEnabled); game.cbDBDecks->setEnabled(deckEnabled); game.btnManageDeck->setEnabled(manageEnabled);
 
-    editor.Terminate(); CHECK(!game.btnTestDeck->isVisible()); CHECK(!editor.HasDeckTestPreparation());
+    editor.Terminate(); CHECK(!game.btnTestDeck->isVisible()); CHECK(!game.stTestDeckStatus->isVisible()); CHECK(!editor.HasDeckTestPreparation());
     game.wMainMenu->setVisible(false); editor.Initialize();
     CHECK(editor.RestoreEditorDeck(clean)); editor.ResetEditorHistory();
     expectEntry(game,DeckTestEntryState::Ready,true,true,undo::DeckTestHint);

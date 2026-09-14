@@ -758,6 +758,9 @@ bool Game::Initialize(const std::filesystem::path& root) {
 	btnUndoDeck->setEnabled(false);
 	btnTestDeck = env->addButton(Resize(205, 85, 295, 120), 0, BUTTON_TEST_DECK, undo::DeckTestText);
 	btnTestDeck->setVisible(false);
+	stTestDeckStatus = env->addStaticText(L"", Resize(200, 122, 305, 174), true, true, 0, -1, true);
+	stTestDeckStatus->setTextAlignment(irr::gui::EGUIA_CENTER, irr::gui::EGUIA_CENTER);
+	stTestDeckStatus->setVisible(false);
 	btnClearDeck = env->addButton(irr::core::rect<irr::s32>(115, 99, 165, 120), wDeckEdit, BUTTON_CLEAR_DECK, dataManager.GetSysString(1304));
 	btnSideOK = env->addButton(irr::core::rect<irr::s32>(400, 40, 710, 80), 0, BUTTON_SIDE_OK, dataManager.GetSysString(1334));
 	btnSideOK->setVisible(false);
@@ -2085,6 +2088,7 @@ void Game::OnResize() {
 	wMainMenu->setRelativePosition(ResizeWin(370, 200, 650, 415));
 	wDeckEdit->setRelativePosition(Resize(309, 5, 605, 130));
 	btnTestDeck->setRelativePosition(Resize(205, 85, 295, 120));
+	stTestDeckStatus->setRelativePosition(Resize(200, 122, 305, 174));
 	cbDBDecks->setRelativePosition(Resize(80, 35, 220, 60));
 	btnUndoDeck->setRelativePosition(Resize(170, 99, 220, 120));
 	btnClearDeck->setRelativePosition(Resize(115, 99, 165, 120));

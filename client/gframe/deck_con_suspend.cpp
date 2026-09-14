@@ -78,8 +78,8 @@ struct WidgetState {
 		p->setEnabled(enabled); p->setVisible(visible);
 	}
 };
-std::vector<irr::gui::IGUIElement*> editorWindows(Game& g) {
-	return {g.wDeckEdit,g.wFilter,g.wSort,g.wInfos,g.wCardImg,g.btnLeaveGame,g.btnTestDeck,g.scrFilter,g.scrPackCards};
+std::array<irr::gui::IGUIElement*,10> editorWindows(Game& g) {
+	return {g.wDeckEdit,g.wFilter,g.wSort,g.wInfos,g.wCardImg,g.btnLeaveGame,g.btnTestDeck,g.stTestDeckStatus,g.scrFilter,g.scrPackCards};
 }
 bool materialize(const std::vector<uint32_t>& codes, std::vector<const CardDataC*>& out) {
 	const auto& data=dataManager.GetDataTable();
@@ -121,7 +121,8 @@ std::optional<EditorSuspensionToken> DeckBuilder::SuspendEditor() {
 		for(auto card: results) saved->results.push_back(card->code);
 		std::copy(std::begin(result_string),std::end(result_string),saved->resultLabel.begin());
 		auto& g=*mainGame;
-		auto controls=editorWindows(g);
+		const auto windows=editorWindows(g);
+		std::vector<irr::gui::IGUIElement*> controls(windows.begin(),windows.end());
 		const std::vector<irr::gui::IGUIElement*> extra={
 			g.cbDBCategory,g.cbDBDecks,g.ebDeckname,g.btnManageDeck,g.btnUndoDeck,g.btnClearDeck,g.btnSortDeck,
 			g.btnShuffleDeck,g.btnSaveDeck,g.btnSaveDeckAs,g.btnDeleteDeck,g.btnSideOK,g.btnSideShuffle,g.btnSideSort,g.btnSideReload,

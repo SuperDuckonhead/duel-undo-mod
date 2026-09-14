@@ -19,6 +19,7 @@ static std::wstring observeEditor(Game& g) {
                   g.btnSortDeck,g.btnShuffleDeck,g.btnDeleteDeck,g.btnLeaveGame,g.btnSideOK,g.btnSideShuffle,g.btnSideSort,g.btnSideReload})
         out << b->isPressed() << ':' << b->isEnabled() << ':' << b->isVisible() << ':' << b->getText() << '|';
     out << g.btnTestDeck->isPressed() << ':' << g.btnTestDeck->isEnabled() << ':' << g.btnTestDeck->isVisible() << ':' << g.btnTestDeck->getText() << '|';
+    out << g.stTestDeckStatus->isEnabled() << ':' << g.stTestDeckStatus->isVisible() << ':' << g.stTestDeckStatus->getText() << '|';
     for(auto c : g.chkCategory) out << c->isChecked();
     for(auto b : g.btnMark) out << b->isPressed();
     for(auto w : std::array<irr::gui::IGUIElement*,5>{g.wDeckEdit,g.wFilter,g.wSort,g.wInfos,g.wCardImg})
@@ -107,11 +108,11 @@ template<class Editor> static void editorSuspensionCases(Game& game, Editor& edi
     auto token=editor.SuspendEditor(); CHECK(token); CHECK(editor.HasEditorSuspension());
     CHECK(game.device->getEventReceiver()==&editor); CHECK(game.is_building);
     CHECK(game.env->getFocus()==nameControl); CHECK(game.wDeckEdit->isVisible());
-    CHECK(game.btnTestDeck->isVisible()); CHECK(!game.btnTestDeck->isEnabled());
+    CHECK(game.btnTestDeck->isVisible()); CHECK(!game.btnTestDeck->isEnabled()); CHECK(game.stTestDeckStatus->isVisible());
     CHECK(!editor.SuspendEditor());
     CHECK(editor.CommitEditorHandoff(*token,&game.dField));
     CHECK(game.device->getEventReceiver()==&game.dField); CHECK(!game.is_building);
-    CHECK(game.env->getFocus()==nullptr); CHECK(!game.wDeckEdit->isVisible()); CHECK(!game.btnTestDeck->isVisible());
+    CHECK(game.env->getFocus()==nullptr); CHECK(!game.wDeckEdit->isVisible()); CHECK(!game.btnTestDeck->isVisible()); CHECK(!game.stTestDeckStatus->isVisible());
     CHECK(!editor.CommitEditorHandoff(*token,&game.menuHandler));
     // No ordinary editor entry/event may reset the suspension or save the shared consumer's deck.
     deckManager.current_deck={}; editor.Initialize(); editor.ResetEditorHistory(); editor.EditorDeckSaved();
