@@ -4,13 +4,13 @@
                   {
                       "source":  "ygopro-undo.exe",
                       "destination":  "ygopro-undo.exe",
-                      "sha256":  "04c588e61854070ae76e9746da0319efc20168ec9cdff7b4fecc8df1314ac761",
+                      "sha256":  "8af8cecd59bf1bf77c22f8e055bd1fcbb3f593f34a9c6388bf2ea2dd0c4521f5",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "WindBot/WindBot-undo.exe",
                       "destination":  "WindBot/WindBot-undo.exe",
-                      "sha256":  "88d0ea9efc7af7ab402c3f075c5b4eefae138cade1acd6c6b030b131bf969131",
+                      "sha256":  "d0bd673fcea801d286ab81bb2e7a3a7c2273b540215c49a2a985d77e6bb624a4",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
@@ -40,61 +40,61 @@
                   {
                       "source":  "undo-mod/Uninstall-UndoMod.ps1",
                       "destination":  "undo-mod/Uninstall-UndoMod.ps1",
-                      "sha256":  "675a361ba8cae298f883dc1ca7e0c3e2444586eb176a0ffc71db121b41fedc12",
+                      "sha256":  "77c92793125454c69f079e235820459c11e99a6b21fba7bc4c98f780199cb3b8",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/BUILD.md",
                       "destination":  "undo-mod/BUILD.md",
-                      "sha256":  "130555e3badde4e034317d540a224c228224a2ce74278ed4a86cf8963ec2c3ff",
+                      "sha256":  "55caaaccd768b388bc5e62410cc40ee608583b1dfd832a0fbd2e99656292ce63",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/INSTALL.md",
                       "destination":  "undo-mod/INSTALL.md",
-                      "sha256":  "6942c3caead14d932351b7abaa9a35c1b093641c3e2d7cf4396998e75ffe438a",
+                      "sha256":  "6c3aea631ed14692d1e6955051380fc7e8ac964b068f1ff23f078d4fd1263c99",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/COMPATIBILITY.md",
                       "destination":  "undo-mod/COMPATIBILITY.md",
-                      "sha256":  "ffec7ac4a7043e3cfd12a96648594d475f64283379f1cac0d79215a1965146b1",
+                      "sha256":  "530b71ac12fa077144b95ede93107e9c2df0b305f6ecd63761d9dd5cece9e234",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/RELEASE-NOTES.md",
                       "destination":  "undo-mod/RELEASE-NOTES.md",
-                      "sha256":  "05983c7299615d104693306cbfa3bd1b636f4b5091f8b751f474a43d011cb049",
+                      "sha256":  "023bfb74f94f050c3fc392e01e388a7c383f2666a92e9939b829963be0e6cbe7",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/THIRD-PARTY.md",
                       "destination":  "undo-mod/THIRD-PARTY.md",
-                      "sha256":  "6ab1a07a9955e083346a380c28d0d60de068ec2155cbf1d7e5c7857023ba19bd",
+                      "sha256":  "ae8345c2707a0e8547a9db20ac79ad4b4e4c9d9ae7ac422560a750444e658af6",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/licenses/bzip2.txt",
                       "destination":  "undo-mod/licenses/bzip2.txt",
-                      "sha256":  "7638575a2a20f32b4f658611b9a9f58885f5a6769d9e05031c12c508c2068a24",
+                      "sha256":  "e8a6b63336018eec09ac3a7cdfe5a80bda635641bc0397a77b8baa25bed03800",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/licenses/freetype.txt",
                       "destination":  "undo-mod/licenses/freetype.txt",
-                      "sha256":  "84f47dc7f0887dd56b05f2f218060581c055e443bd7af18e46677bec3dcc2473",
+                      "sha256":  "bd36c8b474855fa294c2ec5c184544478ef3720aad37d65a6296a4f264fd2d3b",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/licenses/freetype-additional.txt",
                       "destination":  "undo-mod/licenses/freetype-additional.txt",
-                      "sha256":  "a4669841019d1f81d128654b008e80f30a765a1e3fd14598c2d80156b151f8d9",
+                      "sha256":  "0de5d6be0a1559fea13d6d925ef3786b894921027a3e0fb31d515b0f327e9ce0",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/licenses/freetype-gpl2.txt",
                       "destination":  "undo-mod/licenses/freetype-gpl2.txt",
-                      "sha256":  "6046da9f0fbc470892625b2f1313f16b5ca375b5c869b3540ea7ef2ad8877a12",
+                      "sha256":  "c4120c6752c910c299e3bd9cb3a46ff262c268303ca2069b61f92f10a5656c18",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
@@ -106,61 +106,61 @@
                   {
                       "source":  "undo-mod/licenses/jpeg.txt",
                       "destination":  "undo-mod/licenses/jpeg.txt",
-                      "sha256":  "cff8701dc999e39b5044ece8f22ed65b3a10d6a8dbddca8ffb802d24580181db",
+                      "sha256":  "ba6bceebcba0fdd35488477c2cca8c4632ce82c74dbfbc87d886ce6fc4433579",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/licenses/jpeg-ijg.txt",
                       "destination":  "undo-mod/licenses/jpeg-ijg.txt",
-                      "sha256":  "db16a04128171879c60708d171b88d97345a2dd20f9bfc173680a4497c73f704",
+                      "sha256":  "75815e3bf6484201a3c3d17a1bbf10f2e8e3237f84df10a2357ea896db2a81d6",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/licenses/libevent.txt",
                       "destination":  "undo-mod/licenses/libevent.txt",
-                      "sha256":  "0775ab4e6c296986ed69eea7174cdbb499b9f9414c3b8a48065f40438067477e",
+                      "sha256":  "ff02effc9b331edcdac387d198691bfa3e575e7d244ad10cb826aa51ef085670",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/licenses/liblzma.txt",
                       "destination":  "undo-mod/licenses/liblzma.txt",
-                      "sha256":  "4dbe5cdb52dad9399c88936770aea0d59198f1bd35a0031fbdcc7c151c4b1cf1",
+                      "sha256":  "616a3ad264ce29b8f1cb97e53037b139d406899ca8d1f799651e17bfa09830b8",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/licenses/liblzma-0bsd.txt",
                       "destination":  "undo-mod/licenses/liblzma-0bsd.txt",
-                      "sha256":  "54a423f7b2c890a1e4d6541f88f4e5702c0414988ba3f6247f4578d3b8bca5b7",
+                      "sha256":  "0b01625d853911cd0e2e088dcfb743261034a091bb379246cb25a14cc4c74bf1",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/licenses/libpng.txt",
                       "destination":  "undo-mod/licenses/libpng.txt",
-                      "sha256":  "452390433ba0f88aa3e2b122c647741b72a0c117cd6ed7a329b49785aecb5511",
+                      "sha256":  "bdb0a645ea18c60507d0368379b1ac5474b92255fcc2d115e07486a7672ba526",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/licenses/llvm.txt",
                       "destination":  "undo-mod/licenses/llvm.txt",
-                      "sha256":  "a9ed3eae930adbc631b83300b78ab5d228c9b1e4560d64ec4b4ea2bcf69f4569",
+                      "sha256":  "8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/licenses/lua.txt",
                       "destination":  "undo-mod/licenses/lua.txt",
-                      "sha256":  "474341433b6817117c841fa6bc39600117c334f42ec5f8cddbcae6c044ab1f72",
+                      "sha256":  "d83103413067359fa162d5c465c076d6a9a25f8d678f06b7ed2a7c9d9e4fa704",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/licenses/mingw-runtime.txt",
                       "destination":  "undo-mod/licenses/mingw-runtime.txt",
-                      "sha256":  "6f8707c004133080b2e11da8caefd1d71531b7423ae9c9e3d6043801d24bf5b2",
+                      "sha256":  "1db8da07b436c68833c0673ffee3d9fcb2526047f3820b81661865dfedc79a1f",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/licenses/miniaudio.txt",
                       "destination":  "undo-mod/licenses/miniaudio.txt",
-                      "sha256":  "cf00884e3bae1ec7b49e96bc014079f5b4c803987586b894ac431779927c67b3",
+                      "sha256":  "457f1b500e0adf6bc059edddfa78a2f62012e7c3bb43476c20e0bd23b25ba0eb",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
@@ -172,25 +172,25 @@
                   {
                       "source":  "undo-mod/licenses/ogg.txt",
                       "destination":  "undo-mod/licenses/ogg.txt",
-                      "sha256":  "29460b3b44148114c28cc2480737368428747e68374d16cb8d910949ded03d19",
+                      "sha256":  "d2ab5758336489da61c12cc5bb757da5339c4ae9001f9bb0562b4370249af814",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/licenses/opus.txt",
                       "destination":  "undo-mod/licenses/opus.txt",
-                      "sha256":  "cbd8bd07329a234413710c02b19d22c0cf78fc451882593e817130779b5455e3",
+                      "sha256":  "01e1167d54a096d123cf6dfbbeb19587278845c6481d2d66d545669846079551",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/licenses/opusfile.txt",
                       "destination":  "undo-mod/licenses/opusfile.txt",
-                      "sha256":  "54e125c8250361407b34322e0f328f6bdf7fd30cd4f2941a321e47b41f9c159d",
+                      "sha256":  "0267ae795ab744c4e0f9c45e249440fdf2e75dac8c804f36066b28649bf74aaf",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/licenses/sqlite.txt",
                       "destination":  "undo-mod/licenses/sqlite.txt",
-                      "sha256":  "36396e6f98fb7cec2c75148c47680b532b09dde60b81e836db8650a17b0705cc",
+                      "sha256":  "23ad5ceb87a2a3fda8f9b687f8bb04722a7314a316ce4c221ed89b951fd3674b",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
@@ -202,7 +202,7 @@
                   {
                       "source":  "undo-mod/licenses/vorbis.txt",
                       "destination":  "undo-mod/licenses/vorbis.txt",
-                      "sha256":  "1300208dc709bce1f7b1bf5295acb4df8eca42a67a301ce4317c9b901560092a",
+                      "sha256":  "ec1815db59fcd302846df949d7424876cb2e2dc5ed1606c5fb0b36787b1cf43a",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
@@ -214,7 +214,7 @@
                   {
                       "source":  "undo-mod/licenses/winpthreads.txt",
                       "destination":  "undo-mod/licenses/winpthreads.txt",
-                      "sha256":  "1c8d23063c3772b9435831410b31b51fef3d9cf2138a442dc367ef5d72239f67",
+                      "sha256":  "63263614cdd29f2f93cba85e992f041b31f9fc7b4033692f31269489a8a1b177",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
@@ -226,13 +226,13 @@
                   {
                       "source":  "undo-mod/licenses/zlib.txt",
                       "destination":  "undo-mod/licenses/zlib.txt",
-                      "sha256":  "439c75ab12b340c5362b9d4b08ff05ec3a4d0eb7667a6fff49a9b16d8795c78e",
+                      "sha256":  "e32ff4e00d9d94930537635291da39e7e612703334bf6fde8c7f1686fe8a45a2",
                       "license":  "See undo-mod/THIRD-PARTY.md and undo-mod/licenses for the applicable license notices."
                   },
                   {
                       "source":  "undo-mod/build-manifest.json",
                       "destination":  "undo-mod/build-manifest.json",
-                      "sha256":  "9fdd8a1b4efa3c3c95f3b8090c24d144423452b69ef8cc76b3f19a5837b6e5fd",
+                      "sha256":  "35a445694f12585d1da18affcdb2c23f90742b5c2e34b7cbaa75b080722dc57e",
                       "license":  "See undo-mod/THIRD-PARTY.md."
                   }
               ]
