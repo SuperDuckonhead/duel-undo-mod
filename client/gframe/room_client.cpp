@@ -79,7 +79,7 @@ struct RoomClient::Impl {
   std::optional<undo::InputSubmission> automatic;
   mutable std::mutex mutex;
   undo::InputToken published;
-  bool paused{true}, canUndo{}, consent{}, responseQueued{}, responseAllowed{},
+  bool paused{true}, failurePublished{}, canUndo{}, consent{}, responseQueued{}, responseAllowed{},
       capturePublished{}, freezePresentation{}, requestPending{};
   uint64_t requestPublished{1};
   undo::TxKey consentKey;
@@ -126,6 +126,7 @@ struct RoomClient::Impl {
   void fail() {
     failed = true;
     std::lock_guard<std::mutex> lock(mutex);
+    failurePublished = true;
     paused = true;
     freezePresentation = true;
     canUndo = false;
@@ -709,6 +710,10 @@ undo::InputToken RoomClient::Token() const {
 bool RoomClient::InputPaused() const {
   std::lock_guard<std::mutex> lock(impl_->mutex);
   return impl_->paused;
+}
+bool RoomClient::Failed() const {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  return impl_->failurePublished;
 }
 bool RoomClient::PresentationFrozen() const {
   std::lock_guard<std::mutex> lock(impl_->mutex);

@@ -3,6 +3,7 @@
 #include "duelclient.h"
 #include "image_manager.h"
 #include "undo/strings_zh.h"
+#include "undo/deck_test_upload.h"
 #include <array>
 
 static bool overlaps(const irr::core::recti& a, const irr::core::recti& b) {
@@ -169,6 +170,25 @@ template<class Editor> static void editorTestEntryCases(Game& game, Editor& edit
     CHECK(BUTTON_TEST_DECK==329);
     CHECK(std::wstring(game.btnTestDeck->getText())==undo::DeckTestText);
     expectEntry(game,DeckTestEntryState::Ready,true,true,undo::DeckTestHint);
+
+    // The ordinary AI tab is optional. Test capture must also work when its
+    // rule selector was never constructed, without changing saved preferences.
+    auto* botRule=game.cbBotRule;const auto defaultRule=game.gameConf.default_rule;
+    game.cbBotRule=nullptr;
+    for(const auto value:{1,4,8}) {
+        game.gameConf.default_rule=value;
+        CHECK(editor.RequestDeckTestPreparation());
+        CHECK(editor.DeckTestConfig()->host.duel_rule==std::clamp(value,3,5));
+        CHECK(game.gameConf.default_rule==value);
+        CHECK(editor.ResumeDeckTestPreparation());
+    }
+    game.cbBotRule=botRule;game.gameConf.default_rule=defaultRule;
+    if(botRule) {
+        const auto selected=botRule->getSelected();botRule->setSelected(-1);
+        CHECK(editor.RequestDeckTestPreparation());
+        CHECK(editor.DeckTestConfig()->host.duel_rule==std::clamp(int(defaultRule),3,5));
+        CHECK(editor.ResumeDeckTestPreparation());botRule->setSelected(selected);
+    }
 
     for(const auto& variant : std::array<std::pair<float,const wchar_t*>,4>{{
         {0.8f,L"deck-test-entry-080-enabled.png"},

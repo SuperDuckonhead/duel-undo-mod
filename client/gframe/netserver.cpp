@@ -3,6 +3,7 @@
 #include "single_duel.h"
 #include "undo_duel.h"
 #include "undo/room_policy.h"
+#include "undo/deck_test_upload.h"
 #include "tag_duel.h"
 #include "deck_manager.h"
 #include "mysocket.h"
@@ -33,6 +34,7 @@ namespace{
 	unsigned char net_server_read[SIZE_NETWORK_BUFFER]{};
     std::unique_ptr<undo::RoomAdmission> room_admission;
     std::shared_ptr<const undo::RoomConfig> room_config;
+    std::shared_ptr<const undo::TestDuelConfig> pending_deck_test_stop;
     std::atomic<bool> server_running{false};
     event* undo_poll{};
     uint64_t next_endpoint{};
@@ -64,6 +66,11 @@ namespace{
         } catch(...) {FinishUndoReject(bev);}
     }
     void UndoPoll(EventSocket,short,void*) {
+        const auto stop=std::atomic_exchange(&pending_deck_test_stop,std::shared_ptr<const undo::TestDuelConfig>{});
+        if(stop && room_config && room_config->deckTest==stop) {
+            NetServer::StopServer();
+            return;
+        }
         const auto now=NowMs();
         std::vector<bufferevent*> expired;
         for(const auto& pair:pending_rejections)if(now>=pair.second)expired.push_back(pair.first);
@@ -130,6 +137,7 @@ const undo::RoomAdmission* NetServer::Admission() { return room_admission.get();
 bool NetServer::StartServer(unsigned short port, unsigned int ip, unsigned short* out_actual_port, bool enable_broadcast, const undo::Hello* undo_capability, std::shared_ptr<const undo::RoomConfig> undo_config) {
 	if(net_evbase)
 		return false;
+    std::atomic_store(&pending_deck_test_stop,std::shared_ptr<const undo::TestDuelConfig>{});
 	net_evbase = event_base_new();
 	if(!net_evbase)
 		return false;
@@ -216,6 +224,9 @@ void NetServer::StopServer() {
         try {duel_mode->EndDuel();} catch(...) {} // Teardown must still reach the owner-loop exit.
     }
 	event_base_loopexit(net_evbase, 0);
+}
+void NetServer::StopDeckTestServer(std::shared_ptr<const undo::TestDuelConfig> test) {
+    if(test)std::atomic_store(&pending_deck_test_stop,std::move(test));
 }
 void NetServer::StopBroadcast() {
 	if(!net_evbase || !broadcast_ev)
@@ -354,6 +365,7 @@ void NetServer::ServerThread() {
 	duel_mode = nullptr;
 	if(undo_poll) event_free(undo_poll);
     undo_poll=nullptr;room_admission.reset();room_config.reset();
+	std::atomic_store(&pending_deck_test_stop,std::shared_ptr<const undo::TestDuelConfig>{});
 	event_base_free(net_evbase);
 	net_evbase = nullptr;
     server_running=false;
@@ -407,6 +419,10 @@ void NetServer::HandleCTOSPacket(DuelPlayer* dp, unsigned char* data, size_t len
 	if((pktType != CTOS_SURRENDER) && (pktType != CTOS_CHAT) && (dp->state == 0xff || (dp->state && dp->state != pktType)))
 		return;
 	switch(pktType) {
+	case undo::TestDeckUploadOpcode: {
+        if(dp->game && dp->undoPeer.ready)dp->game->UpdateTestDeck(dp,pdata,len-1);
+        break;
+    }
 	case CTOS_RESPONSE: {
 		if(!dp->game || !duel_mode->HasActiveDuel())
 			return;
@@ -496,6 +512,7 @@ void NetServer::HandleCTOSPacket(DuelPlayer* dp, unsigned char* data, size_t len
 		std::memcpy(&packet, pdata, sizeof packet);
 		auto pkt = &packet;
         if(room_admission && pkt->info.mode==MODE_TAG) { RejectUndoPeer(dp,undo::RoomPolicyReason::Tag);return; }
+        if(room_config && room_config->deckTest)pkt->info=room_config->deckTest->host;
         if(room_admission && pkt->info.mode==MODE_MATCH && room_config && room_config->bot) {
             RejectUndoPeer(dp,undo::RoomPolicyReason::Match);return;
         }

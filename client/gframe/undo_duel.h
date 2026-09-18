@@ -27,6 +27,10 @@ public:
     bool CanJoinHuman() const override;
     std::optional<HostBotStatus> BotStatus() const;
     void JoinGame(DuelPlayer*, unsigned char*, bool) override;
+    void UpdateTestDeck(DuelPlayer*, const unsigned char*, unsigned int) override;
+    void UpdateDeck(DuelPlayer*, unsigned char*, unsigned int) override;
+    void PlayerReady(DuelPlayer*, bool) override;
+    void StartDuel(DuelPlayer*) override;
     void TPResult(DuelPlayer*, unsigned char) override;
     void Process() override;
     void GetResponse(DuelPlayer*, unsigned char*, unsigned int) override;

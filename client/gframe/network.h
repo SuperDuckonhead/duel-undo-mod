@@ -225,6 +225,7 @@ public:
 	virtual void PlayerReady(DuelPlayer* dp, bool is_ready) = 0;
 	virtual void PlayerKick(DuelPlayer* dp, unsigned char pos) = 0;
 	virtual void UpdateDeck(DuelPlayer* dp, unsigned char* pdata, unsigned int len) = 0;
+	virtual void UpdateTestDeck(DuelPlayer*, const unsigned char*, unsigned int) {}
 	virtual void StartDuel(DuelPlayer* dp) = 0;
 	virtual void HandResult(DuelPlayer* dp, unsigned char res) = 0;
 	virtual void TPResult(DuelPlayer* dp, unsigned char tp) = 0;

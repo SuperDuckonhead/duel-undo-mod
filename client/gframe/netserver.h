@@ -27,6 +27,7 @@ public:
     static bool SendRoomPolicy(DuelPlayer*, uint32_t code);
 	static bool StartBroadcast();
 	static void StopServer();
+    static void StopDeckTestServer(std::shared_ptr<const undo::TestDuelConfig>);
 	static void StopBroadcast();
 	static void StopListen();
 	static void StartDuelTimer();

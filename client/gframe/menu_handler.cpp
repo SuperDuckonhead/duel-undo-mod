@@ -15,11 +15,15 @@
 namespace ygo {
 
 void UpdateDeck() {
+	if(mainGame->deckBuilder.HasDeckTestPreparation())return;
 	BufferIO::CopyWideString(mainGame->cbCategorySelect->getText(), mainGame->gameConf.lastcategory);
 	BufferIO::CopyWideString(mainGame->cbDeckSelect->getText(), mainGame->gameConf.lastdeck);
 	DuelClient::SendUpdateDeck(deckManager.current_deck);
 }
 bool MenuHandler::OnEvent(const irr::SEvent& event) {
+	// Pending test launch owns the editor and its deck. Ordinary menu callbacks
+	// must not load selectors or rewrite saved preferences during the handoff.
+	if(mainGame->deckBuilder.HasDeckTestPreparation())return true;
 	if(mainGame->dField.OnCommonEvent(event))
 		return false;
 	switch(event.EventType) {

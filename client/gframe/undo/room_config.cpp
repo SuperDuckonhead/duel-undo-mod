@@ -3,12 +3,19 @@
 #include "../data_manager.h"
 #include "../config.h"
 #include "runtime_paths.h"
+#include "deck_test_upload.h"
 #include <cstring>
 #include <fstream>
+#include <IFileArchive.h>
+#include <IFileSystem.h>
 #include <irrXML.h>
 #include <map>
 #include <random>
+#include <set>
+#include <sstream>
 #include <windows.h>
+#include <shellapi.h>
+namespace irr { namespace io { IFileSystem* createFileSystem(); } }
 namespace undo {
 namespace {
 Bytes read(const std::filesystem::path &path) {
@@ -148,6 +155,94 @@ void appSettings(const std::filesystem::path &path,
   }
 }
 } // namespace
+std::string ResolveDeckTestBotSelection(const Bytes& catalog) {
+  std::istringstream input(std::string(catalog.begin(),catalog.end()));
+  std::string line,selected;
+  const auto trim=[](const std::wstring& text) {
+    const auto first=text.find_first_not_of(L" \t\r\n\v\f");
+    return first==std::wstring::npos?std::wstring{}:text.substr(first,text.find_last_not_of(L" \t\r\n\v\f")-first+1);
+  };
+  while(std::getline(input,line)) {
+    const auto first=line.find_first_not_of(" \t\r\n");
+    if(first==std::string::npos || line[first]!='!')continue;
+    std::string command,description,flags;
+    if(!std::getline(input,command) || !std::getline(input,description) || !std::getline(input,flags))
+      throw std::invalid_argument("Truncated bot.conf entry for deck test");
+    if(!command.empty() && command.back()=='\r')command.pop_back();
+    auto wide=L"WindBot "+BufferIO::DecodeUTF8String(command);
+    std::replace(wide.begin(),wide.end(),L'\'',L'"');
+    int count{};auto argv=CommandLineToArgvW(wide.c_str(),&count);
+    if(!argv)throw std::runtime_error("Cannot parse deck test bot selection");
+    struct FreeArgs {LPWSTR* value;~FreeArgs(){LocalFree(value);}} guard{argv};
+    struct IgnoreCase {bool operator()(const std::wstring& a,const std::wstring& b) const{return _wcsicmp(a.c_str(),b.c_str())<0;}};
+    std::set<std::wstring,IgnoreCase> keys;
+    bool matches=false;
+    for(int i=1;i<count;++i) {
+      const std::wstring argument=argv[i];const auto equals=argument.find(L'=');
+      if(equals==std::wstring::npos)throw std::invalid_argument("Invalid bot.conf command for deck test");
+      const auto key=trim(argument.substr(0,equals)),value=trim(argument.substr(equals+1));
+      if(key.empty() || !keys.insert(key).second)throw std::invalid_argument("Duplicate bot.conf command key for deck test");
+      if(_wcsicmp(key.c_str(),L"Deck")==0 && value==L"MokeyMokeyKing")matches=true;
+    }
+    if(matches) {
+      if(!selected.empty())throw std::invalid_argument("Multiple bot.conf entries select Deck=MokeyMokeyKing");
+      selected=std::move(command);
+    }
+  }
+  if(selected.empty())throw std::invalid_argument("Missing bot.conf entry with Deck=MokeyMokeyKing");
+  return selected;
+}
+std::shared_ptr<const RoomConfig> CaptureDeckTestRoomConfig(ygo::DataManager& data,
+    const std::string& runtimeRoot,bool prefer,std::shared_ptr<const TestDuelConfig> test) {
+  if(!test)throw std::invalid_argument("Missing frozen deck test snapshot");
+  const auto& host=test->host;
+  if(host.rule!=5 || host.mode!=MODE_SINGLE || host.start_lp!=8000 || host.start_hand!=5 ||
+     host.draw_count!=1 || host.time_limit || host.lflist || !host.no_check_deck || !host.no_shuffle_deck)
+    throw std::invalid_argument("Invalid fixed deck test room settings");
+  const auto catalog=read(std::filesystem::u8path(runtimeRoot)/"bot.conf");
+  const auto selection=ResolveDeckTestBotSelection(catalog);
+  auto config=std::make_shared<RoomConfig>(*CaptureRoomConfig(data,runtimeRoot,prefer,RoomMode::LoopbackFree,selection));
+  if(config->bot->selectionCatalog!=catalog)throw std::runtime_error("bot.conf changed while capturing deck test");
+  config->bot->handOverride=0;
+  config->deckTest=std::move(test);
+  return config;
+}
+std::future<std::shared_ptr<const RoomConfig>> PrepareDeckTestRoomConfig(ygo::DataManager& data,
+    const std::string& runtimeRoot,bool prefer,std::shared_ptr<const TestDuelConfig> test) {
+  struct ArchiveSource {
+    std::string path,password;
+    irr::io::E_FILE_ARCHIVE_TYPE type;
+  };
+  std::vector<ArchiveSource> archives;
+  if(auto* files=data.IrrFileSystem) {
+    archives.reserve(files->getFileArchiveCount());
+    for(irr::u32 i=0;i<files->getFileArchiveCount();++i) {
+      const auto* archive=files->getFileArchive(i);
+      archives.push_back({std::filesystem::absolute(std::filesystem::u8path(archive->getArchiveName().c_str())).u8string(),
+        archive->Password.c_str(),archive->getType()});
+    }
+  }
+  // DataManager owns its card/string/extra-setcode containers. Its filesystem
+  // and fallback text are borrowed pointers, so replace both in the worker.
+  auto loaded=data;
+  loaded.IrrFileSystem=nullptr;
+  const std::wstring unknown=data.unknown_string?data.unknown_string:L"";
+  loaded.unknown_string=nullptr;
+  const auto root=std::filesystem::absolute(std::filesystem::u8path(runtimeRoot)).u8string();
+  return std::async(std::launch::async,[loaded=std::move(loaded),archives=std::move(archives),
+      unknown,root,prefer,test=std::move(test)]() mutable {
+    std::unique_ptr<irr::io::IFileSystem,void(*)(irr::io::IFileSystem*)> files(
+      irr::io::createFileSystem(),[](auto* p){if(p)p->drop();});
+    if(!files)throw std::runtime_error("Cannot create deck test resource filesystem");
+    for(const auto& archive:archives) {
+      // Match Game::LoadExpansions: case-insensitive names with paths intact.
+      if(!files->addFileArchive(archive.path.c_str(),true,false,archive.type,archive.password.c_str()))
+        throw std::runtime_error("Cannot reopen deck test resource archive: "+archive.path);
+    }
+    loaded.IrrFileSystem=files.get();loaded.unknown_string=unknown.c_str();
+    return CaptureDeckTestRoomConfig(loaded,root,prefer,std::move(test));
+  });
+}
 std::shared_ptr<const RoomConfig>
 CaptureClientRoomConfig(ygo::DataManager& data, RoomMode mode) {
   auto config = std::make_shared<RoomConfig>();

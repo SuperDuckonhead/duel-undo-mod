@@ -6,8 +6,12 @@
 #include "mysocket.h"
 #include "undo/room_config.h"
 #include "undo/room_wire.h"
+#include "undo/deck_test_upload.h"
+#include "undo/runtime_paths.h"
+#include <IFileArchive.h>
 #include <IFileSystem.h>
 #include <chrono>
+#include <future>
 #include <iostream>
 #include <thread>
 namespace ygo {
@@ -33,6 +37,64 @@ struct CurrentDirectory {
  explicit CurrentDirectory(const std::string& root) {std::filesystem::current_path(std::filesystem::u8path(root));}
  ~CurrentDirectory() {std::filesystem::current_path(previous);}
 };
+// A real mounted ZIP with an owner-thread boundary. Snapshotting may inspect
+// its metadata on the owner, but the worker must reopen its own file handle.
+struct OwnerArchive final : irr::io::IFileArchive {
+ irr::io::IFileArchive* archive;
+ const std::thread::id owner{std::this_thread::get_id()};
+ explicit OwnerArchive(irr::io::IFileArchive* a):archive(a){archive->grab();Password=a->Password;}
+ ~OwnerArchive(){archive->drop();}
+ irr::io::IReadFile* createAndOpenFile(const irr::io::path& path) override {
+  CHECK(std::this_thread::get_id()==owner);return archive->createAndOpenFile(path);
+ }
+ irr::io::IReadFile* createAndOpenFile(irr::u32 index) override {
+  CHECK(std::this_thread::get_id()==owner);return archive->createAndOpenFile(index);
+ }
+ const irr::io::IFileList* getFileList() const override{return archive->getFileList();}
+ irr::io::E_FILE_ARCHIVE_TYPE getType() const override{return archive->getType();}
+ const irr::io::path& getArchiveName() const override{return archive->getArchiveName();}
+};
+static void isolatedDeckTestCapture(const std::string& root) {
+ fixture::database(root);
+ fixture::sql(root+"/cards.cdb","UPDATE datas SET atk=2345;");
+ fixture::zip(root+"/first.ypk","script/choice.lua",fixture::bytes("first archive"));
+ fixture::zip(root+"/second.ypk","script/choice.lua",fixture::bytes("second archive"));
+ fixture::WriteFixtureFile(root+"/script/choice.lua",fixture::bytes("loose fallback"));
+ fixture::WriteFixtureFile(root+"/expansions/script/choice.lua",fixture::bytes("expansion override"));
+ fixture::WriteFixtureFile(root+"/bot.conf",fixture::bytes("!local label\nDeck=MokeyMokeyKing\ndescription\nflags\n"));
+ std::unique_ptr<irr::io::IFileSystem,void(*)(irr::io::IFileSystem*)> files(
+  irr::io::createFileSystem(),[](auto* p){if(p)p->drop();});
+ CHECK(files);
+ DataManager loaded;loaded.IrrFileSystem=files.get();CHECK(loaded.LoadDB((root+"/cards.cdb").c_str()));
+ // The loaded view must win over subsequent disk changes, including while
+ // preparation runs. No database reload may replace the accepted UI view.
+ fixture::sql(root+"/cards.cdb","UPDATE datas SET atk=9999;");
+ for(const auto* name:{"second.ypk","first.ypk"})CHECK(files->addFileArchive((root+"/"+name).c_str(),true,false,irr::io::EFAT_ZIP));
+ std::vector<OwnerArchive*> archives;
+ for(irr::u32 i=0;i<files->getFileArchiveCount();++i)archives.push_back(new OwnerArchive(files->getFileArchive(i)));
+ while(files->getFileArchiveCount())CHECK(files->removeFileArchive(irr::u32(0)));
+ for(auto* archive:archives){CHECK(files->addFileArchive(archive));archive->drop();}
+ HostInfo info{};info.rule=5;info.mode=MODE_SINGLE;info.duel_rule=5;
+ info.start_lp=8000;info.start_hand=5;info.draw_count=1;info.no_check_deck=true;info.no_shuffle_deck=true;
+ auto test=std::make_shared<const TestDuelConfig>(9,std::vector<std::uint32_t>{900000001},std::vector<std::uint32_t>{},info,L"memory");
+ // Capture only validates this private executable path; it never launches it.
+ // Preserve an existing build, otherwise own and remove this marker alone.
+ const auto bot=ExecutableRoot()/"WindBot"/"WindBot-undo.exe";
+ const bool marker=!std::filesystem::exists(bot);
+ struct RemoveMarker {std::filesystem::path path;bool owns;~RemoveMarker(){if(owns)std::filesystem::remove(path);}} cleanup{bot,marker};
+ if(marker)fixture::WriteFixtureFile(bot.u8string(),fixture::bytes("capture-only marker"));
+ for(bool prefer:{false,true}) {
+  auto pending=PrepareDeckTestRoomConfig(loaded,root,prefer,test);
+  CHECK(loaded.LoadDB((root+"/cards.cdb").c_str()));
+  const auto config=pending.get();
+  CHECK(config->deckTest==test && config->resources->Card(900000001).attack==2345);
+  CHECK(config->resources->Read("script/choice.lua")==fixture::bytes(prefer?"expansion override":"second archive"));
+  fixture::sql(root+"/cards.cdb","UPDATE datas SET atk=2345;");
+  CHECK(loaded.LoadDB((root+"/cards.cdb").c_str()));
+  fixture::sql(root+"/cards.cdb","UPDATE datas SET atk=9999;");
+ }
+ std::cout<<"PASS async deck capture uses private archive readers, loaded card data and exact mounted precedence\n";
+}
 static void join(const Hello& hostCapability,const Hello& guestCapability,bool compatible,
                  std::shared_ptr<const RoomConfig> hostConfig = {}) {
  static unsigned attempt=0;
@@ -62,7 +124,16 @@ static void join(const Hello& hostCapability,const Hello& guestCapability,bool c
 }
 int main() { try {
  SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+ const auto catalog=fixture::bytes("!wrong display\nName=wrong Deck=MokeyMokeyKingExtra\ndescription\nflags\n!not an identity\nName='Fixed opponent' Deck='MokeyMokeyKing' Dialog=mokey.zh-CN\ndescription\nflags\n");
+ CHECK(ResolveDeckTestBotSelection(catalog)=="Name='Fixed opponent' Deck='MokeyMokeyKing' Dialog=mokey.zh-CN");
+ CHECK(ResolveDeckTestBotSelection(fixture::bytes("!localized label\nName=other deck=' MokeyMokeyKing '\ndescription\nflags\n"))=="Name=other deck=' MokeyMokeyKing '");
+ CHECK(rejects([&]{ResolveDeckTestBotSelection(fixture::bytes("!MokeyMokeyKing\nDeck=MokeyMokey\ndescription\nflags\n"));}));
+ CHECK(rejects([&]{ResolveDeckTestBotSelection(fixture::bytes("!fake\nName='Deck=MokeyMokeyKing' Deck=MokeyMokey\ndescription\nflags\n"));}));
+ CHECK(rejects([&]{ResolveDeckTestBotSelection(fixture::bytes("!duplicate\nDeck=MokeyMokeyKing Deck=MokeyMokey\ndescription\nflags\n"));}));
+ CHECK(rejects([&]{ResolveDeckTestBotSelection(fixture::bytes("!one\nDeck=MokeyMokeyKing\ndescription\nflags\n!two\nDeck=MokeyMokeyKing\ndescription\nflags\n"));}));
+ CHECK(rejects([&]{ResolveDeckTestBotSelection(fixture::bytes("!truncated\nDeck=MokeyMokeyKing\n"));}));
  const std::string root=UNDO_SCOPE_FIXTURE;
+ isolatedDeckTestCapture(root+"/async-deck-test");
  const auto hostRoot=root+"/host",guestRoot=root+"/guest";
  for(const auto& path:{hostRoot,guestRoot}) {
   fixture::database(path);
@@ -96,6 +167,18 @@ int main() { try {
   CHECK(host->resources->Read("script/c900000001.lua")==fixture::bytes("-- same card script"));
  }
  auto host=CaptureRoomConfig(hostData,hostRoot,false,RoomMode::ConsentLan);
+ {
+  auto local=std::make_shared<RoomConfig>(*CaptureRoomConfig(hostData,hostRoot,false,RoomMode::LoopbackFree));
+  auto test=std::make_shared<const TestDuelConfig>(1,std::vector<std::uint32_t>{},std::vector<std::uint32_t>{},HostInfo{},L"test");
+  auto stale=std::make_shared<const TestDuelConfig>(1,std::vector<std::uint32_t>{},std::vector<std::uint32_t>{},HostInfo{},L"stale");
+  local->deckTest=test;unsigned short port{};
+  CHECK(NetServer::StartServer(0,0x7f000001,&port,false,&local->capability,local));
+  NetServer::StopDeckTestServer(stale);std::this_thread::sleep_for(std::chrono::milliseconds(60));CHECK(NetServer::IsRunning());
+  NetServer::StopDeckTestServer(test);stopped();
+  CHECK(NetServer::StartServer(0,0x7f000001,&port,false,&host->capability,host));
+  NetServer::StopDeckTestServer(test);std::this_thread::sleep_for(std::chrono::milliseconds(60));CHECK(NetServer::IsRunning());
+  NetServer::StopServer();stopped();
+ }
  // Match round transitions change the restore lifecycle, while retaining the
  // 99-byte Hello v2 layout. Prior single-only restore profile peers must fail
  // the real handshake instead of joining a room they cannot continue.

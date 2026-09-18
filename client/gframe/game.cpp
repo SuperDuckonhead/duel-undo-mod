@@ -1066,6 +1066,7 @@ void Game::MainLoop() {
 	auto lastFrameTime = std::chrono::steady_clock::now();
 	constexpr auto targetFrameDuration = std::chrono::microseconds(16667);
 	while(device->run()) {
+		deckBuilder.PollDeckTest();
 		deckBuilder.RefreshDeckTestEntry();
 		if(is_building && !is_siding) {
 			if(!device->isWindowActive()) deckBuilder.CancelEditorDrag();
@@ -1190,6 +1191,7 @@ void Game::MainLoop() {
 	else
 		timeEndPeriod(1);
 #endif
+	deckBuilder.CloseDeckTestOnExit();
 	DuelClient::StopClient(CLIENT_CLOSE_REASON_EXIT);
 	if(dInfo.isSingleMode)
 		SingleMode::StopPlay(true);

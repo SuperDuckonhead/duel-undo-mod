@@ -1,6 +1,7 @@
 #include "undo_duel.h"
 #include "netserver.h"
 #include "data_manager.h"
+#include "undo/deck_test_upload.h"
 #include "undo/rebuilder.h"
 #include "undo/player_restore.h"
 #include "undo/room_restore.h"
@@ -99,6 +100,7 @@ struct UndoDuel::Impl {
     std::vector<HeldPacket> heldHuman;
     std::uint64_t botLastDispatch{}, botFenceJob{};
     bool botAdmission{}, botPolling{}, terminalAuthorized{}, replaySent{};
+    bool testDeckAccepted{};
     std::optional<Envelope> botResume;
 
     Impl(UndoDuel& o,std::shared_ptr<const RoomConfig> c,SessionId s,Send output,std::uint64_t epoch=0)
@@ -106,6 +108,7 @@ struct UndoDuel::Impl {
        coordinator(s,epoch,config && !config->bot && config->capability.mode==RoomMode::ConsentLan),installedEpoch(epoch) {
         require(config && config->resources,"Missing frozen undo room resources");
         require(session!=SessionId{},"Missing room session");
+        require(!config->deckTest || (!owner.match_mode && config->capability.mode==RoomMode::LoopbackFree),"Test upload requires a local Single room");
         require(!owner.match_mode || !config->bot,"Private AI Match rooms are unsupported");
         if(config->bot) {
             require(!config->botExecutable.empty(),"Missing private bot executable");
@@ -158,11 +161,16 @@ struct UndoDuel::Impl {
         for(int p=0;p<2;++p)require(emit(p,e),"Undo control transport failed");
     }
     void publish(bool force=false) {
-        if(!core || botStatus.humanPromptHeld || botResume)return; // Never advertise an input boundary before its AI fence/Resume.
+        auto current=status();
+        const bool fatalTest=config->deckTest && current.state==TxState::PausedFailed;
+        if(!fatalTest && (!core || botStatus.humanPromptHeld || botResume))return;
+        // Test startup and an AI fence can fail before any playable boundary
+        // exists. Publish only the fatal outcome, never a held input prompt.
+        if(fatalTest){current.prompt=0;current.eligibleMask=0;current.promptPlayer=2;current.timePlayer=2;}
         const auto now=nowMs();
         if(!force && now-lastStatus<500)return;
         lastStatus=now;
-        Envelope e{WireKind::Status,{session,installedEpoch,0,0,{}},EncodeRoomStatus(status())};
+        Envelope e{WireKind::Status,{session,installedEpoch,0,0,{}},EncodeRoomStatus(current)};
         for(int p=0;p<2;++p)if(participants[p] && participants[p]->undoPeer.ready)require(emit(p,e),"Undo status transport failed");
     }
     void fail(const std::string& why,bool mayHaveCommitted=false) {
@@ -275,6 +283,8 @@ struct UndoDuel::Impl {
                 }
                 switch(result.operation) {
                 case BotOperation::Initialize:
+                    require(!config->deckTest || result.selection.executor=="MokeyMokeyKing",
+                        "Deck test bot resolved to an unexpected executor");
                     botStatus.initialized=true;botAdmission=true;joinBot();break;
                 case BotOperation::Dispatch:
                     require(botOutputs.size()+result.outputs.size()<=4096,"Private AI output queue limit exceeded");
@@ -548,6 +558,54 @@ struct UndoDuel::Impl {
 UndoDuel::UndoDuel(bool match,std::shared_ptr<const RoomConfig> config,SessionId session,Send send)
     :SingleDuel(match),impl_(std::make_unique<Impl>(*this,std::move(config),session,std::move(send))) {}
 UndoDuel::~UndoDuel()=default;
+void UndoDuel::UpdateTestDeck(DuelPlayer* dp,const unsigned char* data,unsigned int len) {
+    auto& r=*impl_;const auto config=r.config->deckTest;
+    if(!config || !dp || dp!=host_player || dp!=players[0] || dp!=r.participants[0] ||
+       !dp->undoPeer.ready || r.core || duel_stage!=DUEL_STAGE_BEGIN || ready[0])return;
+    auto result=TestDeckError::None;
+    try {
+        if(len>MAX_DATA_SIZE || len<32 || !data)throw TestDeckFailure(TestDeckError::Malformed);
+        Bytes bytes(data,data+len);
+        // Old connection/session replies cannot revoke an accepted new upload.
+        if(!MatchesTestDeck(bytes,config->generation,r.session))return;
+        r.testDeckAccepted=false;
+        auto main=TestDeckRead(bytes,24,4),extra=TestDeckRead(bytes,28,4);
+        if(main>TestDeckCapacity || extra>TestDeckCapacity-main)throw TestDeckFailure(TestDeckError::Capacity);
+        if(len!=32+4*(main+extra))throw TestDeckFailure(TestDeckError::Malformed);
+        Deck candidate;
+        const auto& cards=dataManager.GetDataTable();
+        for(std::size_t i=0;i<main+extra;++i) {
+            auto code=static_cast<std::uint32_t>(TestDeckRead(bytes,32+4*i,4));
+            auto card=cards.find(code);auto frozen=r.config->resources->Cards().find(code);
+            if(card==cards.end() || frozen==r.config->resources->Cards().end())throw TestDeckFailure(TestDeckError::UnknownCard);
+            if((card->second.type|frozen->second.type)&TYPE_TOKEN)throw TestDeckFailure(TestDeckError::Token);
+            const bool isExtra=i>=main;
+            if(bool(card->second.type&TYPES_EXTRA_DECK)!=isExtra || bool(frozen->second.type&TYPES_EXTRA_DECK)!=isExtra)
+                throw TestDeckFailure(TestDeckError::WrongZone);
+            (isExtra?candidate.extra:candidate.main).push_back(&card->second);
+        }
+        // The listener owns the same immutable descriptor as the editor launch.
+        // Reject a different packet instead of silently accepting changed input.
+        if(main!=config->main.size() || extra!=config->extra.size())throw TestDeckFailure(TestDeckError::Mismatch);
+        for(std::size_t i=0;i<main;++i)if(candidate.main[i]->code!=config->main[i])throw TestDeckFailure(TestDeckError::Mismatch);
+        for(std::size_t i=0;i<extra;++i)if(candidate.extra[i]->code!=config->extra[i])throw TestDeckFailure(TestDeckError::Mismatch);
+        std::swap(pdeck[0],candidate);deck_error[0]=0;r.testDeckAccepted=true;
+    }catch(const TestDeckFailure& error){r.testDeckAccepted=false;result=error.error;}
+     catch(const std::bad_alloc&){r.testDeckAccepted=false;result=TestDeckError::Capacity;}
+    auto reply=TestDeckResult(config->generation,r.session,result);
+    NetServer::SendBufferToPlayer(dp,TestDeckResultOpcode,reply.data(),reply.size());
+}
+void UndoDuel::UpdateDeck(DuelPlayer* dp,unsigned char* data,unsigned int len) {
+    // The private AI retains its existing upload path. The human cannot replace
+    // a frozen test deck through an ordinary ready/file upload callback.
+    if(impl_->config->deckTest && dp==host_player)return;
+    SingleDuel::UpdateDeck(dp,data,len);
+}
+void UndoDuel::PlayerReady(DuelPlayer* dp,bool isReady) {
+    if(impl_->config->deckTest && dp==host_player && isReady &&
+       (!impl_->testDeckAccepted || dp!=players[0] || !dp->undoPeer.ready))return;
+    SingleDuel::PlayerReady(dp,isReady);
+}
 bool UndoDuel::HasActiveDuel() const {return impl_->core && !impl_->finished;}
 bool UndoDuel::CanJoinHuman() const {
     return !impl_->core && (impl_->bot?!impl_->participants[0]:(!impl_->participants[0] || !impl_->participants[1]));
@@ -584,6 +642,30 @@ void UndoDuel::JoinGame(DuelPlayer* dp,unsigned char* bytes,bool creator) {
     r.joinBot();
     // A failed join may disconnect and destroy dp. Resolve only through the
     // admission callback before using it again in the real NetServer owner.
+}
+void UndoDuel::StartDuel(DuelPlayer* dp) {
+    auto& r=*impl_;
+    if(!r.config->deckTest){SingleDuel::StartDuel(dp);return;}
+    if(dp!=host_player || dp!=players[0] || !players[1] || !ready[0] || !ready[1] ||
+       !r.testDeckAccepted || !dp->undoPeer.ready || r.core || r.failed || r.finished)return;
+    host_info=r.config->deckTest->host;
+    NetServer::StopListen();
+    NetServer::SendPacketToPlayer(players[0],STOC_DUEL_START);
+    NetServer::ReSendToPlayer(players[1]);
+    // Retain the native lobby counts and packet order, but the test room's
+    // fixed human-first policy never sends either opening selection prompt.
+    unsigned char counts[12];auto* cursor=counts;
+    for(int p=0;p<2;++p) {
+        BufferIO::Write<std::uint16_t>(cursor,static_cast<std::uint16_t>(pdeck[p].main.size()));
+        BufferIO::Write<std::uint16_t>(cursor,static_cast<std::uint16_t>(pdeck[p].extra.size()));
+        BufferIO::Write<std::uint16_t>(cursor,static_cast<std::uint16_t>(pdeck[p].side.size()));
+    }
+    NetServer::SendBufferToPlayer(players[0],STOC_DECK_COUNT,counts,sizeof counts);
+    for(unsigned i=0;i<6;++i)std::swap(counts[i],counts[i+6]);
+    NetServer::SendBufferToPlayer(players[1],STOC_DECK_COUNT,counts,sizeof counts);
+    tp_player=0;players[0]->state=CTOS_TP_RESULT;players[1]->state=0xff;
+    duel_stage=DUEL_STAGE_FIRSTGO;
+    TPResult(players[0],1);
 }
 void UndoDuel::TPResult(DuelPlayer* dp,unsigned char tp) {
     if(!dp || dp->state!=CTOS_TP_RESULT || dp->type>1 || !players[0] || !players[1] ||

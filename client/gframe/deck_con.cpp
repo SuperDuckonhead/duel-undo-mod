@@ -189,6 +189,10 @@ bool DeckBuilder::RequestDeckTestPreparation() {
 		return false;
 	}
 	deckTestPreparation = std::move(token);
+	if(!CaptureDeckTestConfig()) {
+		ResumeDeckTestPreparation();
+		return false;
+	}
 	RefreshDeckTestEntry();
 	return true;
 }
@@ -348,7 +352,11 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 		DeckBuilder* editor;
 		~RefreshEntryOnExit() { editor->RefreshDeckTestEntry(); }
 	} refreshEntry{this};
-	if(HasEditorSuspension()) return true;
+	if(HasEditorSuspension()) {
+		if(event.EventType==irr::EET_GUI_EVENT && event.GUIEvent.EventType==irr::gui::EGET_BUTTON_CLICKED
+			&& event.GUIEvent.Caller==mainGame->btnLeaveGame) ExitDeckTest();
+		return true;
+	}
 	if(event.EventType == irr::EET_KEY_INPUT_EVENT && event.KeyInput.PressedDown) {
 		if(event.KeyInput.Key == irr::KEY_ESCAPE && (is_draging || is_starting_dragging)) {
 			CancelEditorDrag();

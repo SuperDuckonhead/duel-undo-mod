@@ -11,6 +11,8 @@
 #include "undo/room_config.h"
 #include "undo/room_policy.h"
 #include "undo/room_restore.h"
+#include "undo/deck_test_upload.h"
+#include <clocale>
 #include <algorithm>
 #include <chrono>
 #include <event2/thread.h>
@@ -61,9 +63,12 @@ static void put(Bytes &b, uint64_t n, unsigned width) {
 #include "room_client_timer.h"
 #include "room_match_client.h"
 #include "room_match_pair.h"
+#include "room_client_deck_test.h"
+#include "room_client_deck_test_session.h"
 int main(int argc, char **argv) {
   SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
   try {
+    std::setlocale(LC_CTYPE,".UTF-8");
     mainGame = &game;
     CHECK(game.Initialize(std::filesystem::current_path()));
     if (argc >= 3 && (std::string(argv[1]) == "--match-pair-host" ||
@@ -78,6 +83,8 @@ int main(int argc, char **argv) {
     }
     game.frameSignal.SetNoWait(true);
     game.actionSignal.SetNoWait(true);
+    if (argc == 2 && std::string(argv[1]) == "--deck-test-upload")return deckTestUploadGame();
+    if (argc == 2 && std::string(argv[1]) == "--deck-test-session")return deckTestSessionGame();
     if (argc == 2 && std::string(argv[1]) == "--match-client-tests")
       return runMatchClientLifecycleTests();
     if (std::getenv("N2_ROOM_TIME_BEFORE_PROMPT"))
@@ -421,6 +428,7 @@ int main(int argc, char **argv) {
       client.Receive(
           {WireKind::Status, {session, 0, 0, 0, {}}, EncodeRoomStatus(status)});
       CHECK(!client.NeedsConsent());
+      CHECK(client.Failed());
       std::cout << "PASS public requester/operation consent and "
                    "failed-transaction consent cleanup\n";
       return 0;

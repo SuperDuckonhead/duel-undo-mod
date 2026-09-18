@@ -7,7 +7,7 @@
 #include "deck.h"
 #include "network.h"
 
-namespace undo { struct RoomConfig; }
+namespace undo { struct RoomConfig; class DeckTestUpload; }
 namespace ygo {
 class RoomClient;
 
@@ -31,6 +31,10 @@ public:
 	static unsigned char selftype;
  static std::shared_ptr<RoomClient> Room();
  static void ConfigureRoom(std::shared_ptr<const undo::RoomConfig>);
+ // UI owner supplies the accepted editor's descriptor. The returned handle is
+ // bound to this connection and remains observable through asynchronous close.
+ static std::shared_ptr<undo::DeckTestUpload> StartDeckTestClient(unsigned int ip,unsigned short port,
+     std::shared_ptr<const undo::RoomConfig>);
  static void RoomPoll(EventSocket, short, void*);
  static void SendLegacyPacket(unsigned char, const void*, size_t);
  static void HandleLegacySTOC(unsigned char*, size_t);

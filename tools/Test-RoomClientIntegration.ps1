@@ -1,4 +1,4 @@
-param([ValidateSet('Debug','Release')][string]$Configuration = 'Release', [string]$RuntimeRoot, [switch]$Pair, [switch]$Ai, [switch]$FreePair, [switch]$TimedPair, [switch]$MatchPair, [switch]$MatchThree, [switch]$MatchClient)
+param([ValidateSet('Debug','Release')][string]$Configuration = 'Release', [string]$RuntimeRoot, [switch]$Pair, [switch]$Ai, [switch]$FreePair, [switch]$TimedPair, [switch]$MatchPair, [switch]$MatchThree, [switch]$MatchClient, [switch]$BuildOnly, [switch]$DeckTestUpload)
 $ErrorActionPreference = 'Stop'
 if($FreePair -and $Ai){throw 'FreePair and Ai are distinct test modes.'}
 if($TimedPair -and $Ai){throw 'TimedPair and Ai are distinct test modes.'}
@@ -24,8 +24,24 @@ try {
     & $compiler '-std=c++17' '-fno-rtti' '-static' '-g' @defs @includes '-I../gframe' '-I../../tests' (Join-Path $root 'tests/room_client_integration_tests.cpp') @objects @libs '-o' $exe
     if($LASTEXITCODE) { throw "Integration compile failed: $LASTEXITCODE" }
 } finally { Pop-Location }
-$runtime = Join-Path $root 'out/c4-runtime'
-if(!(Test-Path -LiteralPath (Join-Path $runtime '.undo-smoke-runtime'))) { throw 'Expected initialized owned C4 staging runtime.' }
+if($BuildOnly){Write-Host "Prepared actual room integration binary: $exe";exit 0}
+$runtime = Join-Path $root $(if($DeckTestUpload){'out/baseline-runtime'}else{'out/c4-runtime'})
+if(!(Test-Path -LiteralPath (Join-Path $runtime '.undo-smoke-runtime'))) { throw "Expected initialized owned staging runtime: $runtime" }
+if($DeckTestUpload) {
+ $stage=Join-Path $root ('out/deck-upload-'+[Guid]::NewGuid().ToString('N'))
+ New-Item -ItemType Directory -Path $stage | Out-Null
+ foreach($name in @('pics','script','expansions','pack','fonts','textures','sound','single')){New-Item -ItemType Junction -Path (Join-Path $stage $name) -Target (Join-Path $runtime $name) | Out-Null}
+ foreach($name in @('cards.cdb','strings.conf','lflist.conf','bot.conf')){New-Item -ItemType HardLink -Path (Join-Path $stage $name) -Target (Join-Path $runtime $name) | Out-Null}
+ foreach($name in @('deck','replay')){New-Item -ItemType Directory -Path (Join-Path $stage $name) | Out-Null}
+ [IO.File]::WriteAllText((Join-Path $stage 'system.conf'),"use_d3d = 0`nenable_sound = 0`nenable_music = 0`nenable_bot_mode = 1`n",[Text.UTF8Encoding]::new($false))
+ $process=Start-Process -FilePath $exe -ArgumentList '--deck-test-upload' -WorkingDirectory $stage -WindowStyle Hidden -RedirectStandardOutput (Join-Path $stage 'upload.log') -RedirectStandardError (Join-Path $stage 'upload-error.log') -PassThru
+ $null=$process.Handle
+ if(!$process.WaitForExit(90000)){$process.Kill();throw "Deck upload Game timed out: $stage"}
+ Get-Content -LiteralPath (Join-Path $stage 'upload.log'),(Join-Path $stage 'upload-error.log')
+ if($process.ExitCode -ne 0){throw "Deck upload Game failed ($($process.ExitCode)): $stage"}
+ Write-Host "PASS actual test-deck upload Game/TCP: $stage"
+ exit 0
+}
 # Capture fixtures own configuration/custom bytes; fixed AI resources remain
 # read-only links. Never write through a runtime/resource junction.
 $botFixture=Join-Path $runtime 'WindBot'

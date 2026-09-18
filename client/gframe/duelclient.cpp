@@ -7,6 +7,7 @@
 #include "room_client.h"
 #include "undo/room_policy.h"
 #include "undo/room_config.h"
+#include "undo/deck_test_upload.h"
 #include <deque>
 #include "data_manager.h"
 #include "client_card.h"
@@ -26,6 +27,9 @@ namespace {
 std::shared_ptr<RoomClient> roomClient;
 std::shared_ptr<const undo::RoomConfig> roomConfig;
 std::unique_ptr<undo::ClientRoomHandshake> roomHandshake;
+std::shared_ptr<undo::DeckTestUpload> deckTestUpload;
+struct ClientConnection { bool create{}; std::uint64_t generation{}; };
+std::unique_ptr<ClientConnection> clientConnection;
 std::mutex outboundMutex;
 std::deque<undo::Bytes> lobbyOutbound;
 event* roomPollEvent{};
@@ -88,6 +92,30 @@ int DuelClient::WriteBufferEvent(bufferevent* bufev, const void* data, size_t si
 
 std::shared_ptr<RoomClient> DuelClient::Room(){return std::atomic_load(&roomClient);}
 void DuelClient::ConfigureRoom(std::shared_ptr<const undo::RoomConfig> c){roomConfig=std::move(c);}
+std::shared_ptr<undo::DeckTestUpload> DuelClient::StartDeckTestClient(unsigned int ip,unsigned short port,
+    std::shared_ptr<const undo::RoomConfig> config) {
+ if(connect_state!=CONNECT_STATE_NONE || !config || !config->deckTest ||
+    config->deckTest!=mainGame->deckBuilder.DeckTestConfig() ||
+    config->capability.mode!=undo::RoomMode::LoopbackFree || (ip>>24)!=127)return {};
+ auto upload=std::make_shared<undo::DeckTestUpload>(config->deckTest);
+ roomConfig=std::move(config);std::atomic_store(&deckTestUpload,upload);
+ if(!StartClient(ip,port,true)){std::atomic_store(&deckTestUpload,std::shared_ptr<undo::DeckTestUpload>{});roomConfig.reset();return {};}
+ return upload;
+}
+namespace {
+void TryTestDeckUpload() {
+ if(!deckTestUpload || !clientConnection)return;
+ const auto generation=clientConnection->generation;
+ if(auto bytes=deckTestUpload->TakeUpload(generation))
+  DuelClient::SendLegacyPacket(undo::TestDeckUploadOpcode,bytes->data(),bytes->size());
+}
+void CheckTestRoomFailure(const std::shared_ptr<RoomClient>& room) {
+ if(deckTestUpload && clientConnection && room->Failed()) {
+  deckTestUpload->Fail(clientConnection->generation,undo::TestDeckError::Duel);
+  event_base_loopbreak(client_base);
+ }
+}
+}
 void DuelClient::SendLegacyPacket(unsigned char proto,const void* data,size_t len){
  if(len>MAX_DATA_SIZE||(!data&&len))return;
  undo::Bytes packet{proto};if(len){auto*p=static_cast<const uint8_t*>(data);packet.insert(packet.end(),p,p+len);}
@@ -97,10 +125,16 @@ void DuelClient::SendLegacyPacket(unsigned char proto,const void* data,size_t le
  }
  std::lock_guard<std::mutex> lock(outboundMutex);lobbyOutbound.push_back(std::move(packet));
 }
-void DuelClient::RoomPoll(EventSocket,short,void*){
- if(auto room=Room())room->Poll();
+void DuelClient::RoomPoll(EventSocket,short,void* context){
+ if(context!=clientConnection.get())return;
+ if(deckTestUpload && deckTestUpload->Inspect().cancelled){event_base_loopbreak(client_base);return;}
+ if(auto room=Room()){room->Poll();CheckTestRoomFailure(room);}
  std::deque<undo::Bytes> pending;{std::lock_guard<std::mutex> lock(outboundMutex);pending.swap(lobbyOutbound);}
- for(auto&packet:pending){uint16_t length=uint16_t(packet.size());undo::Bytes bytes{uint8_t(length),uint8_t(length>>8)};bytes.insert(bytes.end(),packet.begin(),packet.end());WriteBufferEvent(client_bev,bytes.data(),bytes.size());}
+ for(auto&packet:pending){
+  if(deckTestUpload && deckTestUpload->Inspect().cancelled && (packet[0]==undo::TestDeckUploadOpcode || packet[0]==CTOS_HS_READY))continue;
+  uint16_t length=uint16_t(packet.size());undo::Bytes bytes{uint8_t(length),uint8_t(length>>8)};bytes.insert(bytes.end(),packet.begin(),packet.end());
+  if(WriteBufferEvent(client_bev,bytes.data(),bytes.size())!=0 && deckTestUpload)deckTestUpload->Fail(clientConnection->generation,undo::TestDeckError::Transport);
+ }
 }
 bool DuelClient::StartClient(unsigned int ip, unsigned short port, bool create_game) {
 	if(connect_state != CONNECT_STATE_NONE)
@@ -117,12 +151,15 @@ bool DuelClient::StartClient(unsigned int ip, unsigned short port, bool create_g
 	sin.sin_addr.s_addr = htonl(ip);
 	sin.sin_port = htons(port);
 	client_bev = bufferevent_socket_new(client_base, -1, BEV_OPT_CLOSE_ON_FREE);
-	bufferevent_setcb(client_bev, ClientRead, nullptr, ClientEvent, (void*)create_game);
+	clientConnection=std::make_unique<ClientConnection>();clientConnection->create=create_game;
+	if(deckTestUpload)clientConnection->generation=deckTestUpload->Config()->generation;
+	bufferevent_setcb(client_bev, ClientRead, nullptr, ClientEvent, clientConnection.get());
 	if (bufferevent_socket_connect(client_bev, (sockaddr*)&sin, sizeof(sin)) < 0) {
 		bufferevent_free(client_bev);
 		event_base_free(client_base);
 		client_bev = 0;
 		client_base = 0;
+		clientConnection.reset();
 		return false;
 	}
 	connect_state = CONNECT_STATE_CONNECTING;
@@ -132,12 +169,17 @@ bool DuelClient::StartClient(unsigned int ip, unsigned short port, bool create_g
 		connect_timeout_event = event_new(client_base, 0, EV_TIMEOUT, ConnectTimeout, 0);
 		event_add(connect_timeout_event, &timeout);
 	}
-	roomPollEvent=event_new(client_base,-1,EV_PERSIST,RoomPoll,nullptr);
+	roomPollEvent=event_new(client_base,-1,EV_PERSIST,RoomPoll,clientConnection.get());
     timeval pollInterval{0,10000};event_add(roomPollEvent,&pollInterval);
     std::thread(ClientThread).detach();
 	return true;
 }
 void DuelClient::ConnectTimeout(EventSocket fd, short events, void* arg) {
+	if(deckTestUpload) {
+		deckTestUpload->Fail(clientConnection->generation,undo::TestDeckError::Transport);
+		if(client_base)event_base_loopbreak(client_base);
+		return;
+	}
 	if(connect_state & CONNECT_STATE_JOINED)
 		return;
 	if(close_reason == CLIENT_CLOSE_REASON_NONE) {
@@ -159,6 +201,10 @@ void DuelClient::ConnectTimeout(EventSocket fd, short events, void* arg) {
 		event_base_loopbreak(client_base);
 }
 void DuelClient::StopClient(unsigned reason) {
+	if(auto upload=std::atomic_load(&deckTestUpload)) {
+		upload->Cancel(upload->Config()->generation);
+		return; // The owner-loop poll closes this test connection safely.
+	}
 	close_reason = reason;
 	if(connect_state == CONNECT_STATE_NONE)
 		return;
@@ -166,12 +212,14 @@ void DuelClient::StopClient(unsigned reason) {
 		event_base_loopbreak(client_base);
 }
 void DuelClient::ClientRead(bufferevent* bev, void* ctx) {
+	if(bev!=client_bev || ctx!=clientConnection.get())return;
 	evbuffer* input = bufferevent_get_input(bev);
 	size_t len = evbuffer_get_length(input);
 	if (len < 2)
 		return;
 	uint16_t packet_len = 0;
 	while (len >= 2) {
+		if(deckTestUpload && deckTestUpload->Inspect().cancelled){event_base_loopbreak(client_base);return;}
 		evbuffer_copyout(input, &packet_len, sizeof packet_len);
 		if (len < packet_len + 2)
 			break;
@@ -182,8 +230,9 @@ void DuelClient::ClientRead(bufferevent* bev, void* ctx) {
 	}
 }
 void DuelClient::ClientEvent(bufferevent* bev, short events, void* ctx) {
+	if(bev!=client_bev || ctx!=clientConnection.get())return;
 	if (events & BEV_EVENT_CONNECTED) {
-		bool create_game = (intptr_t)ctx;
+		bool create_game = clientConnection->create;
         sockaddr_in peer{};socklen_t peerLen=sizeof(peer);
         bool actualLoopback=getpeername(bufferevent_getfd(bev),reinterpret_cast<sockaddr*>(&peer),&peerLen)==0&&peer.sin_family==AF_INET&&(ntohl(peer.sin_addr.s_addr)>>24)==127;
         roomHandshake=std::make_unique<undo::ClientRoomHandshake>(roomConfig->capability,actualLoopback);
@@ -199,11 +248,14 @@ void DuelClient::ClientEvent(bufferevent* bev, short events, void* ctx) {
 			SendBufferToServer(CTOS_EXTERNAL_ADDRESS, buf, hostname_msglen + sizeof(uint32_t));
 		}
 		CTOS_PlayerInfo cspi;
-		BufferIO::CopyCharArray(mainGame->ebNickName->getText(), cspi.name);
+		BufferIO::CopyCharArray(deckTestUpload?deckTestUpload->Config()->name.c_str():mainGame->ebNickName->getText(), cspi.name);
 		SendPacketToServer(CTOS_PLAYER_INFO, cspi);
 		if(create_game) {
-			CTOS_CreateGame cscg;
-			if(mainGame->bot_mode) {
+			CTOS_CreateGame cscg{};
+			if(deckTestUpload) {
+				cscg.info=deckTestUpload->Config()->host;
+				BufferIO::CopyCharArray(L"Deck Test",cscg.name);
+			} else if(mainGame->bot_mode) {
 				BufferIO::CopyCharArray(L"Bot Game", cscg.name);
 				BufferIO::CopyCharArray(L"", cscg.pass);
 				cscg.info.rule = 5;
@@ -243,6 +295,11 @@ void DuelClient::ClientEvent(bufferevent* bev, short events, void* ctx) {
 		connect_state |= CONNECT_STATE_CONNECTED;
 	} else if (events & (BEV_EVENT_EOF | BEV_EVENT_ERROR)) {
 		bufferevent_disable(bev, EV_READ);
+		if(deckTestUpload) {
+			deckTestUpload->Fail(clientConnection->generation,undo::TestDeckError::Transport);
+			event_base_loopexit(client_base,0);
+			return;
+		}
 		if(close_reason == CLIENT_CLOSE_REASON_NONE) {
 			if(!(connect_state & CONNECT_STATE_JOINED)) {
 				mainGame->btnCreateHost->setEnabled(true);
@@ -322,7 +379,11 @@ void DuelClient::ClientThread() {
 	event_base_free(client_base);
 	client_bev = 0;
 	client_base = 0;
+	auto closedUpload=std::atomic_exchange(&deckTestUpload,std::shared_ptr<undo::DeckTestUpload>{});
+	const auto closedGeneration=clientConnection?clientConnection->generation:0;
+	clientConnection.reset();
 	connect_state = CONNECT_STATE_NONE;
+	if(closedUpload)closedUpload->Closed(closedGeneration);
 }
 void DuelClient::HandleSTOCPacketLan(unsigned char* data,size_t len){
  if(!len)return;
@@ -339,18 +400,30 @@ void DuelClient::HandleSTOCPacketLan(unsigned char* data,size_t len){
        [](const undo::Bytes& b){HandleLegacySTOC(const_cast<uint8_t*>(b.data()),b.size());},
        [](const undo::InputSubmission&i){SendResponse(i);}));
     }
-   }else{auto room=Room();if(!room)throw std::runtime_error("Room not authenticated");room->Receive(envelope);}
+    if(roomHandshake->Ready() && deckTestUpload) {
+     deckTestUpload->Capability(clientConnection->generation,roomHandshake->Session());
+     TryTestDeckUpload();
+    }
+   }else{auto room=Room();if(!room)throw std::runtime_error("Room not authenticated");room->Receive(envelope);CheckTestRoomFailure(room);}
    return;
   }
   if(roomHandshake&&(data[0]==STOC_GAME_MSG||data[0]==STOC_TIME_LIMIT||data[0]==STOC_REPLAY||data[0]==STOC_DUEL_END))throw std::runtime_error("Unwrapped game traffic");
   if(roomHandshake&&(data[0]==STOC_DUEL_START||data[0]==STOC_SELECT_HAND||data[0]==STOC_SELECT_TP)&&!roomHandshake->Ready())throw std::runtime_error("Duel started before capability confirmation");
   HandleLegacySTOC(data,len);
- }catch(const std::exception& error){mainGame->ErrorLog(error.what());StopClient();}
+ }catch(const std::exception& error){
+  if(deckTestUpload && clientConnection)deckTestUpload->Fail(clientConnection->generation,undo::TestDeckError::Transport);
+  mainGame->ErrorLog(error.what());StopClient();
+ }
 }
 void DuelClient::HandleLegacySTOC(unsigned char* data, size_t len) {
 	unsigned char* pdata = data;
 	unsigned char pktType = BufferIO::Read<uint8_t>(pdata);
 	switch(pktType) {
+	case undo::TestDeckResultOpcode: {
+        if(deckTestUpload && clientConnection && deckTestUpload->Accept(clientConnection->generation,undo::Bytes(pdata,data+len)))
+            SendPacketToServer(CTOS_HS_READY);
+        break;
+    }
 	case STOC_GAME_MSG: {
 		if (len < 1 + sizeof(unsigned char))
 			return;
@@ -363,6 +436,10 @@ void DuelClient::HandleLegacySTOC(unsigned char* data, size_t len) {
 		STOC_ErrorMsg packet;
 		std::memcpy(&packet, pdata, sizeof packet);
 		const auto* pkt = &packet;
+		if(deckTestUpload && clientConnection) {
+			deckTestUpload->Fail(clientConnection->generation,undo::TestDeckError::Admission);
+			break;
+		}
 		switch(pkt->msg) {
         case undo::RoomPolicyError: {
             const auto* message=undo::PolicyMessage(pkt->code);
@@ -578,6 +655,16 @@ void DuelClient::HandleLegacySTOC(unsigned char* data, size_t len) {
 		STOC_JoinGame packet;
 		std::memcpy(&packet, pdata, sizeof packet);
 		const auto* pkt = &packet;
+		if(deckTestUpload && clientConnection) {
+			// Keep the suspended editor, room selectors, and ordinary preferences
+			// untouched. Only native duel metadata belongs to this connection.
+			mainGame->dInfo.isTag=false;mainGame->dInfo.time_limit=pkt->info.time_limit;
+			mainGame->dInfo.time_left[0]=mainGame->dInfo.time_left[1]=0;
+			mainGame->dInfo.duel_rule=pkt->info.duel_rule;mainGame->dInfo.start_lp=pkt->info.start_lp;
+			watching=0;connect_state|=CONNECT_STATE_JOINED;CancelConnectTimeout();
+			deckTestUpload->Joined(clientConnection->generation);TryTestDeckUpload();
+			break;
+		}
 		std::wstring str;
 		wchar_t msgbuf[256];
 		myswprintf(msgbuf, L"%ls%ls\n", dataManager.GetSysString(1226), deckManager.GetLFListName(pkt->info.lflist));
@@ -662,6 +749,11 @@ void DuelClient::HandleLegacySTOC(unsigned char* data, size_t len) {
 		STOC_TypeChange packet;
 		std::memcpy(&packet, pdata, sizeof packet);
 		const auto* pkt = &packet;
+		if(deckTestUpload && clientConnection) {
+			selftype=pkt->type&15;is_host=(pkt->type&0x10)!=0;mainGame->dInfo.player_type=selftype;
+			deckTestUpload->Seat(clientConnection->generation,pkt->type);TryTestDeckUpload();
+			break;
+		}
 		if(!mainGame->dInfo.isTag) {
 			selftype = pkt->type & 0xf;
 			is_host = ((pkt->type >> 4) & 0xf) != 0;
@@ -757,6 +849,7 @@ void DuelClient::HandleLegacySTOC(unsigned char* data, size_t len) {
 		break;
 	}
 	case STOC_DUEL_START: {
+		if(deckTestUpload && clientConnection)deckTestUpload->Started(clientConnection->generation);
 		mainGame->HideElement(mainGame->wHostPrepare);
 		mainGame->WaitFrameSignal(11);
 		mainGame->gMutex.lock();
@@ -834,6 +927,11 @@ void DuelClient::HandleLegacySTOC(unsigned char* data, size_t len) {
 		break;
 	}
 	case STOC_DUEL_END: {
+		if(deckTestUpload && clientConnection) {
+			deckTestUpload->Finished(clientConnection->generation);
+			event_base_loopbreak(client_base);
+			break;
+		}
 		mainGame->gMutex.lock();
 		if(mainGame->dInfo.player_type < 7)
 			mainGame->btnLeaveGame->setVisible(false);
@@ -1029,6 +1127,10 @@ void DuelClient::HandleLegacySTOC(unsigned char* data, size_t len) {
 		STOC_HS_PlayerChange packet;
 		std::memcpy(&packet, pdata, sizeof packet);
 		const auto* pkt = &packet;
+		if(deckTestUpload && clientConnection) {
+			deckTestUpload->Ready(clientConnection->generation,pkt->status);
+			break;
+		}
 		unsigned char pos = (pkt->status >> 4) & 0xf;
 		unsigned char state = pkt->status & 0xf;
 		if(pos > 3)

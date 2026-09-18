@@ -25,6 +25,7 @@ public:
   bool Consent(bool, const undo::TxKey &);
   undo::InputToken Token() const;
   bool InputPaused() const;
+  bool Failed() const;
   bool PresentationFrozen() const;
   bool DuelEnded() const;
   bool CanUndo() const;

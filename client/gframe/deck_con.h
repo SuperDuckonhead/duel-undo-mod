@@ -9,12 +9,14 @@
 #include "undo/editor_input.h"
 #include <IEventReceiver.h>
 #include <vector2d.h>
+namespace undo { struct TestDuelConfig; }
 
 namespace ygo {
 
 struct CardDataC;
 struct LFList;
 struct EditorSuspension;
+struct DeckTestSession;
 
 enum class DeckTestEntryState {
 	Ready,
@@ -56,6 +58,11 @@ public:
 	bool CommitDeckTestPreparation(irr::IEventReceiver* receiver);
 	bool ResumeDeckTestPreparation();
 	bool HasDeckTestPreparation() const;
+	// UI-thread pump; resource capture and connection callbacks never restore GUI.
+	void PollDeckTest();
+	void ExitDeckTest();
+	void CloseDeckTestOnExit();
+	std::shared_ptr<const undo::TestDuelConfig> DeckTestConfig() const;
 	bool OnEvent(const irr::SEvent& event) override;
 	undo::DeckSnapshot CaptureEditorDeck() const;
 	bool RestoreEditorDeck(const undo::DeckSnapshot& snapshot);
@@ -143,11 +150,13 @@ public:
 	wchar_t result_string[8]{};
 	std::vector<std::wstring> expansionPacks;
 private:
+	bool CaptureDeckTestConfig();
 	bool MatchesSuspension(const EditorSuspensionToken& token) const;
 	std::shared_ptr<const char> suspensionOwner{std::make_shared<const char>(0)};
 	uint64_t suspensionGeneration{};
 	std::shared_ptr<EditorSuspension> suspension;
 	std::optional<EditorSuspensionToken> deckTestPreparation;
+	std::shared_ptr<DeckTestSession> deckTestSession;
 	std::shared_ptr<const LFList> restoredFilterList;
 };
 

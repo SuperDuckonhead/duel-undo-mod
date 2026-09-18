@@ -1,6 +1,8 @@
 #include "game.h"
 #include "data_manager.h"
 #include "deck_manager.h"
+#include "undo/deck_test_upload.h"
+#include <algorithm>
 #include <array>
 #include <tuple>
 
@@ -94,6 +96,7 @@ bool materialize(const std::vector<uint32_t>& codes, std::vector<const CardDataC
 }
 
 struct EditorSuspension {
+	std::shared_ptr<const undo::TestDuelConfig> testConfig;
 	undo::DeckSnapshot deck;
 	undo::EditorHistory history;
 	EditorValues values;
@@ -107,6 +110,23 @@ struct EditorSuspension {
 	std::array<wchar_t,256> openFile{};
 	explicit EditorSuspension(DeckBuilder& e) : deck(e.CaptureEditorDeck()), history(e.editorHistory), values(valueCopy(editorValues(e))) {}
 };
+bool DeckBuilder::CaptureDeckTestConfig() {
+	if(!HasDeckTestPreparation() || suspension->testConfig)return false;
+	HostInfo info{};
+	const int selected=mainGame->cbBotRule?mainGame->cbBotRule->getSelected():-1;
+	info.rule=5;info.mode=MODE_SINGLE;
+	info.duel_rule=selected>=0 && selected<3?selected+3:std::clamp(mainGame->gameConf.default_rule,3,5);
+	info.start_lp=8000;info.start_hand=5;info.draw_count=1;info.time_limit=0;
+	info.no_check_deck=true;info.no_shuffle_deck=true;
+	try {
+		suspension->testConfig=std::make_shared<const undo::TestDuelConfig>(suspensionGeneration,
+			suspension->deck[0],suspension->deck[1],info,mainGame->ebNickName->getText());
+		return true;
+	}catch(const std::bad_alloc&){return false;}
+}
+std::shared_ptr<const undo::TestDuelConfig> DeckBuilder::DeckTestConfig() const {
+	return HasDeckTestPreparation()?suspension->testConfig:nullptr;
+}
 
 bool DeckBuilder::MatchesSuspension(const EditorSuspensionToken& token) const {
 	return suspension && token.owner.lock()==suspensionOwner && token.generation==suspensionGeneration;
